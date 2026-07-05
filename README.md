@@ -39,7 +39,7 @@ go build ./cmd/btc09
 Mine with all your cores:
 
 ```
-./btc09 node -mine -seeds SEED_HOST:9009
+./btc09 node -mine -seeds 82.22.32.82:9009
 ```
 
 Your reward address prints at startup (wallet auto-created in `~/.btc09`).
@@ -49,7 +49,7 @@ Wallet stuff:
 ```
 ./btc09 wallet list
 ./btc09 wallet new
-./btc09 send -to ADDRESS -amount 1.5 -seeds SEED_HOST:9009
+./btc09 send -to ADDRESS -amount 1.5 -seeds 82.22.32.82:9009
 ```
 
 Local sandbox with instant blocks:
