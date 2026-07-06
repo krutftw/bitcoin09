@@ -284,9 +284,8 @@ func (n *Node) handleMsg(p *peer, m *Msg) error {
 			// asking for tip+1 forever.
 			return p.send(&Msg{Type: "getblocks", From: 1})
 		default:
-			// invalid blocks are dropped; peer may be on another network
-			n.logger.Printf("rejected block from %s: %v", p.addr, err)
-			return nil
+			// Invalid blocks mean the peer is on another fork or broken.
+			return fmt.Errorf("invalid block: %w", err)
 		}
 	case "tx":
 		tx, err := core.DecodeTx(m.Raw)
