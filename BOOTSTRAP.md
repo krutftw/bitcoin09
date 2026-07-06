@@ -13,6 +13,7 @@ their computers on.
 - mainnet genesis is fixed
 - seed node is online at `82.22.32.82:9009`
 - explorer is online at `http://82.22.32.82:8009`
+- Discord is live at `https://discord.gg/vYvemBgU38`
 - CPU mining works
 - blocks and transactions sync between peers
 - launch thread exists in GitHub issues
@@ -38,7 +39,13 @@ Bitcoin used IRC discovery early on. 09C does not need to copy IRC exactly,
 but it should copy the behaviour: one public place where nodes can find each
 other.
 
-Use the GitHub launch thread for now:
+Use Discord for live coordination:
+
+```text
+https://discord.gg/vYvemBgU38
+```
+
+The GitHub launch thread can still be used for slower public notes:
 
 ```text
 https://github.com/krutftw/bitcoin09/issues/1

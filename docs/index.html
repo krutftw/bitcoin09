@@ -21,7 +21,7 @@ td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ccc; font
 <h1>Bitcoin 09 (09C)</h1>
 <p class="tag">the coin that you can mine like it's 2009</p>
 
-<p id="live">Network status: <a href="http://82.22.32.82:8009">live explorer</a>. Current release: v0.1.9.</p>
+<p id="live">Network status: <a href="http://82.22.32.82:8009">live explorer</a>. Current release: v0.1.9. Discord: <a href="https://discord.gg/vYvemBgU38">join the server</a>.</p>
 
 <p>Bitcoin 09 is Bitcoin, same idea top to bottom, changed in one place: the
 proof of work is Argon2id (memory-hard) instead of SHA-256. Normal CPUs do
@@ -51,6 +51,7 @@ recent blocks and every miner's address.</p>
 <ul>
 <li><a href="https://github.com/krutftw/bitcoin09">Source code</a> (MIT, Go)</li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/WHITEPAPER.md">Whitepaper</a></li>
+<li><a href="https://discord.gg/vYvemBgU38">Discord</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09/issues/1">Launch thread</a> (post your node, ask anything)</li>
 <li><a href="https://bitcointalk.org/index.php?topic=5587640.0">Bitcointalk ANN</a></li>
 </ul>
@@ -67,8 +68,11 @@ if (location.protocol === 'http:') {
   fetch('http://82.22.32.82:8009/api/status')
     .then(r => r.json())
     .then(s => {
-      document.getElementById('live').textContent =
-        'network now: height ' + s.height + ', peers ' + s.peers + ', difficulty ' + s.difficulty.toFixed(2);
+      document.getElementById('live').innerHTML =
+        'network now: height ' + Number(s.height) +
+        ', peers ' + Number(s.peers) +
+        ', difficulty ' + Number(s.difficulty).toFixed(2) +
+        '. Discord: <a href="https://discord.gg/vYvemBgU38">join the server</a>.';
     })
     .catch(() => {});
 }

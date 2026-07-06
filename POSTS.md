@@ -42,6 +42,9 @@ http://82.22.32.82:8009
 Source and releases:
 https://github.com/krutftw/bitcoin09
 
+Discord:
+https://discord.gg/vYvemBgU38
+
 Run:
 git clone https://github.com/krutftw/bitcoin09
 cd bitcoin09
@@ -66,6 +69,7 @@ proof of work so people can mine on normal computers again.
 Seed: 82.22.32.82:9009
 Explorer: http://82.22.32.82:8009
 Repo: https://github.com/krutftw/bitcoin09
+Discord: https://discord.gg/vYvemBgU38
 
 Mine it if you want to do the 2009 part again.
 ```
@@ -91,4 +95,7 @@ ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f
 
 Source:
 https://github.com/krutftw/bitcoin09
+
+Discord:
+https://discord.gg/vYvemBgU38
 ```

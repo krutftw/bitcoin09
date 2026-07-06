@@ -112,6 +112,12 @@ Live block explorer:
 http://82.22.32.82:8009
 ```
 
+Discord:
+
+```text
+https://discord.gg/vYvemBgU38
+```
+
 Any node can serve its own explorer with `-explorer :8009`.
 
 ## Tests
@@ -135,6 +141,7 @@ Network:
 seed:     82.22.32.82:9009
 explorer: http://82.22.32.82:8009
 release:  https://github.com/krutftw/bitcoin09/releases/latest
+discord:  https://discord.gg/vYvemBgU38
 ```
 
 If you downloaded an early build, upgrade to the latest release. Old clients

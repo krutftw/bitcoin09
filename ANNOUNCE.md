@@ -43,6 +43,12 @@ Explorer:
 http://82.22.32.82:8009
 ```
 
+Discord:
+
+```text
+https://discord.gg/vYvemBgU38
+```
+
 Build from source:
 
 ```bash
