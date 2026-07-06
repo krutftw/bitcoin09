@@ -61,7 +61,7 @@ validation, which a Raspberry Pi handles easily.
 
 ## 4. Difficulty and emission
 
-Difficulty retargets every 144 blocks (about one day at target rate) by the
+Difficulty retargets every 2016 blocks, same as Bitcoin, by the
 ratio of actual to expected time, clamped to 4x per step. The launch
 difficulty is set so a single desktop CPU finds a block in roughly ten
 minutes, the same position a 2009 CPU had. As miners join, difficulty rises

@@ -73,7 +73,7 @@ Consensus:
 - 21M cap
 - 50 coin subsidy, halving every 210,000 blocks
 - 10 minute target
-- difficulty retarget every 144 blocks, 4x clamp
+- difficulty retarget every 2016 blocks, 4x clamp
 - Ed25519 signatures
 - 1 MB blocks
 - heaviest cumulative work wins

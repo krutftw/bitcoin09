@@ -39,7 +39,7 @@ go build ./cmd/btc09
 Mine with all your cores:
 
 ```
-./btc09 node -mine -seeds 82.22.32.82:9009
+./btc09 node -mine
 ```
 
 Your reward address prints at startup (wallet auto-created in `~/.btc09`).
@@ -51,7 +51,7 @@ Your reward address prints at startup (wallet auto-created in `~/.btc09`).
 3. Run:
 
 ```powershell
-.\btc09-windows-amd64.exe node -mine -seeds 82.22.32.82:9009
+.\btc09-windows-amd64.exe node -mine
 ```
 
 Leave it open. When your computer finds a block, it prints `BLOCK FOUND`.
@@ -90,7 +90,7 @@ possible again.
 ## Consensus rules, short version
 
 - 88 byte headers, block ids are SHA-256d, PoW check is Argon2id(header) <= target
-- difficulty retargets every 144 blocks (about a day), max 4x move per step
+- difficulty retargets every 2016 blocks, same as Bitcoin, max 4x move per step
 - UTXO model, Ed25519 signatures, base58check addresses (version 0x09)
 - coinbase pays subsidy + fees, spendable after 100 blocks
 - heaviest total work wins, reorgs replay the UTXO set
@@ -99,6 +99,12 @@ possible again.
 Mainnet genesis is pinned by a test:
 `ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f`
 with the message "the coin that you can mine like it's 2009", nonce 20214.
+
+The first seed node is built into the client:
+
+```text
+82.22.32.82:9009
+```
 
 ## Tests
 

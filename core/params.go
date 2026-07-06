@@ -26,7 +26,7 @@ type Params struct {
 	Name             string
 	NetMagic         uint32 // wire/network id
 	TargetBlockTime  int64  // seconds
-	RetargetInterval int64  // blocks; faster than Bitcoin's 2016 so a young CPU network heals quickly
+	RetargetInterval int64  // blocks between difficulty adjustments
 	CoinbaseMaturity int64  // blocks before a coinbase output is spendable
 	MaxTargetBits    uint32 // easiest allowed difficulty, compact encoding
 	// Argon2id proof-of-work cost parameters (per hash attempt).
@@ -43,7 +43,7 @@ var MainNet = Params{
 	Name:             "mainnet",
 	NetMagic:         0xB7C09001,
 	TargetBlockTime:  600, // 10 minutes, Bitcoin-classic
-	RetargetInterval: 144, // ~1 day at target rate
+	RetargetInterval: 2016, // Bitcoin-classic, ~2 weeks at target rate
 	CoinbaseMaturity: 100, // Bitcoin-classic
 	MaxTargetBits:    0x1f00ffff,
 	ArgonMemKiB:      64 * 1024, // 64 MiB per hash: the ASIC/GPU wall
