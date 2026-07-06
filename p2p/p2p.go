@@ -197,6 +197,24 @@ func (n *Node) handleConn(ctx context.Context, conn net.Conn, outbound bool) {
 	n.mu.RUnlock()
 	p.send(&Msg{Type: "addr", Addrs: addrs})
 
+	// keepalive so idle connections outlive the read deadline
+	pingCtx, pingCancel := context.WithCancel(ctx)
+	defer pingCancel()
+	go func() {
+		t := time.NewTicker(90 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-pingCtx.Done():
+				return
+			case <-t.C:
+				if p.send(&Msg{Type: "ping"}) != nil {
+					return
+				}
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
