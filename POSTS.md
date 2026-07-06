@@ -1,0 +1,87 @@
+# Launch posts
+
+## Bitcointalk / forum post
+
+Title:
+
+```text
+[ANN] Bitcoin 09 (BTC09) - CPU mining like it's 2009, no premine
+```
+
+Body:
+
+```text
+I made Bitcoin 09 because I wanted to bring back the part of Bitcoin most of
+us missed: mining on a normal computer when the coins were worth nothing.
+
+BTC09 is Bitcoin with one change: proof of work is Argon2id instead of
+SHA-256. The goal is to keep mining on ordinary CPUs instead of ASICs.
+
+Kept from Bitcoin:
+- 21 million cap
+- 50 coin block reward
+- halving every 210,000 blocks
+- 10 minute block target
+- UTXO model
+- no premine
+- no allocation
+- unspendable genesis reward
+
+Genesis:
+ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f
+
+Genesis message:
+the coin that you can mine like it's 2009
+
+Seed:
+82.22.32.82:9009
+
+Source and releases:
+https://github.com/krutftw/bitcoin09
+
+Run:
+git clone https://github.com/krutftw/bitcoin09
+cd bitcoin09
+go build ./cmd/btc09
+./btc09 node -mine -seeds 82.22.32.82:9009
+
+BTC09 has no price. It might never have one. Mine it if you want to join a
+fair CPU-mined chain from the start.
+```
+
+## Short post
+
+```text
+I launched Bitcoin 09 (BTC09): Bitcoin economics, one change: Argon2id CPU
+proof of work so people can mine on normal computers again.
+
+21M cap, halvings, 10 min blocks, no premine, burned genesis.
+
+Seed: 82.22.32.82:9009
+Repo: https://github.com/krutftw/bitcoin09
+
+Mine it if you want to do the 2009 part again.
+```
+
+## Technical post
+
+```text
+Bitcoin 09 is a fair-launch PoW chain.
+
+Consensus:
+- UTXO ledger
+- 21M cap
+- 50 coin subsidy, halving every 210,000 blocks
+- 10 minute target
+- difficulty retarget every 144 blocks, 4x clamp
+- Ed25519 signatures
+- 1 MB blocks
+- heaviest cumulative work wins
+- Argon2id PoW, 64 MiB per attempt
+
+Genesis id:
+ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f
+
+Source:
+https://github.com/krutftw/bitcoin09
+```
