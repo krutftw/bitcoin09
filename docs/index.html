@@ -74,6 +74,13 @@ the mining and ASICs/GPUs get no real advantage.</p>
 and your reward address prints at startup. When your computer finds a block
 it prints BLOCK FOUND and you own 50 09C.</p>
 
+<h2>Run a node</h2>
+<p>To run a normal full node without mining:</p>
+<pre>btc09 node</pre>
+<p>Mining only starts when <code>-mine</code> is present. A non-mining node still syncs, relays blocks and transactions, listens on <code>:9009</code> by default, and can serve its own explorer:</p>
+<pre>btc09 node -explorer :8009</pre>
+<p class="muted">Wallet balance is calculated from your local synced chain, so a fresh node can show a balance later than the public explorer while it catches up. The running node prints balance on its 30 second status heartbeat. Mined coinbase rewards become spendable after 100 blocks.</p>
+
 <h2>Watch the chain</h2>
 <p><a href="http://82.22.32.82:8009">Live block explorer</a>: height, difficulty,
 recent blocks and every miner's address.</p>

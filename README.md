@@ -44,6 +44,16 @@ Mine with all your cores:
 
 Your reward address prints at startup (wallet auto-created in `~/.btc09`).
 
+Run a node without mining:
+
+```
+./btc09 node
+```
+
+Mining only starts when `-mine` is present. A non-mining node still syncs,
+relays blocks/transactions, listens on `:9009` by default, and can serve its
+own explorer with `-explorer :8009`.
+
 ## Quick start, Windows release
 
 1. Download `btc09-windows-amd64.exe` from the latest release.
@@ -64,6 +74,13 @@ Wallet stuff:
 ./btc09 wallet new
 ./btc09 send -to ADDRESS -amount 1.5 -seeds 82.22.32.82:9009
 ```
+
+Balance notes:
+
+- The wallet balance is calculated from your local node's synced chain, so a
+  fresh node may show it later than the public explorer while it catches up.
+- The running node prints balance on its 30 second status heartbeat.
+- Coinbase mining rewards are spendable after 100 blocks, same as Bitcoin.
 
 Local sandbox with instant blocks:
 
