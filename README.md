@@ -44,6 +44,19 @@ Mine with all your cores:
 
 Your reward address prints at startup (wallet auto-created in `~/.btc09`).
 
+## Quick start, Windows release
+
+1. Download `btc09-windows-amd64.exe` from the latest release.
+2. Open PowerShell in the download folder.
+3. Run:
+
+```powershell
+.\btc09-windows-amd64.exe node -mine -seeds 82.22.32.82:9009
+```
+
+Leave it open. When your computer finds a block, it prints `BLOCK FOUND`.
+Your wallet is created automatically under your user folder.
+
 Wallet stuff:
 
 ```
