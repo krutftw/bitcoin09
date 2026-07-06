@@ -54,18 +54,40 @@ Remove-Item Env:DISCORD_BOT_TOKEN
 
 Roles:
 
+- `👑 Owner`
+- `🤖 Bot`
 - `⛏ Miner`
 - `🧱 Node Operator`
 - `🏊 Pool Operator`
 - `🛠 Developer`
 - `🛡 Moderator`
-- `📣 Announcements`
+- `🔔 Updates`
 - `🤝 Contributor`
 - `🧪 Tester`
 
+The owner, bot, pool operator, developer, and moderator roles are displayed separately in the Discord member list when members have those roles. The script assigns `👑 Owner` to the guild owner and `🤖 Bot` to the bot user.
+
+Self-serve roles:
+
+- `⛏ Miner`
+- `🧱 Node Operator`
+- `🔔 Updates`
+- `🤝 Contributor`
+- `🧪 Tester`
+
+Manual roles:
+
+- `👑 Owner`
+- `🤖 Bot`
+- `🏊 Pool Operator`
+- `🛠 Developer`
+- `🛡 Moderator`
+
+Self-serve roles are chosen with buttons in `#🎭-roles`. `🔔 Updates` is only an opt-in ping role for releases, fork warnings, pool/node incidents, and important network notes. It does not give posting permissions.
+
 Categories, text channels, and voice channels:
 
-- `📌 INFO`: `#📣-announcements`, `#👋-start-here`, `#📜-rules`, `#🔗-resources`
+- `📌 INFO`: `#📣-announcements`, `#👋-start-here`, `#📜-rules`, `#🎭-roles`, `#🔗-resources`
 - `💬 COMMUNITY`: `#💬-general`
 - `⛏ MINING`: `#⛏-mining-help`, `#📈-hashrate`
 - `🌐 NETWORK`: `#🏊-pools-and-nodes`, `#🧱-node-operators`
@@ -90,6 +112,8 @@ Register the guild slash command:
 node tools/discord/stats-bot.mjs --register-commands
 ```
 
+This registers `/stats`. Self-serve roles are handled by the clickable buttons in `#🎭-roles`, so the watch process must be running for the buttons to respond.
+
 Post or update one bot-authored stats message in `#🏊-pools-and-nodes`:
 
 ```powershell
@@ -102,7 +126,7 @@ Run the bot so `/stats` answers inside Discord:
 node tools/discord/stats-bot.mjs --watch
 ```
 
-The slash command only responds while the watch process is running. The one-shot `--post` mode is safe to run repeatedly because it edits the existing bot message when one is already present.
+The slash command and role buttons only respond while the watch process is running. The one-shot `--post` mode is safe to run repeatedly because it edits the existing bot message when one is already present.
 
 ## Official Docs
 

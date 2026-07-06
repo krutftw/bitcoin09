@@ -59,13 +59,18 @@ if (!token || !guildId) {
 
 const auditReason = encodeURIComponent("Bitcoin 09 Discord server setup");
 
+const ownerDisplayRole = { name: "👑 Owner", aliases: ["Owner"], color: 0xf1c40f, hoist: true, mentionable: false };
+const botDisplayRole = { name: "🤖 Bot", aliases: ["Bot"], color: 0x5865f2, hoist: true, mentionable: false };
+
 const desiredRoles = [
+  ownerDisplayRole,
+  botDisplayRole,
   { name: "⛏ Miner", aliases: ["Miner"], color: 0xf2c94c, hoist: false, mentionable: true },
   { name: "🧱 Node Operator", aliases: ["Node Operator"], color: 0x2d9cdb, hoist: false, mentionable: true },
-  { name: "🏊 Pool Operator", aliases: ["Pool Operator"], color: 0x27ae60, hoist: false, mentionable: true },
+  { name: "🏊 Pool Operator", aliases: ["Pool Operator"], color: 0x27ae60, hoist: true, mentionable: true },
   { name: "🛠 Developer", aliases: ["Developer"], color: 0x9b51e0, hoist: true, mentionable: true },
   { name: "🛡 Moderator", aliases: ["Moderator"], color: 0xeb5757, hoist: true, mentionable: true },
-  { name: "📣 Announcements", color: 0xf2994a, hoist: false, mentionable: true },
+  { name: "🔔 Updates", aliases: ["📣 Announcements", "Announcements", "Updates"], color: 0xf2994a, hoist: false, mentionable: true },
   { name: "🤝 Contributor", color: 0x00b894, hoist: false, mentionable: true },
   { name: "🧪 Tester", color: 0x56ccf2, hoist: false, mentionable: true },
 ];
@@ -108,11 +113,19 @@ const desiredChannels = [
     lockedForEveryone: true,
   },
   {
+    key: "roles",
+    name: "🎭-roles",
+    aliases: ["roles"],
+    category: "info",
+    position: 3,
+    topic: "Choose public roles with the buttons in this channel. Staff and operator roles are assigned manually.",
+  },
+  {
     key: "resources",
     name: "🔗-resources",
     aliases: ["resources"],
     category: "info",
-    position: 3,
+    position: 4,
     topic: "Official Bitcoin 09 links, docs, releases, and reference material.",
     lockedForEveryone: true,
   },
@@ -206,6 +219,19 @@ const desiredVoiceChannels = [
   },
 ];
 
+const rolePickerComponents = [
+  {
+    type: 1,
+    components: [
+      { type: 2, style: 2, custom_id: "role:toggle:miner", label: "⛏ Miner" },
+      { type: 2, style: 2, custom_id: "role:toggle:node_operator", label: "🧱 Node Operator" },
+      { type: 2, style: 2, custom_id: "role:toggle:updates", label: "🔔 Updates" },
+      { type: 2, style: 2, custom_id: "role:toggle:contributor", label: "🤝 Contributor" },
+      { type: 2, style: 2, custom_id: "role:toggle:tester", label: "🧪 Tester" },
+    ],
+  },
+];
+
 const seedPosts = [
   {
     channelKey: "announcements",
@@ -235,6 +261,7 @@ const seedPosts = [
       "- Bitcointalk ANN: https://bitcointalk.org/index.php?topic=5587640.0",
       "- Discord: https://discord.gg/fUuGzwRTzP",
       "- Seed node: 82.22.32.82:9009",
+      "- Roles: click the buttons in #🎭-roles",
       "",
       "09C has no premine, no ICO, no allocation, and the genesis reward is burned/unspendable.",
     ].join("\n"),
@@ -250,6 +277,27 @@ const seedPosts = [
       "3. Keep mining support in ⛏-mining-help and node/pool status in 🏊-pools-and-nodes.",
       "4. Do not DM members for wallets, keys, seed phrases, remote access, or payments.",
     ].join("\n"),
+  },
+  {
+    channelKey: "roles",
+    marker: "Bitcoin 09 role picker",
+    content: [
+      "Bitcoin 09 role picker",
+      "",
+      "Click a button to add a role. Click it again to remove it.",
+      "",
+      "Updates means the opt-in ping role for releases, fork warnings, pool/node incidents, and important network notes. It does not give posting permissions.",
+      "",
+      "Manual roles:",
+      "- Owner",
+      "- Bot",
+      "- Pool Operator",
+      "- Developer",
+      "- Moderator",
+      "",
+      "Manual roles are for identity, trust, or permissions. Ask in general if one of those should apply.",
+    ].join("\n"),
+    components: rolePickerComponents,
   },
   {
     channelKey: "resources",
@@ -331,6 +379,15 @@ async function main() {
   const roleMap = mapByLowerName(roles);
   for (const role of desiredRoles) {
     await ensureRole(roleMap, role);
+  }
+
+  const ownerRole = findByDesiredName(roleMap, ownerDisplayRole);
+  const botRole = findByDesiredName(roleMap, botDisplayRole);
+  if (ownerRole && guild.owner_id) {
+    await ensureMemberRole(guild.owner_id, ownerRole, "guild owner");
+  }
+  if (botRole) {
+    await ensureMemberRole(botUser.id, botRole, "bot user");
   }
 
   channels = await discord("GET", `/guilds/${guildId}/channels`);
@@ -623,26 +680,42 @@ async function ensureSeedMessage(botUserId, channel, post) {
   const existingMessage = recentMessages.find(
     (message) => message.author?.id === botUserId && message.content.includes(post.marker),
   );
+  const payload = {
+    content: post.content,
+    components: post.components ?? [],
+    allowed_mentions: { parse: [] },
+  };
 
   if (existingMessage) {
-    if (existingMessage.content === post.content) {
+    if (existingMessage.content === post.content && sameComponents(existingMessage.components ?? [], post.components ?? [])) {
       action("seed exists", `#${channel.name}: ${post.marker}`);
       return;
     }
 
     action("update seed message", `#${channel.name}: ${post.marker}`);
-    await discord("PATCH", `/channels/${channel.id}/messages/${existingMessage.id}`, {
-      content: post.content,
-      allowed_mentions: { parse: [] },
-    });
+    await discord("PATCH", `/channels/${channel.id}/messages/${existingMessage.id}`, payload);
     return;
   }
 
   action("send seed message", `#${channel.name}: ${post.marker}`);
-  await discord("POST", `/channels/${channel.id}/messages`, {
-    content: post.content,
-    allowed_mentions: { parse: [] },
-  });
+  await discord("POST", `/channels/${channel.id}/messages`, payload);
+}
+
+function sameComponents(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+async function ensureMemberRole(userId, role, label) {
+  const member = await discord("GET", `/guilds/${guildId}/members/${userId}`);
+  if (member.roles?.includes(role.id)) {
+    action("member role exists", `${label}: ${role.name}`);
+    return;
+  }
+
+  action("assign member role", `${label}: ${role.name}`);
+  if (dryRun) return;
+
+  await discord("PUT", `/guilds/${guildId}/members/${userId}/roles/${role.id}`);
 }
 
 async function discord(method, path, body, attempt = 0) {

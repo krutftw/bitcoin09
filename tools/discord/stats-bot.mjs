@@ -12,6 +12,14 @@ const DISCORD_INVITE = "https://discord.gg/fUuGzwRTzP";
 const MESSAGE_MARKER = "Bitcoin 09 live mining stats";
 const DEFAULT_STATS_CHANNEL = "pools-and-nodes";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
+const selfAssignableRoles = [
+  { key: "miner", label: "Miner", roleName: "⛏ Miner" },
+  { key: "node_operator", label: "Node Operator", roleName: "🧱 Node Operator" },
+  { key: "updates", label: "Updates", roleName: "🔔 Updates" },
+  { key: "contributor", label: "Contributor", roleName: "🤝 Contributor" },
+  { key: "tester", label: "Tester", roleName: "🧪 Tester" },
+];
+let roleCache = null;
 
 loadLocalEnv();
 
@@ -56,13 +64,18 @@ async function main() {
 async function registerCommands() {
   requireDiscordEnv();
 
-  const command = await discord("POST", `/applications/${process.env.DISCORD_CLIENT_ID}/guilds/${process.env.DISCORD_GUILD_ID}/commands`, {
-    name: "stats",
-    description: "Show live Bitcoin 09 mining and network stats.",
-    type: 1,
-  });
+  const commands = [
+    {
+      name: "stats",
+      description: "Show live Bitcoin 09 mining and network stats.",
+      type: 1,
+    },
+  ];
 
-  console.log(`Registered /stats (${command.id}) in guild ${process.env.DISCORD_GUILD_ID}.`);
+  const registered = await discord("PUT", `/applications/${process.env.DISCORD_CLIENT_ID}/guilds/${process.env.DISCORD_GUILD_ID}/commands`, commands);
+  for (const command of registered) {
+    console.log(`Registered /${command.name} (${command.id}) in guild ${process.env.DISCORD_GUILD_ID}.`);
+  }
 }
 
 async function postOrUpdateStatsMessage() {
@@ -182,8 +195,17 @@ async function watchGateway() {
 }
 
 async function handleInteraction(interaction) {
-  if (interaction.type !== 2 || interaction.data?.name !== "stats") return;
+  if (interaction.type === 2 && interaction.data?.name === "stats") {
+    await handleStatsInteraction(interaction);
+    return;
+  }
 
+  if (interaction.type === 3 && interaction.data?.custom_id?.startsWith("role:toggle:")) {
+    await handleRoleButtonInteraction(interaction);
+  }
+}
+
+async function handleStatsInteraction(interaction) {
   await discord("POST", `/interactions/${interaction.id}/${interaction.token}/callback`, {
     type: 5,
   }, { auth: false });
@@ -201,6 +223,70 @@ async function handleInteraction(interaction) {
     }, { auth: false }).catch(() => {});
     throw error;
   }
+}
+
+async function handleRoleButtonInteraction(interaction) {
+  await discord("POST", `/interactions/${interaction.id}/${interaction.token}/callback`, {
+    type: 5,
+    data: { flags: 64 },
+  }, { auth: false });
+
+  const roleKey = interaction.data.custom_id.slice("role:toggle:".length);
+  const roleConfig = selfAssignableRoles.find((role) => role.key === roleKey);
+  const userId = interaction.member?.user?.id ?? interaction.user?.id;
+  const guildId = interaction.guild_id ?? process.env.DISCORD_GUILD_ID;
+
+  if (!roleConfig || !userId || !guildId) {
+    await editInteraction(interaction.token, "I could not understand that role button.");
+    return;
+  }
+
+  const role = await findGuildRole(guildId, roleConfig.roleName);
+  if (!role) {
+    await editInteraction(interaction.token, `I could not find the ${roleConfig.label} role.`);
+    return;
+  }
+
+  const memberRoleIds = await getMemberRoleIds(guildId, userId, interaction.member);
+  const hasRole = memberRoleIds.includes(role.id);
+  const method = hasRole ? "DELETE" : "PUT";
+  await discord(method, `/guilds/${guildId}/members/${userId}/roles/${role.id}`, null);
+  await editInteraction(
+    interaction.token,
+    hasRole
+      ? `Removed ${roleConfig.roleName}.`
+      : `Added ${roleConfig.roleName}.`,
+  );
+}
+
+async function editInteraction(token, content) {
+  await discord("PATCH", `/webhooks/${process.env.DISCORD_CLIENT_ID}/${token}/messages/@original`, {
+    content,
+    allowed_mentions: { parse: [] },
+  }, { auth: false });
+}
+
+async function findGuildRole(guildId, roleName) {
+  const now = Date.now();
+  if (!roleCache || roleCache.guildId !== guildId || roleCache.expiresAt < now) {
+    roleCache = {
+      guildId,
+      expiresAt: now + 60_000,
+      roles: await discord("GET", `/guilds/${guildId}/roles`),
+    };
+  }
+
+  return roleCache.roles.find((role) => role.name === roleName) ??
+    roleCache.roles.find((role) => normalizeRoleName(role.name) === normalizeRoleName(roleName));
+}
+
+async function getMemberRoleIds(guildId, userId, interactionMember) {
+  if (Array.isArray(interactionMember?.roles)) {
+    return interactionMember.roles;
+  }
+
+  const member = await discord("GET", `/guilds/${guildId}/members/${userId}`);
+  return member.roles ?? [];
 }
 
 async function getStats() {
@@ -313,6 +399,12 @@ function normalizeChannelName(name) {
     .replace(/[^a-z0-9-]/g, "");
 }
 
+function normalizeRoleName(name) {
+  return String(name)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
@@ -375,7 +467,7 @@ Modes:
   no args              Print current stats locally.
   --register-commands  Register the guild /stats command.
   --post               Post or update one stats message in Discord.
-  --watch              Keep a gateway connection open and answer /stats.
+  --watch              Keep a gateway connection open and answer /stats plus role buttons.
 
 Environment:
   DISCORD_CLIENT_ID
