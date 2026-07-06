@@ -9,7 +9,7 @@ their computers on.
 ## What exists now
 
 - source code is public
-- v0.1.10 binaries are published
+- v0.1.11 binaries are published
 - mainnet genesis is fixed
 - seed node is online at `82.22.32.82:9009`
 - explorer is online at `http://82.22.32.82:8009`

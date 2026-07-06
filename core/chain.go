@@ -32,7 +32,7 @@ type Chain struct {
 	params  *Params
 	index   map[Hash32]*blockIndex
 	tip     *blockIndex
-	mainIDs []Hash32             // main chain by height
+	mainIDs []Hash32 // main chain by height
 	utxo    map[OutPoint]UTXOEntry
 	mempool map[Hash32]*Tx
 
@@ -285,6 +285,14 @@ func (c *Chain) acceptBlockLocked(b *Block) (*blockIndex, error) {
 		return nil, nil
 	}
 
+	if parent == c.tip {
+		if err := c.connectTipLocked(bi); err != nil {
+			return nil, err
+		}
+		c.index[id] = bi
+		return bi, nil
+	}
+
 	// becomes best chain: replay from fork point on a scratch UTXO copy
 	if err := c.connectBranch(bi); err != nil {
 		return nil, err
@@ -316,6 +324,28 @@ func (c *Chain) branchTo(bi *blockIndex) map[int64]*blockIndex {
 	return m
 }
 
+func cloneUTXO(src map[OutPoint]UTXOEntry) map[OutPoint]UTXOEntry {
+	dst := make(map[OutPoint]UTXOEntry, len(src))
+	for op, entry := range src {
+		dst[op] = entry
+	}
+	return dst
+}
+
+// connectTipLocked validates and connects the common case: a block extending
+// the current best tip. Full branch replay is only needed when switching forks.
+func (c *Chain) connectTipLocked(newTip *blockIndex) error {
+	scratch := &Chain{params: c.params, utxo: cloneUTXO(c.utxo)}
+	if err := scratch.validateAndApplyLocked(newTip.block, newTip.height); err != nil {
+		return fmt.Errorf("block %d invalid: %w", newTip.height, err)
+	}
+	c.utxo = scratch.utxo
+	c.mainIDs = append(c.mainIDs, newTip.id)
+	c.tip = newTip
+	c.evictMempoolLocked()
+	return nil
+}
+
 // connectBranch rebuilds the UTXO set along the branch ending at newTip,
 // validating every block's transactions contextually. On success the main
 // chain, UTXO set and mempool are updated.
@@ -338,13 +368,16 @@ func (c *Chain) connectBranch(newTip *blockIndex) error {
 	c.utxo = utxo
 	c.mainIDs = newMain
 	c.tip = newTip
-	// evict confirmed/conflicting txs from mempool
+	c.evictMempoolLocked()
+	return nil
+}
+
+func (c *Chain) evictMempoolLocked() {
 	for id, tx := range c.mempool {
 		if _, err := c.checkTxLocked(tx, c.tip.height+1); err != nil {
 			delete(c.mempool, id)
 		}
 	}
-	return nil
 }
 
 // validateAndApplyLocked checks a block's economics against the (scratch)

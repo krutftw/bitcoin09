@@ -44,6 +44,8 @@ Mine with all your cores:
 
 Your reward address prints at startup (wallet auto-created in `~/.btc09`).
 
+For the shortest setup path, read [QUICKSTART.md](QUICKSTART.md).
+
 Run a node without mining:
 
 ```
@@ -79,7 +81,7 @@ Balance notes:
 
 - The wallet balance is calculated from your local node's synced chain, so a
   fresh node may show it later than the public explorer while it catches up.
-- v0.1.10 syncs fresh nodes in larger bounded batches and also logs balance
+- v0.1.10 and later sync fresh nodes in larger bounded batches and log balance
   changes as soon as the local chain sees them.
 - The running node still prints a regular status line every 30 seconds.
 - Coinbase mining rewards are spendable after 100 blocks, same as Bitcoin.
@@ -134,6 +136,17 @@ Live block explorer:
 http://82.22.32.82:8009
 ```
 
+Supply/status APIs:
+
+```text
+http://82.22.32.82:8009/api/status
+http://82.22.32.82:8009/api/supply
+http://82.22.32.82:8009/api/circulating_supply
+```
+
+`/api/circulating_supply` returns the plain circulating supply number. It
+excludes the burned genesis reward.
+
 Discord:
 
 ```text
@@ -141,6 +154,14 @@ https://discord.gg/fUuGzwRTzP
 ```
 
 Any node can serve its own explorer with `-explorer :8009`.
+
+## Markets
+
+There is no official 09C price. Early trading is community OTC only.
+
+Discord has `#💱-otc-trading` for users who want to post buy/sell offers or
+factual completed-trade references. Staff does not provide official escrow and
+there are no price promises.
 
 ## Tests
 
@@ -154,8 +175,8 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.10 is current. The node, miner, wallet, P2P sync, built-in seed and block
-explorer are live.
+v0.1.11 is current. The node, miner, wallet, P2P sync, built-in seed, block
+explorer and supply APIs are live.
 
 Network:
 

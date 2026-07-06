@@ -88,13 +88,15 @@ Self-serve roles are chosen with buttons in `#🎭-roles`. `🔔 Updates` is onl
 Categories, text channels, and voice channels:
 
 - `📌 INFO`: `#📣-announcements`, `#👋-start-here`, `#📜-rules`, `#🎭-roles`, `#🔗-resources`
-- `💬 COMMUNITY`: `#💬-general`
+- `💬 COMMUNITY`: `#💬-general`, `#💱-otc-trading`
 - `⛏ MINING`: `#⛏-mining-help`, `#📈-hashrate`
 - `🌐 NETWORK`: `#🏊-pools-and-nodes`, `#🧱-node-operators`
 - `🛠 DEVELOPMENT`: `#🛠-dev-log`, `#🐞-bug-reports`, `#💡-ideas`
 - `🔊 VOICE`: `🔊-lobby`, `⛏-mining-room`, `🛠-dev-sync`
 
 The info channels are configured so `@everyone` cannot send messages. The script keeps aliases for the original plain names, so existing channels are renamed/reused instead of duplicated.
+
+`#💱-otc-trading` is for community buy/sell posts only. It is not an official exchange, it does not set an official 09C price, and staff does not provide official escrow.
 
 ## Live Stats Bot
 

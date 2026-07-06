@@ -43,6 +43,9 @@ func (s *Server) Serve(addr string) error {
 	mux.HandleFunc("/address/", s.handleAddress)
 	mux.HandleFunc("/search", s.handleSearch)
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/supply", s.handleSupply)
+	mux.HandleFunc("/api/circulating_supply", s.handleCirculatingSupply)
+	mux.HandleFunc("/api/circulating-supply", s.handleCirculatingSupply)
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      mux,
@@ -79,6 +82,127 @@ func coins(u int64) string {
 	return fmt.Sprintf("%d.%08d", u/core.UnitsPerCoin, u%core.UnitsPerCoin)
 }
 
+func nominalMaxSupplyUnits() int64 {
+	return 21_000_000 * core.UnitsPerCoin
+}
+
+func totalSubsidyThrough(height int64) int64 {
+	if height < 0 {
+		return 0
+	}
+	var total int64
+	for halving := int64(0); halving < core.MaxHalvings; halving++ {
+		subsidy := int64(core.InitialRewardUnits >> uint(halving))
+		if subsidy == 0 {
+			break
+		}
+		start := halving * core.HalvingInterval
+		if height < start {
+			break
+		}
+		end := start + core.HalvingInterval - 1
+		if height < end {
+			end = height
+		}
+		total += (end - start + 1) * subsidy
+	}
+	return total
+}
+
+func firstZeroSubsidyHeight() int64 {
+	for halving := int64(0); halving < core.MaxHalvings; halving++ {
+		height := halving * core.HalvingInterval
+		if core.SubsidyAt(height) == 0 {
+			return height
+		}
+	}
+	return core.MaxHalvings * core.HalvingInterval
+}
+
+func nextHalvingHeight(tip int64) int64 {
+	zeroHeight := firstZeroSubsidyHeight()
+	if tip >= zeroHeight {
+		return 0
+	}
+	return ((tip / core.HalvingInterval) + 1) * core.HalvingInterval
+}
+
+func nonNegativeDelta(target, current int64) int64 {
+	if target <= current {
+		return 0
+	}
+	return target - current
+}
+
+type supplyData struct {
+	Coin                          string `json:"coin"`
+	Ticker                        string `json:"ticker"`
+	Height                        int64  `json:"height"`
+	CirculatingSupply             string `json:"circulating_supply"`
+	CirculatingSupplyUnits        int64  `json:"circulating_supply_units"`
+	TotalSubsidyIssued            string `json:"total_subsidy_issued"`
+	TotalSubsidyIssuedUnits       int64  `json:"total_subsidy_issued_units"`
+	BurnedGenesisSupply           string `json:"burned_genesis_supply"`
+	BurnedGenesisSupplyUnits      int64  `json:"burned_genesis_supply_units"`
+	MaxSupply                     string `json:"max_supply"`
+	MaxSupplyUnits                int64  `json:"max_supply_units"`
+	MaximumIssuedSupply           string `json:"maximum_issued_supply"`
+	MaximumIssuedSupplyUnits      int64  `json:"maximum_issued_supply_units"`
+	MaximumCirculatingSupply      string `json:"maximum_circulating_supply"`
+	MaximumCirculatingSupplyUnits int64  `json:"maximum_circulating_supply_units"`
+	BlockReward                   string `json:"block_reward"`
+	BlockRewardUnits              int64  `json:"block_reward_units"`
+	NextHalvingHeight             int64  `json:"next_halving_height"`
+	BlocksToHalving               int64  `json:"blocks_to_halving"`
+	ZeroSubsidyHeight             int64  `json:"zero_subsidy_height"`
+	BlocksToZeroSubsidy           int64  `json:"blocks_to_zero_subsidy"`
+	TargetBlockSeconds            int64  `json:"target_block_seconds"`
+	HalvingInterval               int64  `json:"halving_interval"`
+	GenesisRewardBurned           bool   `json:"genesis_reward_burned"`
+}
+
+func supplyAt(p *core.Params, tip int64) supplyData {
+	totalIssued := totalSubsidyThrough(tip)
+	burnedGenesis := core.SubsidyAt(0)
+	circulating := totalIssued - burnedGenesis
+	if circulating < 0 {
+		circulating = 0
+	}
+	zeroHeight := firstZeroSubsidyHeight()
+	maxIssued := totalSubsidyThrough(zeroHeight - 1)
+	maxCirculating := maxIssued - burnedGenesis
+	if maxCirculating < 0 {
+		maxCirculating = 0
+	}
+	halvingHeight := nextHalvingHeight(tip)
+	return supplyData{
+		Coin:                          core.CoinName,
+		Ticker:                        core.Ticker,
+		Height:                        tip,
+		CirculatingSupply:             coins(circulating),
+		CirculatingSupplyUnits:        circulating,
+		TotalSubsidyIssued:            coins(totalIssued),
+		TotalSubsidyIssuedUnits:       totalIssued,
+		BurnedGenesisSupply:           coins(burnedGenesis),
+		BurnedGenesisSupplyUnits:      burnedGenesis,
+		MaxSupply:                     coins(nominalMaxSupplyUnits()),
+		MaxSupplyUnits:                nominalMaxSupplyUnits(),
+		MaximumIssuedSupply:           coins(maxIssued),
+		MaximumIssuedSupplyUnits:      maxIssued,
+		MaximumCirculatingSupply:      coins(maxCirculating),
+		MaximumCirculatingSupplyUnits: maxCirculating,
+		BlockReward:                   coins(core.SubsidyAt(tip + 1)),
+		BlockRewardUnits:              core.SubsidyAt(tip + 1),
+		NextHalvingHeight:             halvingHeight,
+		BlocksToHalving:               nonNegativeDelta(halvingHeight, tip),
+		ZeroSubsidyHeight:             zeroHeight,
+		BlocksToZeroSubsidy:           nonNegativeDelta(zeroHeight, tip),
+		TargetBlockSeconds:            p.TargetBlockTime,
+		HalvingInterval:               core.HalvingInterval,
+		GenesisRewardBurned:           true,
+	}
+}
+
 func (s *Server) row(h int64) (blockRow, bool) {
 	b := s.chain.BlockAt(h)
 	if b == nil {
@@ -112,12 +236,15 @@ func (s *Server) row(h int64) (blockRow, bool) {
 }
 
 type homeData struct {
-	Title      string
-	Height     int64
-	Peers      int
-	Difficulty string
-	Supply     string
-	Blocks     []blockRow
+	Title             string
+	Height            int64
+	Peers             int
+	Difficulty        string
+	Supply            string
+	BlockReward       string
+	NextHalvingHeight int64
+	BlocksToHalving   int64
+	Blocks            []blockRow
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -127,11 +254,11 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 	_, tip := s.chain.Tip()
 	d := homeData{Title: "Bitcoin 09 explorer", Height: tip, Peers: s.peers.PeerCount()}
-	var minted int64
-	for h := int64(0); h <= tip; h++ {
-		minted += core.SubsidyAt(h)
-	}
-	d.Supply = coins(minted)
+	supply := supplyAt(s.chain.Params(), tip)
+	d.Supply = supply.CirculatingSupply
+	d.BlockReward = supply.BlockReward
+	d.NextHalvingHeight = supply.NextHalvingHeight
+	d.BlocksToHalving = supply.BlocksToHalving
 	if b := s.chain.BlockAt(tip); b != nil {
 		d.Difficulty = fmt.Sprintf("%.2f", s.difficulty(b.Header.Bits))
 	}
@@ -204,15 +331,39 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if b := s.chain.BlockAt(tip); b != nil {
 		diff = s.difficulty(b.Header.Bits)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"coin":       core.CoinName,
-		"ticker":     core.Ticker,
-		"height":     tip,
-		"peers":      s.peers.PeerCount(),
-		"difficulty": diff,
-		"uptime_sec": int(time.Since(s.start).Seconds()),
+	supply := supplyAt(s.chain.Params(), tip)
+	writeJSON(w, map[string]any{
+		"coin":                  core.CoinName,
+		"ticker":                core.Ticker,
+		"height":                tip,
+		"peers":                 s.peers.PeerCount(),
+		"difficulty":            diff,
+		"uptime_sec":            int(time.Since(s.start).Seconds()),
+		"circulating_supply":    supply.CirculatingSupply,
+		"block_reward":          supply.BlockReward,
+		"next_halving_height":   supply.NextHalvingHeight,
+		"blocks_to_halving":     supply.BlocksToHalving,
+		"zero_subsidy_height":   supply.ZeroSubsidyHeight,
+		"genesis_reward_burned": supply.GenesisRewardBurned,
 	})
+}
+
+func (s *Server) handleSupply(w http.ResponseWriter, r *http.Request) {
+	_, tip := s.chain.Tip()
+	writeJSON(w, supplyAt(s.chain.Params(), tip))
+}
+
+func (s *Server) handleCirculatingSupply(w http.ResponseWriter, r *http.Request) {
+	_, tip := s.chain.Tip()
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprintln(w, supplyAt(s.chain.Params(), tip).CirculatingSupply)
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
 }
 
 const pageTmpl = `<!DOCTYPE html>
@@ -240,6 +391,8 @@ input { font-family: monospace; width: 24em; }
 <span>peers <b>{{.Peers}}</b></span>
 <span>difficulty <b>{{.Difficulty}}</b></span>
 <span>supply <b>{{.Supply}} 09C</b></span>
+<span>reward <b>{{.BlockReward}} 09C</b></span>
+<span>halving <b>{{.BlocksToHalving}}</b> blocks</span>
 </p>
 <form action="/search"><input name="q" placeholder="block height or address"><button>go</button></form>
 <table>

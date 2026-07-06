@@ -32,7 +32,7 @@ td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ccc; font
 <h1>Bitcoin 09 (09C)</h1>
 <p class="tag">the coin that you can mine like it's 2009</p>
 
-<p id="live">Network status: <a href="http://82.22.32.82:8009">live explorer</a>. Current release: v0.1.10. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>.</p>
+<p id="live">Network status: <a href="http://82.22.32.82:8009">live explorer</a>. Current release: v0.1.11. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">early OTC notes</a>.</p>
 
 <p>Bitcoin 09 is Bitcoin, same idea top to bottom, changed in one place: the
 proof of work is Argon2id (memory-hard) instead of SHA-256. Normal CPUs do
@@ -79,16 +79,27 @@ it prints BLOCK FOUND and you own 50 09C.</p>
 <pre>btc09 node</pre>
 <p>Mining only starts when <code>-mine</code> is present. A non-mining node still syncs, relays blocks and transactions, listens on <code>:9009</code> by default, and can serve its own explorer:</p>
 <pre>btc09 node -explorer :8009</pre>
-<p class="muted">Wallet balance is calculated from your local synced chain, so a fresh node can show a balance later than the public explorer while it catches up. v0.1.10 syncs fresh nodes in larger bounded batches and logs balance changes as soon as the local chain sees them. Mined coinbase rewards become spendable after 100 blocks.</p>
+<p class="muted">Wallet balance is calculated from your local synced chain, so a fresh node can show a balance later than the public explorer while it catches up. v0.1.10 and later sync fresh nodes in larger bounded batches and log balance changes as soon as the local chain sees them. Mined coinbase rewards become spendable after 100 blocks.</p>
 
 <h2>Watch the chain</h2>
 <p><a href="http://82.22.32.82:8009">Live block explorer</a>: height, difficulty,
 recent blocks and every miner's address.</p>
+<p>The explorer also exposes machine-readable supply data for listings and
+audits:</p>
+<pre>curl http://82.22.32.82:8009/api/supply
+curl http://82.22.32.82:8009/api/circulating_supply</pre>
+
+<h2>Markets</h2>
+<p>There is no official 09C price. Early trading is community OTC only: users
+can post buy/sell offers in Discord, and completed trades can be referenced as
+price discovery. Read the <a href="markets.html">markets note</a> before
+trading.</p>
 
 <h2>Read</h2>
 <ul>
 <li><a href="https://github.com/krutftw/bitcoin09">Source code</a> (MIT, Go)</li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/WHITEPAPER.md">Whitepaper</a></li>
+<li><a href="https://github.com/krutftw/bitcoin09/blob/master/QUICKSTART.md">Quickstart</a></li>
 <li><a href="https://discord.gg/fUuGzwRTzP">Discord</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09/issues/1">Launch thread</a> (post your node, ask anything)</li>
 <li><a href="https://bitcointalk.org/index.php?topic=5587640.0">Bitcointalk ANN</a></li>
