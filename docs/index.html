@@ -8,6 +8,7 @@
 <style>
 body { font-family: monospace; background: #f4f1ea; color: #222; margin: 2em auto; max-width: 720px; padding: 0 1em; line-height: 1.5; }
 h1 { font-size: 1.6em; margin-bottom: 0; }
+h2 { margin-top: 1.4em; }
 .tag { color: #666; margin-top: 4px; }
 pre { background: #e8e4da; padding: 12px; overflow-x: auto; }
 a { color: #1a0dab; }
@@ -15,6 +16,16 @@ table { border-collapse: collapse; width: 100%; margin: 1em 0; }
 td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ccc; font-size: 0.9em; }
 .warn { border: 1px solid #b5a; padding: 10px; background: #f7eef4; }
 #live { color: #444; }
+.stats { border: 1px solid #b9b2a5; background: #ede8dc; padding: 12px; margin: 1em 0; }
+.stats p { margin: 0.25em 0 0.75em; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.stat { border: 1px solid #cfc6b8; background: #f7f3ea; padding: 8px; min-height: 52px; }
+.stat b { display: block; font-size: 1.35em; line-height: 1.2; }
+.stat span { color: #666; font-size: 0.85em; }
+.muted { color: #666; }
+.error { color: #8a1f11; }
+.miner-list { margin-top: 10px; overflow-x: auto; }
+.miner-list table { margin-bottom: 0; }
 </style>
 </head>
 <body>
@@ -35,6 +46,26 @@ the mining and ASICs/GPUs get no real advantage.</p>
 <tr><td>Premine</td><td>none</td><td>none</td></tr>
 <tr><td>Proof of work</td><td>SHA-256d (ASICs)</td><td>Argon2id 64 MiB (CPUs)</td></tr>
 </table>
+
+<h2>Mining now</h2>
+<section class="stats" aria-live="polite">
+<p id="stats-note" class="muted">Loading live pool stats...</p>
+<div class="stat-grid">
+<div class="stat"><b id="stat-miners">-</b><span>active pool miner addresses</span></div>
+<div class="stat"><b id="stat-pool-hashrate">-</b><span>pool hashrate</span></div>
+<div class="stat"><b id="stat-height">-</b><span>pool-reported height</span></div>
+<div class="stat"><b id="stat-difficulty">-</b><span>difficulty</span></div>
+<div class="stat"><b id="stat-blocks">-</b><span>pool blocks found</span></div>
+<div class="stat"><b id="stat-paid">-</b><span>09C paid by pool</span></div>
+</div>
+<details class="miner-list">
+<summary>Top active pool addresses</summary>
+<table>
+<thead><tr><th>Address</th><th>Hashrate</th></tr></thead>
+<tbody id="miner-rows"><tr><td colspan="2">Loading...</td></tr></tbody>
+</table>
+</details>
+</section>
 
 <h2>Mine it</h2>
 <p>Download the <a href="https://github.com/krutftw/bitcoin09/releases/latest">latest release</a> for your OS, then run:</p>
@@ -64,18 +95,104 @@ CPU. Mine it because it's fun and you missed 2009.</div>
 <p>genesis: <code>ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f</code></p>
 
 <script>
-if (location.protocol === 'http:') {
-  fetch('http://82.22.32.82:8009/api/status')
-    .then(r => r.json())
-    .then(s => {
-      document.getElementById('live').innerHTML =
-        'network now: height ' + Number(s.height) +
-        ', peers ' + Number(s.peers) +
-        ', difficulty ' + Number(s.difficulty).toFixed(2) +
-        '. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>.';
-    })
-    .catch(() => {});
+const poolApi = 'https://bitcoin09.tutuit.xyz/api/pools/09c';
+const minerApi = 'https://bitcoin09.tutuit.xyz/api/pools/09c/miners?pageSize=20';
+
+function text(id, value) {
+  document.getElementById(id).textContent = value;
 }
+
+function fixed(value, digits) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '-';
+  return n.toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  });
+}
+
+function hashRate(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '-';
+  if (n >= 1_000_000) return fixed(n / 1_000_000, 2) + ' MH/s';
+  if (n >= 1_000) return fixed(n / 1_000, 2) + ' KH/s';
+  return fixed(n, 2) + ' H/s';
+}
+
+function setLiveSummary(pool, miners) {
+  const live = document.getElementById('live');
+  const height = Number(pool.networkStats?.blockHeight ?? 0).toLocaleString();
+  const difficulty = fixed(pool.networkStats?.networkDifficulty, 2);
+  const active = Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString();
+  live.replaceChildren(
+    document.createTextNode('network now: height ' + height + ', difficulty ' + difficulty + ', active pool miner addresses ' + active + '. '),
+    Object.assign(document.createElement('a'), { href: 'https://bitcoin09.tutuit.xyz', textContent: 'pool' }),
+    document.createTextNode(' / '),
+    Object.assign(document.createElement('a'), { href: 'http://82.22.32.82:8009', textContent: 'explorer' }),
+    document.createTextNode(' / '),
+    Object.assign(document.createElement('a'), { href: 'https://discord.gg/fUuGzwRTzP', textContent: 'Discord' }),
+    document.createTextNode('.')
+  );
+}
+
+function renderMiners(miners) {
+  const rows = document.getElementById('miner-rows');
+  rows.replaceChildren();
+  if (!miners.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 2;
+    cell.textContent = 'No pool miners reported right now.';
+    row.append(cell);
+    rows.append(row);
+    return;
+  }
+
+  for (const miner of miners.slice(0, 10)) {
+    const row = document.createElement('tr');
+    const address = document.createElement('td');
+    const hashrate = document.createElement('td');
+    address.textContent = miner.miner;
+    hashrate.textContent = hashRate(miner.hashrate);
+    row.append(address, hashrate);
+    rows.append(row);
+  }
+}
+
+async function refreshStats() {
+  const note = document.getElementById('stats-note');
+  try {
+    const [poolResponse, minersResponse] = await Promise.all([
+      fetch(poolApi, { cache: 'no-store' }),
+      fetch(minerApi, { cache: 'no-store' }),
+    ]);
+    if (!poolResponse.ok) throw new Error('pool status ' + poolResponse.status);
+    if (!minersResponse.ok) throw new Error('miner status ' + minersResponse.status);
+
+    const poolData = await poolResponse.json();
+    const miners = await minersResponse.json();
+    const pool = poolData.pool;
+    const updated = new Date();
+
+    text('stat-miners', Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString());
+    text('stat-pool-hashrate', hashRate(pool.poolStats?.poolHashrate));
+    text('stat-height', Number(pool.networkStats?.blockHeight ?? 0).toLocaleString());
+    text('stat-difficulty', fixed(pool.networkStats?.networkDifficulty, 2));
+    text('stat-blocks', Number(pool.blocksFound ?? 0).toLocaleString());
+    text('stat-paid', fixed(pool.totalPaid, 2));
+    note.className = 'muted';
+    note.textContent = 'Live pool data from bitcoin09.tutuit.xyz. Miner count means pool payout addresses, not guaranteed unique people. Updated ' + updated.toLocaleTimeString() + '.';
+
+    renderMiners(miners);
+    setLiveSummary(pool, miners);
+  } catch (error) {
+    note.className = 'error';
+    note.textContent = 'Live pool stats are unavailable right now. Use the pool or explorer links below.';
+  }
+}
+
+refreshStats();
+setInterval(refreshStats, 60000);
 </script>
 </body>
 </html>

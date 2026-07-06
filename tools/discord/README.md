@@ -74,8 +74,40 @@ Categories, text channels, and voice channels:
 
 The info channels are configured so `@everyone` cannot send messages. The script keeps aliases for the original plain names, so existing channels are renamed/reused instead of duplicated.
 
+## Live Stats Bot
+
+`stats-bot.mjs` reads the public pool API and explorer status, then formats the current miner count, hashrate, height, payouts, and top pool addresses.
+
+Print the current stats locally:
+
+```powershell
+node tools/discord/stats-bot.mjs
+```
+
+Register the guild slash command:
+
+```powershell
+node tools/discord/stats-bot.mjs --register-commands
+```
+
+Post or update one bot-authored stats message in `#🏊-pools-and-nodes`:
+
+```powershell
+node tools/discord/stats-bot.mjs --post
+```
+
+Run the bot so `/stats` answers inside Discord:
+
+```powershell
+node tools/discord/stats-bot.mjs --watch
+```
+
+The slash command only responds while the watch process is running. The one-shot `--post` mode is safe to run repeatedly because it edits the existing bot message when one is already present.
+
 ## Official Docs
 
 - Discord OAuth2: https://docs.discord.com/developers/topics/oauth2
 - Discord OAuth2 and bot permissions: https://docs.discord.com/developers/platform/oauth2-and-permissions
 - Discord guild channel API: https://docs.discord.com/developers/resources/guild#create-guild-channel
+- Discord application commands: https://docs.discord.com/developers/interactions/application-commands
+- Discord interactions: https://docs.discord.com/developers/interactions/receiving-and-responding
