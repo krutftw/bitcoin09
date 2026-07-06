@@ -23,6 +23,9 @@ import (
 	"github.com/krutftw/bitcoin09/wallet"
 )
 
+// nodeVersion is the release version; bump alongside git tags.
+const nodeVersion = "v0.1.8"
+
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".btc09")
@@ -47,7 +50,7 @@ func main() {
 	case "genesis-mine":
 		cmdGenesisMine(os.Args[2:])
 	case "version":
-		fmt.Printf("%s (%s) reference node v0.1.0\n", core.CoinName, core.Ticker)
+		fmt.Printf("%s (%s) reference node %s\n", core.CoinName, core.Ticker, nodeVersion)
 	default:
 		usage()
 	}
