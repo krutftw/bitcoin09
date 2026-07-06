@@ -37,6 +37,12 @@ Seed node:
 82.22.32.82:9009
 ```
 
+Explorer:
+
+```text
+http://82.22.32.82:8009
+```
+
 Build from source:
 
 ```bash
@@ -46,7 +52,14 @@ go build ./cmd/btc09
 ./btc09 node -mine -seeds 82.22.32.82:9009
 ```
 
-Or download v0.1.0 from releases.
+Or download the latest release, currently v0.1.9:
+
+```text
+https://github.com/krutftw/bitcoin09/releases/latest
+```
+
+If you downloaded an early build, upgrade. Older clients can sit on stale
+forks from before the retarget and sync fixes.
 
 This has no price. It may never have a price. Mine it if you want to be early
 to a fair CPU-mined chain and you like the idea of doing the 2009 part again.

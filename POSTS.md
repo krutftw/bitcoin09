@@ -36,6 +36,9 @@ the coin that you can mine like it's 2009
 Seed:
 82.22.32.82:9009
 
+Explorer:
+http://82.22.32.82:8009
+
 Source and releases:
 https://github.com/krutftw/bitcoin09
 
@@ -44,6 +47,9 @@ git clone https://github.com/krutftw/bitcoin09
 cd bitcoin09
 go build ./cmd/btc09
 ./btc09 node -mine -seeds 82.22.32.82:9009
+
+If you downloaded an early build, upgrade to the latest release. Older clients
+can sit on stale forks from before the retarget and sync fixes.
 
 09C has no price. It might never have one. Mine it if you want to join a
 fair CPU-mined chain from the start.
@@ -58,6 +64,7 @@ proof of work so people can mine on normal computers again.
 21M cap, halvings, 10 min blocks, no premine, burned genesis.
 
 Seed: 82.22.32.82:9009
+Explorer: http://82.22.32.82:8009
 Repo: https://github.com/krutftw/bitcoin09
 
 Mine it if you want to do the 2009 part again.

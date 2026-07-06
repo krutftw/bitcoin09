@@ -9,12 +9,14 @@ their computers on.
 ## What exists now
 
 - source code is public
-- v0.1.0 binaries are published
+- v0.1.9 binaries are published
 - mainnet genesis is fixed
 - seed node is online at `82.22.32.82:9009`
+- explorer is online at `http://82.22.32.82:8009`
 - CPU mining works
 - blocks and transactions sync between peers
 - launch thread exists in GitHub issues
+- GitHub discussions are open for network status and block reports
 
 ## What to do first
 
@@ -27,6 +29,8 @@ their computers on.
    - whether they found a block
    - their node address if they can accept inbound connections
 5. Add any reliable public peers to the README.
+6. Keep telling early users to upgrade to the latest release if they mined on
+   pre-v0.1.6 builds.
 
 ## Early peer discovery
 

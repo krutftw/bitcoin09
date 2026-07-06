@@ -126,9 +126,23 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.0. Working node, miner and wallet, simple JSON p2p. Stuff I want next,
-PRs welcome: peer banning and DoS hardening, headers-first sync, DNS seeds,
-a block explorer, a friendlier miner UI.
+v0.1.9 is current. The node, miner, wallet, P2P sync, built-in seed and block
+explorer are live.
+
+Network:
+
+```text
+seed:     82.22.32.82:9009
+explorer: http://82.22.32.82:8009
+release:  https://github.com/krutftw/bitcoin09/releases/latest
+```
+
+If you downloaded an early build, upgrade to the latest release. Old clients
+from before the fork-sync and retarget fixes can get stuck on stale forks.
+
+Stuff I want next, PRs welcome: a second public seed, peer banning and DoS
+hardening, headers-first sync, DNS seeds, miner/peer stats in the explorer and
+a friendlier miner UI.
 
 ## License
 
