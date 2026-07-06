@@ -106,6 +106,14 @@ The first seed node is built into the client:
 82.22.32.82:9009
 ```
 
+Live block explorer:
+
+```text
+http://82.22.32.82:8009
+```
+
+Any node can serve its own explorer with `-explorer :8009`.
+
 ## Tests
 
 ```

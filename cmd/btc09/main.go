@@ -19,12 +19,13 @@ import (
 	"time"
 
 	"github.com/krutftw/bitcoin09/core"
+	"github.com/krutftw/bitcoin09/explorer"
 	"github.com/krutftw/bitcoin09/p2p"
 	"github.com/krutftw/bitcoin09/wallet"
 )
 
 // nodeVersion is the release version; bump alongside git tags.
-const nodeVersion = "v0.1.8"
+const nodeVersion = "v0.1.9"
 
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
@@ -112,6 +113,7 @@ func cmdNode(args []string) {
 	workers := fs.Int("workers", runtime.NumCPU(), "mining threads")
 	listen := fs.String("listen", ":9009", "p2p listen address")
 	seeds := fs.String("seeds", "", "comma-separated seed peers (host:port)")
+	explorerAddr := fs.String("explorer", "", "serve the block explorer on this address, e.g. :8009")
 	network := fs.String("network", "mainnet", "mainnet or regtest")
 	dataDir := fs.String("datadir", defaultDataDir(), "data directory")
 	tag := fs.String("tag", "", "text embedded in blocks you mine")
@@ -148,6 +150,16 @@ func cmdNode(args []string) {
 	}
 	if err := node.Start(ctx, seedList); err != nil {
 		log.Fatalf("p2p: %v", err)
+	}
+
+	if *explorerAddr != "" {
+		exp := explorer.New(chain, node)
+		go func() {
+			log.Printf("explorer on http://%s", *explorerAddr)
+			if err := exp.Serve(*explorerAddr); err != nil {
+				log.Printf("explorer: %v", err)
+			}
+		}()
 	}
 
 	if *mine {
