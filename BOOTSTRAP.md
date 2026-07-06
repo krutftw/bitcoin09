@@ -13,7 +13,7 @@ their computers on.
 - mainnet genesis is fixed
 - seed node is online at `82.22.32.82:9009`
 - explorer is online at `http://82.22.32.82:8009`
-- Discord is live at `https://discord.gg/vYvemBgU38`
+- Discord is live at `https://discord.gg/fUuGzwRTzP`
 - CPU mining works
 - blocks and transactions sync between peers
 - launch thread exists in GitHub issues
@@ -42,7 +42,7 @@ other.
 Use Discord for live coordination:
 
 ```text
-https://discord.gg/vYvemBgU38
+https://discord.gg/fUuGzwRTzP
 ```
 
 The GitHub launch thread can still be used for slower public notes:

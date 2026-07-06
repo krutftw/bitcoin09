@@ -46,7 +46,7 @@ http://82.22.32.82:8009
 Discord:
 
 ```text
-https://discord.gg/vYvemBgU38
+https://discord.gg/fUuGzwRTzP
 ```
 
 Build from source:

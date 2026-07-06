@@ -43,7 +43,7 @@ Source and releases:
 https://github.com/krutftw/bitcoin09
 
 Discord:
-https://discord.gg/vYvemBgU38
+https://discord.gg/fUuGzwRTzP
 
 Run:
 git clone https://github.com/krutftw/bitcoin09
@@ -69,7 +69,7 @@ proof of work so people can mine on normal computers again.
 Seed: 82.22.32.82:9009
 Explorer: http://82.22.32.82:8009
 Repo: https://github.com/krutftw/bitcoin09
-Discord: https://discord.gg/vYvemBgU38
+Discord: https://discord.gg/fUuGzwRTzP
 
 Mine it if you want to do the 2009 part again.
 ```
@@ -97,5 +97,5 @@ Source:
 https://github.com/krutftw/bitcoin09
 
 Discord:
-https://discord.gg/vYvemBgU38
+https://discord.gg/fUuGzwRTzP
 ```
