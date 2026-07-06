@@ -8,14 +8,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/krutftw/bitcoin09/core"
@@ -25,7 +29,7 @@ import (
 )
 
 // nodeVersion is the release version; bump alongside git tags.
-const nodeVersion = "v0.1.9"
+const nodeVersion = "v0.1.10"
 
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
@@ -61,7 +65,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `%s (%s): the coin that you can mine like it's 2009
 
 usage:
-  btc09 node   [-mine] [-listen :9009] [-seeds host:port,...] [-network mainnet|regtest] [-datadir DIR] [-tag TEXT]
+  btc09 node   [-mine] [-listen :9009] [-seeds host:port,...] [-network mainnet|regtest] [-datadir DIR] [-tag TEXT] [-no-update-check]
   btc09 wallet new|list [-datadir DIR]
   btc09 send   -to ADDRESS -amount COINS [-fee COINS] [-datadir DIR] ...
   btc09 version
@@ -117,6 +121,7 @@ func cmdNode(args []string) {
 	network := fs.String("network", "mainnet", "mainnet or regtest")
 	dataDir := fs.String("datadir", defaultDataDir(), "data directory")
 	tag := fs.String("tag", "", "text embedded in blocks you mine")
+	noUpdateCheck := fs.Bool("no-update-check", false, "do not check GitHub for a newer release at startup")
 	fs.Parse(args)
 
 	p := paramsFor(*network)
@@ -130,6 +135,8 @@ func cmdNode(args []string) {
 	node := p2p.NewNode(chain, *listen, log.Default())
 	// persist on every new tip (also announces via node's own hook, so chain
 	// keeps a single callback that fans out)
+	var balanceLogMu sync.Mutex
+	lastLoggedBalance := w.Balance(chain)
 	prevHook := chain.OnNewTip
 	chain.OnNewTip = func(b *core.Block, h int64) {
 		if prevHook != nil {
@@ -138,10 +145,20 @@ func cmdNode(args []string) {
 		if err := store.SaveSnapshot(chain); err != nil {
 			log.Printf("persist error: %v", err)
 		}
+		balance := w.Balance(chain)
+		balanceLogMu.Lock()
+		if balance != lastLoggedBalance {
+			lastLoggedBalance = balance
+			log.Printf("height=%d balance=%s", h, coins(balance))
+		}
+		balanceLogMu.Unlock()
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if !*noUpdateCheck && p.Name == "mainnet" {
+		go checkForUpdate(ctx, nodeVersion, log.Default())
+	}
 	var seedList []string
 	if *seeds != "" {
 		seedList = strings.Split(*seeds, ",")
@@ -202,6 +219,70 @@ func mineLoop(ctx context.Context, chain *core.Chain, node *p2p.Node, w *wallet.
 		log.Printf("*** BLOCK FOUND *** height=%d reward=%s id=%x... (%.1f H/s session)",
 			h, coins(res.Block.Txs[0].Outs[0].Value), id[:8], hs)
 	}
+}
+
+func checkForUpdate(ctx context.Context, current string, logger *log.Logger) {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, "https://api.github.com/repos/krutftw/bitcoin09/releases/latest", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "btc09/"+current)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return
+	}
+	var release struct {
+		TagName string `json:"tag_name"`
+		HTMLURL string `json:"html_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return
+	}
+	if releaseNewer(release.TagName, current) {
+		if release.HTMLURL == "" {
+			release.HTMLURL = "https://github.com/krutftw/bitcoin09/releases/latest"
+		}
+		logger.Printf("update available: %s (running %s): %s", release.TagName, current, release.HTMLURL)
+	}
+}
+
+func releaseNewer(latest, current string) bool {
+	latestParts, okLatest := parseReleaseVersion(latest)
+	currentParts, okCurrent := parseReleaseVersion(current)
+	if !okLatest || !okCurrent {
+		return false
+	}
+	for i := 0; i < len(latestParts); i++ {
+		if latestParts[i] != currentParts[i] {
+			return latestParts[i] > currentParts[i]
+		}
+	}
+	return false
+}
+
+func parseReleaseVersion(version string) ([3]int, bool) {
+	var out [3]int
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	version = strings.Split(version, "-")[0]
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
 
 func cmdWallet(args []string) {

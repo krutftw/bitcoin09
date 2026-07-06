@@ -24,7 +24,8 @@ const (
 	protocolVersion = 1
 	maxMsgBytes     = core.MaxBlockBytes + 4096
 	maxPeers        = 32
-	blockBatchSize  = 1
+	blockBatchSize  = 64
+	blockBatchBytes = 4 * 1024 * 1024
 )
 
 type Msg struct {
@@ -251,19 +252,32 @@ func (n *Node) handleMsg(p *peer, m *Msg) error {
 		n.mu.Unlock()
 		return nil
 	case "getblocks":
-		// Send a bounded batch. Early versions streamed the whole missing
-		// chain at once, which backed up TCP send queues on slow peers.
-		sent := 0
-		for h := m.From; sent < blockBatchSize; h++ {
+		// Send a bounded batch. This avoids the old unbounded stream while
+		// still catching up much faster than one block per round trip.
+		type batchBlock struct {
+			height int64
+			raw    []byte
+		}
+		var batch []batchBlock
+		totalBytes := 0
+		for h := m.From; len(batch) < blockBatchSize; h++ {
 			blk := n.chain.BlockAt(h)
 			if blk == nil {
 				break
 			}
-			next := n.chain.BlockAt(h + 1)
-			if err := p.send(&Msg{Type: "block", Raw: blk.Bytes(), Height: h, More: sent == blockBatchSize-1 && next != nil}); err != nil {
+			raw := blk.Bytes()
+			if len(batch) > 0 && totalBytes+len(raw) > blockBatchBytes {
+				break
+			}
+			batch = append(batch, batchBlock{height: h, raw: raw})
+			totalBytes += len(raw)
+		}
+		for i, blk := range batch {
+			last := i == len(batch)-1
+			more := last && n.chain.BlockAt(blk.height+1) != nil
+			if err := p.send(&Msg{Type: "block", Raw: blk.raw, Height: blk.height, More: more}); err != nil {
 				return err
 			}
-			sent++
 		}
 		return nil
 	case "block":

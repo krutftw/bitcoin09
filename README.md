@@ -79,8 +79,13 @@ Balance notes:
 
 - The wallet balance is calculated from your local node's synced chain, so a
   fresh node may show it later than the public explorer while it catches up.
-- The running node prints balance on its 30 second status heartbeat.
+- v0.1.10 syncs fresh nodes in larger bounded batches and also logs balance
+  changes as soon as the local chain sees them.
+- The running node still prints a regular status line every 30 seconds.
 - Coinbase mining rewards are spendable after 100 blocks, same as Bitcoin.
+- Mainnet nodes check GitHub for a newer release at startup and only print a
+  notice if one exists. Nothing auto-installs. Use `-no-update-check` to skip
+  that check.
 
 Local sandbox with instant blocks:
 
@@ -149,7 +154,7 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.9 is current. The node, miner, wallet, P2P sync, built-in seed and block
+v0.1.10 is current. The node, miner, wallet, P2P sync, built-in seed and block
 explorer are live.
 
 Network:
