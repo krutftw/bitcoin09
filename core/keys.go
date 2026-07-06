@@ -70,7 +70,7 @@ func base58Decode(s string) ([]byte, error) {
 	return out, nil
 }
 
-// EncodeAddress renders a pubkey hash as a BTC09 address.
+// EncodeAddress renders a pubkey hash as a 09C address.
 func EncodeAddress(pkh [20]byte) string {
 	payload := append([]byte{addrVersion}, pkh[:]...)
 	chk := sha256.Sum256(payload)
@@ -78,7 +78,7 @@ func EncodeAddress(pkh [20]byte) string {
 	return base58Encode(append(payload, chk[:4]...))
 }
 
-// DecodeAddress parses and checksums a BTC09 address.
+// DecodeAddress parses and checksums a 09C address.
 func DecodeAddress(s string) (pkh [20]byte, err error) {
 	raw, err := base58Decode(s)
 	if err != nil {

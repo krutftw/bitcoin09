@@ -4,7 +4,7 @@ Bitcoin did not start with exchanges, pools, explorers or companies. It
 started with a client, one reachable node, a forum post, and people leaving
 their computers on.
 
-BTC09 should start the same way.
+09C should start the same way.
 
 ## What exists now
 
@@ -30,7 +30,7 @@ BTC09 should start the same way.
 
 ## Early peer discovery
 
-Bitcoin used IRC discovery early on. BTC09 does not need to copy IRC exactly,
+Bitcoin used IRC discovery early on. 09C does not need to copy IRC exactly,
 but it should copy the behaviour: one public place where nodes can find each
 other.
 

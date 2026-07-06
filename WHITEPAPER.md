@@ -79,7 +79,7 @@ block 1 or later. The code was public on GitHub before the first block.
 
 ## 6. What this is not
 
-BTC09 has no company, no foundation, no allocation, no roadmap promises and
+09C has no company, no foundation, no allocation, no roadmap promises and
 no price. It is worth nothing today and may be worth nothing forever. It
 should be mined for the same reason Bitcoin was mined in 2009: because the
 experiment is interesting and being early to it costs almost nothing. If a

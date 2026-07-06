@@ -1,4 +1,4 @@
-// Package core implements the Bitcoin 09 (BTC09) consensus rules.
+// Package core implements the Bitcoin 09 (09C) consensus rules.
 //
 // Bitcoin 09 is Bitcoin, same-same but different in exactly one area:
 // proof-of-work is Argon2id (memory-hard) instead of SHA-256d, so ordinary
@@ -11,7 +11,7 @@ import "math/big"
 
 const (
 	CoinName     = "Bitcoin 09"
-	Ticker       = "BTC09"
+	Ticker       = "09C"
 	UnitsPerCoin = 100_000_000 // smallest unit, like satoshis
 
 	InitialRewardUnits = 50 * UnitsPerCoin

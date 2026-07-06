@@ -5,7 +5,7 @@
 Title:
 
 ```text
-[ANN] Bitcoin 09 (BTC09) - CPU mining like it's 2009, no premine
+[ANN] Bitcoin 09 (09C) - CPU mining like it's 2009, no premine
 ```
 
 Body:
@@ -14,7 +14,7 @@ Body:
 I made Bitcoin 09 because I wanted to bring back the part of Bitcoin most of
 us missed: mining on a normal computer when the coins were worth nothing.
 
-BTC09 is Bitcoin with one change: proof of work is Argon2id instead of
+09C is Bitcoin with one change: proof of work is Argon2id instead of
 SHA-256. The goal is to keep mining on ordinary CPUs instead of ASICs.
 
 Kept from Bitcoin:
@@ -45,14 +45,14 @@ cd bitcoin09
 go build ./cmd/btc09
 ./btc09 node -mine -seeds 82.22.32.82:9009
 
-BTC09 has no price. It might never have one. Mine it if you want to join a
+09C has no price. It might never have one. Mine it if you want to join a
 fair CPU-mined chain from the start.
 ```
 
 ## Short post
 
 ```text
-I launched Bitcoin 09 (BTC09): Bitcoin economics, one change: Argon2id CPU
+I launched Bitcoin 09 (09C): Bitcoin economics, one change: Argon2id CPU
 proof of work so people can mine on normal computers again.
 
 21M cap, halvings, 10 min blocks, no premine, burned genesis.

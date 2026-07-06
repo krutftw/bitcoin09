@@ -1,4 +1,4 @@
-# Bitcoin 09 (BTC09)
+# Bitcoin 09 (09C)
 
 The coin that you can mine like it's 2009.
 
@@ -19,7 +19,7 @@ Bitcoin.
 
 ## Read this first
 
-BTC09 is worth nothing. Bitcoin was worth nothing in 2009 too, that's the
+09C is worth nothing. Bitcoin was worth nothing in 2009 too, that's the
 whole idea here. No premine, no company, no allocation. The genesis reward is
 burned to an address nobody can spend from, so every coin that will ever
 exist gets mined by someone's CPU starting at block 1. Mine it because it's

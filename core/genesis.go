@@ -8,7 +8,7 @@ import (
 // GenesisBlock builds the network's block 0 deterministically from Params.
 //
 // Fair-launch rules, verifiable by anyone reading this file:
-//   - The 50 BTC09 genesis reward is paid to the all-zero pubkey hash.
+//   - The 50 09C genesis reward is paid to the all-zero pubkey hash.
 //     Spending it requires an Ed25519 pubkey whose hash is 20 zero bytes,
 //     nobody can produce one, so the genesis coins are burned forever,
 //     exactly like Satoshi's unspendable genesis output.

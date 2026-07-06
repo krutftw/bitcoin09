@@ -3,7 +3,7 @@
 I made Bitcoin 09 because I missed the thing none of us can go back to:
 mining Bitcoin on a normal computer when it was worth nothing.
 
-BTC09 is Bitcoin with one change. The proof of work is Argon2id instead of
+09C is Bitcoin with one change. The proof of work is Argon2id instead of
 SHA-256, so CPUs can mine it and ASICs do not get the same kind of advantage
 they get on Bitcoin.
 
