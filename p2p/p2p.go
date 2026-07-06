@@ -24,6 +24,7 @@ const (
 	protocolVersion = 1
 	maxMsgBytes     = core.MaxBlockBytes + 4096
 	maxPeers        = 32
+	blockBatchSize  = 1
 )
 
 type Msg struct {
@@ -36,6 +37,7 @@ type Msg struct {
 	Raw     []byte   `json:"raw,omitempty"`     // block | tx wire bytes
 	Addrs   []string `json:"addrs,omitempty"`   // addr gossip
 	Listen  string   `json:"listen,omitempty"`  // hello: my listen addr
+	More    bool     `json:"more,omitempty"`    // block: sender has more blocks after this batch
 }
 
 // Node is a full node: chain + peers + gossip.
@@ -249,15 +251,19 @@ func (n *Node) handleMsg(p *peer, m *Msg) error {
 		n.mu.Unlock()
 		return nil
 	case "getblocks":
-		// stream main-chain blocks from requested height
-		for h := m.From; ; h++ {
+		// Send a bounded batch. Early versions streamed the whole missing
+		// chain at once, which backed up TCP send queues on slow peers.
+		sent := 0
+		for h := m.From; sent < blockBatchSize; h++ {
 			blk := n.chain.BlockAt(h)
 			if blk == nil {
 				break
 			}
-			if err := p.send(&Msg{Type: "block", Raw: blk.Bytes(), Height: h}); err != nil {
+			next := n.chain.BlockAt(h + 1)
+			if err := p.send(&Msg{Type: "block", Raw: blk.Bytes(), Height: h, More: sent == blockBatchSize-1 && next != nil}); err != nil {
 				return err
 			}
+			sent++
 		}
 		return nil
 	case "block":
@@ -268,11 +274,15 @@ func (n *Node) handleMsg(p *peer, m *Msg) error {
 		err = n.chain.AcceptBlock(blk)
 		switch {
 		case err == nil:
+			if m.More {
+				return p.send(&Msg{Type: "getblocks", From: m.Height + 1})
+			}
 			return nil
 		case err.Error() == "orphan: unknown parent":
-			// we're behind: request the gap
-			_, h := n.chain.Tip()
-			return p.send(&Msg{Type: "getblocks", From: h + 1})
+			// The peer may be on a heavier fork that split before our tip.
+			// Walk back to genesis and rebuild the side branch instead of
+			// asking for tip+1 forever.
+			return p.send(&Msg{Type: "getblocks", From: 1})
 		default:
 			// invalid blocks are dropped; peer may be on another network
 			n.logger.Printf("rejected block from %s: %v", p.addr, err)
@@ -342,7 +352,7 @@ func (p *peer) send(m *Msg) error {
 	defer p.mu.Unlock()
 	var lenb [4]byte
 	binary.BigEndian.PutUint32(lenb[:], uint32(len(b)))
-	p.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	p.conn.SetWriteDeadline(time.Now().Add(2 * time.Minute))
 	if _, err := p.enc.Write(lenb[:]); err != nil {
 		return err
 	}
