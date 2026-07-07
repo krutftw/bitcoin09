@@ -18,9 +18,10 @@ Use `Bitcoin 09` on first mention. Use `09C` as the ticker after that.
 - Web/README mark: `docs/assets/bitcoin09-ai-logo-512.png`
 - Social preview card: `docs/assets/bitcoin09-social.png`
 
-The mark is the current visual direction: gold coin, dark center, custom `09C`,
-and chip/circuit details around the edge. It has the early Bitcoin-era coin
-feel without using the Bitcoin B glyph.
+The mark is the current visual direction: gold coin, dark center, one-line
+custom `09C`, and simple chip/circuit cuts around the edge. It should read at
+Discord-avatar size first, then scale up for web and social previews. It has
+the early Bitcoin-era coin feel without using the Bitcoin B glyph.
 
 Use the 512px PNG for README, Discord, web pages, pool pages, and listing forms.
 Keep the full-size PNG as the source artwork.

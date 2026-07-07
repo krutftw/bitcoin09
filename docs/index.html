@@ -10,57 +10,449 @@
 <meta property="og:image" content="https://krutftw.github.io/bitcoin09/assets/bitcoin09-social.png">
 <link rel="icon" type="image/png" href="assets/bitcoin09-ai-logo-512.png">
 <style>
-body { font-family: monospace; background: #f4f1ea; color: #222; margin: 2em auto; max-width: 720px; padding: 0 1em; line-height: 1.5; }
-h1 { font-size: 1.6em; margin-bottom: 0; }
-h2 { margin-top: 1.4em; }
-.brand { display: flex; align-items: center; gap: 12px; }
-.brand img { width: 72px; height: 72px; }
-.brand h1 { margin: 0; }
-.tag { color: #666; margin-top: 4px; }
-pre { background: #e8e4da; padding: 12px; overflow-x: auto; }
-a { color: #1a0dab; }
-table { border-collapse: collapse; width: 100%; margin: 1em 0; }
-td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ccc; font-size: 0.9em; }
-.warn { border: 1px solid #b5a; padding: 10px; background: #f7eef4; }
-#live { color: #444; }
-.stats { border: 1px solid #b9b2a5; background: #ede8dc; padding: 12px; margin: 1em 0; }
-.stats p { margin: 0.25em 0 0.75em; }
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
-.stat { border: 1px solid #cfc6b8; background: #f7f3ea; padding: 8px; min-height: 52px; }
-.stat b { display: block; font-size: 1.35em; line-height: 1.2; }
-.stat span { color: #666; font-size: 0.85em; }
-.muted { color: #666; }
-.error { color: #8a1f11; }
-.miner-list { margin-top: 10px; overflow-x: auto; }
-.miner-list table { margin-bottom: 0; }
+:root {
+  --coal: #090c08;
+  --coal-2: #11150f;
+  --coal-3: #1a1c14;
+  --paper: #f3ecd8;
+  --paper-2: #e7dcc0;
+  --ink: #221b10;
+  --gold: #d9a441;
+  --gold-2: #f0c56a;
+  --green: #6ce083;
+  --green-dim: #9abc8d;
+  --red: #8a1f11;
+  --blue: #144f8a;
+  --line: #82724f;
+  --line-dark: #3d341f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--coal);
+}
+
+body {
+  margin: 0;
+  font-family: "Courier New", Consolas, monospace;
+  color: var(--ink);
+  background:
+    linear-gradient(180deg, #0b0e09 0, #12150e 330px, var(--paper) 330px);
+  line-height: 1.5;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.04) 0, rgba(255, 255, 255, 0.04) 1px, transparent 1px, transparent 5px),
+    radial-gradient(circle at 20% 0%, rgba(217, 164, 65, 0.12), transparent 360px);
+  opacity: 0.45;
+}
+
+a {
+  color: var(--blue);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.shell a,
+.hero a,
+.topbar a,
+.livebar a {
+  color: var(--green);
+}
+
+.topbar {
+  position: relative;
+  z-index: 1;
+  color: #c7b889;
+  background: #060806;
+  border-bottom: 1px solid var(--line-dark);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.wrap {
+  width: min(960px, calc(100% - 28px));
+  margin: 0 auto;
+}
+
+.topbar .wrap {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 0;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.hero {
+  position: relative;
+  z-index: 1;
+  color: var(--paper);
+  background:
+    linear-gradient(90deg, rgba(217, 164, 65, 0.16), transparent 34%),
+    radial-gradient(circle at 18% 28%, rgba(217, 164, 65, 0.2), transparent 270px),
+    var(--coal);
+  border-bottom: 3px solid var(--gold);
+}
+
+.hero-inner {
+  min-height: 320px;
+  display: grid;
+  grid-template-columns: 136px 1fr;
+  align-items: center;
+  gap: 24px;
+  padding: 34px 0 24px;
+}
+
+.brand-mark {
+  width: 136px;
+  aspect-ratio: 1;
+  border: 1px solid #725d26;
+  background: #0b0c0d;
+  box-shadow: 0 0 0 4px rgba(217, 164, 65, 0.08), 0 14px 32px rgba(0, 0, 0, 0.45);
+}
+
+.kicker {
+  margin: 0 0 4px;
+  color: var(--green);
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  color: #fff3cf;
+  font-size: clamp(38px, 8vw, 74px);
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.tag {
+  max-width: 690px;
+  margin: 12px 0 18px;
+  color: #d8c797;
+  font-size: clamp(16px, 2.2vw, 22px);
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(240px, 0.9fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.shell,
+.status-card {
+  border: 1px solid var(--line-dark);
+  background: rgba(4, 7, 4, 0.82);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.shell {
+  margin: 0;
+  padding: 13px 14px;
+  color: var(--green);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.status-card {
+  padding: 12px 13px;
+  color: #d7c896;
+}
+
+.status-card b {
+  display: block;
+  color: var(--gold-2);
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.status-card span {
+  display: block;
+  margin-top: 5px;
+  color: var(--green-dim);
+  font-size: 13px;
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  padding: 20px 0 40px;
+  background: var(--paper);
+}
+
+.livebar {
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  color: #d7c896;
+  background: #10150d;
+  border: 1px solid var(--line-dark);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.panel {
+  margin: 18px 0;
+  padding: 16px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  box-shadow: 3px 3px 0 #c8b984;
+}
+
+.panel.dark {
+  color: #e7ddbf;
+  background: var(--coal-2);
+  border-color: var(--line-dark);
+  box-shadow: 3px 3px 0 #2c291c;
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 20px;
+  color: #251a0a;
+}
+
+.dark h2 {
+  color: var(--gold-2);
+}
+
+p {
+  margin: 0 0 12px;
+}
+
+.muted {
+  color: #665c45;
+}
+
+.dark .muted {
+  color: #b3a57d;
+}
+
+.error {
+  color: var(--red);
+}
+
+.facts {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  background: #f8f1dd;
+}
+
+.facts th,
+.facts td {
+  text-align: left;
+  padding: 7px 8px;
+  border: 1px solid #c8b984;
+  vertical-align: top;
+}
+
+.facts th {
+  background: #ddd0a9;
+}
+
+.stats p {
+  margin: 0 0 11px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
+  gap: 8px;
+}
+
+.stat {
+  min-height: 70px;
+  padding: 10px;
+  color: #d7c896;
+  background: #0c100a;
+  border: 1px solid #3f371f;
+}
+
+.stat b {
+  display: block;
+  color: var(--green);
+  font-size: 24px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.stat span {
+  display: block;
+  margin-top: 5px;
+  color: #c0b38a;
+  font-size: 12px;
+}
+
+.command-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
+  gap: 12px;
+}
+
+.command {
+  min-width: 0;
+  padding: 12px;
+  background: #f8f1dd;
+  border: 1px solid #c8b984;
+}
+
+.command h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.command pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+pre,
+code {
+  font-family: "Courier New", Consolas, monospace;
+}
+
+pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  color: var(--green);
+  background: #0b0e0a;
+  border: 1px solid #3f371f;
+  overflow-x: auto;
+}
+
+.miner-list {
+  margin-top: 12px;
+}
+
+.miner-list summary {
+  cursor: pointer;
+  color: var(--gold-2);
+}
+
+.miner-list table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+}
+
+.miner-list th,
+.miner-list td {
+  padding: 6px 7px;
+  border: 1px solid #3f371f;
+  text-align: left;
+}
+
+.miner-list td:first-child {
+  overflow-wrap: anywhere;
+}
+
+.read-list {
+  columns: 2 240px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.read-list li {
+  margin: 0 0 7px;
+}
+
+.warning {
+  color: #2a1d0d;
+  background: #efe0b5;
+  border-color: #9a7b2f;
+}
+
+.genesis {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .hero-inner {
+    grid-template-columns: 1fr;
+    min-height: 0;
+    padding-top: 26px;
+  }
+
+  .brand-mark {
+    width: 96px;
+  }
+
+  .hero-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar .wrap {
+    font-size: 11px;
+  }
+
+  .panel {
+    padding: 13px;
+  }
+}
 </style>
 </head>
 <body>
-<div class="brand">
-<img src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
+<div class="topbar">
+<div class="wrap">
+<span>09C mainnet</span>
+<span>CPU proof of work</span>
+<span>Argon2id 64 MiB</span>
+<span>no premine</span>
+</div>
+</div>
+
+<header class="hero">
+<div class="wrap hero-inner">
+<img class="brand-mark" src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
 <div>
-<h1>Bitcoin 09 (09C)</h1>
-<p class="tag">the coin that you can mine like it's 2009</p>
+<p class="kicker">terminal money, mined by normal CPUs</p>
+<h1>Bitcoin 09</h1>
+<p class="tag">A small fair-launch chain for people who missed the 2009 mining era. 21M cap, 10 minute blocks, no allocation.</p>
+<div class="hero-grid">
+<pre class="shell">&gt; btc09 node -mine
+seed 82.22.32.82:9009
+pool bitcoin09.tutuit.xyz
+release v0.1.11</pre>
+<div class="status-card">
+<b>09C status board</b>
+<span>Mine solo, pool mine, or run a node without mining.</span>
+<span><a href="https://github.com/krutftw/bitcoin09/releases/latest">download</a> / <a href="https://discord.gg/fUuGzwRTzP">discord</a> / <a href="http://82.22.32.82:8009">explorer</a></span>
 </div>
 </div>
+</div>
+</div>
+</header>
 
-<p id="live">Network status: <a href="http://82.22.32.82:8009">live explorer</a>. Current release: v0.1.11. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">early OTC notes</a>.</p>
+<main class="content">
+<div class="wrap">
+<p id="live" class="livebar">Network status: <a href="http://82.22.32.82:8009">live explorer</a>. Current release: v0.1.11. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">early OTC notes</a>.</p>
 
-<p>Bitcoin 09 is Bitcoin, same idea top to bottom, changed in one place: the
-proof of work is Argon2id (memory-hard) instead of SHA-256. Normal CPUs do
-the mining and ASICs/GPUs get no real advantage.</p>
-
-<table>
+<section class="panel">
+<h2>What It Is</h2>
+<p>Bitcoin 09 is Bitcoin's old idea with one deliberate swap: Argon2id memory-hard proof of work instead of SHA-256. Normal CPUs can mine it, and ASIC/GPU advantage is intentionally pushed down.</p>
+<table class="facts">
 <tr><th></th><th>Bitcoin</th><th>Bitcoin 09</th></tr>
 <tr><td>Supply cap</td><td>21,000,000</td><td>21,000,000</td></tr>
 <tr><td>Block reward</td><td>50, halves every 210,000</td><td>50, halves every 210,000</td></tr>
 <tr><td>Block time</td><td>10 minutes</td><td>10 minutes</td></tr>
 <tr><td>Premine</td><td>none</td><td>none</td></tr>
-<tr><td>Proof of work</td><td>SHA-256d (ASICs)</td><td>Argon2id 64 MiB (CPUs)</td></tr>
+<tr><td>Proof of work</td><td>SHA-256d</td><td>Argon2id 64 MiB</td></tr>
 </table>
+</section>
 
-<h2>Mining now</h2>
-<section class="stats" aria-live="polite">
+<section class="panel dark stats" aria-live="polite">
+<h2>Mining Now</h2>
 <p id="stats-note" class="muted">Loading live pool stats...</p>
 <div class="stat-grid">
 <div class="stat"><b id="stat-miners">-</b><span>active pool miner addresses</span></div>
@@ -79,56 +471,73 @@ the mining and ASICs/GPUs get no real advantage.</p>
 </details>
 </section>
 
-<h2>Mine it</h2>
-<p>Download the <a href="https://github.com/krutftw/bitcoin09/releases/latest">latest release</a> for your OS, then run:</p>
+<section class="panel">
+<h2>Start Mining</h2>
+<div class="command-grid">
+<div class="command">
+<h3>Solo mine</h3>
+<p>Download the latest release, then run the node with mining enabled.</p>
 <pre>btc09 node -mine</pre>
-<p>That's it. The seed node is built in. Your wallet is created automatically
-and your reward address prints at startup. When your computer finds a block
-it prints BLOCK FOUND and you own 50 09C.</p>
-<p class="muted">For pool mining, the public pool currently recommends
-NTMminer. NTMminer is a third-party closed-source binary miner, not the
-official 09C wallet or node. It only needs your payout address. Do not give any
-pool miner a seed phrase, private key, wallet file, remote access, or Discord
-token.</p>
-
-<h2>Run a node</h2>
-<p>To run a normal full node without mining:</p>
+</div>
+<div class="command">
+<h3>Pool mine</h3>
+<p>Use your 09C payout address at the public pool.</p>
+<pre>bitcoin09.tutuit.xyz</pre>
+</div>
+<div class="command">
+<h3>Run a node</h3>
+<p>Sync and relay without mining.</p>
 <pre>btc09 node</pre>
-<p>Mining only starts when <code>-mine</code> is present. A non-mining node still syncs, relays blocks and transactions, listens on <code>:9009</code> by default, and can serve its own explorer:</p>
+</div>
+</div>
+</section>
+
+<section class="panel">
+<h2>Node Notes</h2>
+<p>Mining only starts when <code>-mine</code> is present. A non-mining node still syncs, relays blocks and transactions, listens on <code>:9009</code> by default, and can serve its own explorer.</p>
 <pre>btc09 node -explorer :8009</pre>
 <p class="muted">Wallet balance is calculated from your local synced chain, so a fresh node can show a balance later than the public explorer while it catches up. v0.1.10 and later sync fresh nodes in larger bounded batches and log balance changes as soon as the local chain sees them. Mined coinbase rewards become spendable after 100 blocks.</p>
+</section>
 
-<h2>Watch the chain</h2>
-<p><a href="http://82.22.32.82:8009">Live block explorer</a>: height, difficulty,
-recent blocks and every miner's address.</p>
-<p>The explorer also exposes machine-readable supply data for listings and
-audits:</p>
+<section class="panel">
+<h2>Watch The Chain</h2>
+<p><a href="http://82.22.32.82:8009">Live block explorer</a>: height, difficulty, recent blocks and miner addresses.</p>
+<p>The explorer exposes machine-readable supply data for listings and audits.</p>
 <pre>curl http://82.22.32.82:8009/api/supply
 curl http://82.22.32.82:8009/api/circulating_supply</pre>
+</section>
 
+<section class="panel">
 <h2>Markets</h2>
-<p>There is no official 09C price. Early trading is community OTC only: users
-can post buy/sell offers in Discord, and completed trades can be referenced as
-price discovery. Read the <a href="markets.html">markets note</a> before
-trading.</p>
+<p>There is no official 09C price. Early trading is community OTC only: users can post buy/sell offers in Discord, and completed trades can be referenced as price discovery. Read the <a href="markets.html">markets note</a> before trading.</p>
+</section>
 
+<section class="panel">
+<h2>Third-party Miners</h2>
+<p>NTMminer is a third-party closed-source binary miner, not the official 09C wallet or node. It only needs your payout address. Do not give any pool miner a seed phrase, private key, wallet file, remote access, or Discord token.</p>
+</section>
+
+<section class="panel">
 <h2>Read</h2>
-<ul>
+<ul class="read-list">
 <li><a href="https://github.com/krutftw/bitcoin09">Source code</a> (MIT, Go)</li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/WHITEPAPER.md">Whitepaper</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/QUICKSTART.md">Quickstart</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/BRAND.md">Logo and brand files</a></li>
 <li><a href="https://discord.gg/fUuGzwRTzP">Discord</a></li>
-<li><a href="https://github.com/krutftw/bitcoin09/issues/1">Launch thread</a> (post your node, ask anything)</li>
+<li><a href="https://github.com/krutftw/bitcoin09/issues/1">Launch thread</a></li>
 <li><a href="https://bitcointalk.org/index.php?topic=5587640.0">Bitcointalk ANN</a></li>
 </ul>
+</section>
 
-<div class="warn">09C is worth nothing. Bitcoin was worth nothing in 2009 too,
-that's the whole idea. No premine, no allocation, no promises. The genesis
-reward is burned, so every coin that will ever exist gets mined by someone's
-CPU. Mine it because it's fun and you missed 2009.</div>
+<section class="panel warning">
+<h2>No Promises</h2>
+<p>09C is worth nothing. Bitcoin was worth nothing in 2009 too, that's the whole idea. No premine, no allocation, no promises. The genesis reward is burned, so every coin that will ever exist gets mined by someone's CPU. Mine it because it's fun and you missed 2009.</p>
+</section>
 
-<p>genesis: <code>ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f</code></p>
+<p class="genesis">genesis: <code>ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f</code></p>
+</div>
+</main>
 
 <script>
 const poolApi = 'https://bitcoin09.tutuit.xyz/api/pools/09c';
