@@ -777,8 +777,19 @@ async function copyDiscordPost() {
     status.className = 'muted';
     status.textContent = 'Copied. Paste it in Discord if you want a chat post too.';
   } catch (error) {
-    status.className = 'error';
-    status.textContent = 'Could not copy automatically. Select the preview text and copy it manually.';
+    const fallback = document.createElement('textarea');
+    fallback.value = text;
+    fallback.setAttribute('readonly', '');
+    fallback.style.position = 'fixed';
+    fallback.style.left = '-9999px';
+    document.body.append(fallback);
+    fallback.select();
+    const copied = document.execCommand('copy');
+    fallback.remove();
+    status.className = copied ? 'muted' : 'error';
+    status.textContent = copied
+      ? 'Copied. Paste it in Discord if you want a chat post too.'
+      : 'Could not copy automatically. Select the preview text and copy it manually.';
   }
 }
 
