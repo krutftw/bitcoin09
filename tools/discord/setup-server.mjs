@@ -195,11 +195,11 @@ const desiredChannels = [
   },
   {
     key: "ideas",
-    name: "💡-ideas",
-    aliases: ["ideas", "feature-ideas"],
+    name: "💡-suggestions",
+    aliases: ["💡-ideas", "ideas", "feature-ideas", "suggestions", "feedback"],
     category: "development",
     position: 2,
-    topic: "Feature ideas, tooling requests, and useful network/community improvements.",
+    topic: "Suggestions for miner UX, docs, explorer, wallets, pools, listings, and community setup.",
   },
 ];
 
@@ -384,6 +384,22 @@ const seedPosts = [
       "- Public pool: https://bitcoin09.tutuit.xyz",
       "",
       "Post new pools or reliable nodes here with host, port, fee/payout details, and operator contact.",
+    ].join("\n"),
+  },
+  {
+    channelKey: "ideas",
+    marker: "Bitcoin 09 suggestions",
+    content: [
+      "Bitcoin 09 suggestions",
+      "",
+      "Drop practical ideas here.",
+      "",
+      "Good posts are simple:",
+      "- what is annoying right now",
+      "- what you want changed",
+      "- what would make mining, running a node, trading, or explaining 09C easier",
+      "",
+      "Small fixes are useful. If it is broken or reproducible, use #🐞-bug-reports instead.",
     ].join("\n"),
   },
 ];
