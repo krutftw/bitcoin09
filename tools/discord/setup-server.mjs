@@ -319,6 +319,9 @@ const seedPosts = [
       "- Public pool: https://bitcoin09.tutuit.xyz",
       "- Bitcointalk ANN: https://bitcointalk.org/index.php?topic=5587640.0",
       "- Discord: https://discord.gg/fUuGzwRTzP",
+      "- Brand kit: https://github.com/krutftw/bitcoin09/blob/master/BRAND.md",
+      "- Logo PNG: https://krutftw.github.io/bitcoin09/assets/bitcoin09-ai-logo-512.png",
+      "- Social card: https://krutftw.github.io/bitcoin09/assets/bitcoin09-social.png",
     ].join("\n"),
   },
   {

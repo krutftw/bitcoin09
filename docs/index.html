@@ -5,10 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bitcoin 09 (09C)</title>
 <meta name="description" content="Bitcoin 09: the coin you can mine like it's 2009. CPU proof of work, 21M cap, no premine.">
+<meta property="og:title" content="Bitcoin 09 (09C)">
+<meta property="og:description" content="CPU proof of work, 21M cap, no premine. Mine it like it's 2009.">
+<meta property="og:image" content="https://krutftw.github.io/bitcoin09/assets/bitcoin09-social.png">
+<link rel="icon" type="image/png" href="assets/bitcoin09-ai-logo-512.png">
 <style>
 body { font-family: monospace; background: #f4f1ea; color: #222; margin: 2em auto; max-width: 720px; padding: 0 1em; line-height: 1.5; }
 h1 { font-size: 1.6em; margin-bottom: 0; }
 h2 { margin-top: 1.4em; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand img { width: 72px; height: 72px; }
+.brand h1 { margin: 0; }
 .tag { color: #666; margin-top: 4px; }
 pre { background: #e8e4da; padding: 12px; overflow-x: auto; }
 a { color: #1a0dab; }
@@ -29,8 +36,13 @@ td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ccc; font
 </style>
 </head>
 <body>
+<div class="brand">
+<img src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
+<div>
 <h1>Bitcoin 09 (09C)</h1>
 <p class="tag">the coin that you can mine like it's 2009</p>
+</div>
+</div>
 
 <p id="live">Network status: <a href="http://82.22.32.82:8009">live explorer</a>. Current release: v0.1.11. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">early OTC notes</a>.</p>
 
@@ -73,6 +85,11 @@ the mining and ASICs/GPUs get no real advantage.</p>
 <p>That's it. The seed node is built in. Your wallet is created automatically
 and your reward address prints at startup. When your computer finds a block
 it prints BLOCK FOUND and you own 50 09C.</p>
+<p class="muted">For pool mining, the public pool currently recommends
+NTMminer. NTMminer is a third-party closed-source binary miner, not the
+official 09C wallet or node. It only needs your payout address. Do not give any
+pool miner a seed phrase, private key, wallet file, remote access, or Discord
+token.</p>
 
 <h2>Run a node</h2>
 <p>To run a normal full node without mining:</p>
@@ -100,6 +117,7 @@ trading.</p>
 <li><a href="https://github.com/krutftw/bitcoin09">Source code</a> (MIT, Go)</li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/WHITEPAPER.md">Whitepaper</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/QUICKSTART.md">Quickstart</a></li>
+<li><a href="https://github.com/krutftw/bitcoin09/blob/master/BRAND.md">Logo and brand files</a></li>
 <li><a href="https://discord.gg/fUuGzwRTzP">Discord</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09/issues/1">Launch thread</a> (post your node, ask anything)</li>
 <li><a href="https://bitcointalk.org/index.php?topic=5587640.0">Bitcointalk ANN</a></li>

@@ -1,5 +1,7 @@
 # Bitcoin 09 (09C)
 
+![Bitcoin 09 logo](docs/assets/bitcoin09-ai-logo-512.png)
+
 The coin that you can mine like it's 2009.
 
 This is Bitcoin, same idea top to bottom, changed in one place: the proof of
@@ -162,6 +164,22 @@ There is no official 09C price. Early trading is community OTC only.
 Discord has `#💱-otc-trading` for users who want to post buy/sell offers or
 factual completed-trade references. Staff does not provide official escrow and
 there are no price promises.
+
+## Brand
+
+Logo and brand files are in [BRAND.md](BRAND.md). Use these instead of
+random coin art so Bitcoin 09 looks consistent across Discord, pool pages,
+forum posts and listings.
+
+## Third-party pool miners
+
+The official Bitcoin 09 software is `btc09`: reference node, wallet, solo
+miner and explorer.
+
+The public pool currently recommends NTMminer for pool mining. NTMminer is a
+third-party closed-source binary miner that added `-a btc09` support in its
+v1.13.0 release. It only needs a payout address. Do not give any pool miner a
+seed phrase, private key, wallet file, remote access or Discord token.
 
 ## Tests
 

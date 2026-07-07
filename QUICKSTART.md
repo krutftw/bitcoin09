@@ -51,9 +51,15 @@ Public pool:
 
 https://bitcoin09.tutuit.xyz
 
-Use the pool's current worker instructions from the pool page. Pool miner count
-means payout addresses connected to that public pool, not guaranteed unique
-people and not solo miners.
+Use the pool's current worker instructions from the pool page.
+
+The pool currently recommends NTMminer for pool mining. NTMminer is a
+third-party closed-source binary miner, not the official 09C wallet or node. It
+only needs your 09C payout address. Do not give any pool miner a seed phrase,
+private key, wallet file, remote access, or Discord token.
+
+Pool miner count means payout addresses connected to that public pool, not
+guaranteed unique people and not solo miners.
 
 ## Check Balance
 
