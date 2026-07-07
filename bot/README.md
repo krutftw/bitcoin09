@@ -19,6 +19,17 @@ USDT, BTC, fiat, or anything else happens directly between buyer and seller.
 - `/withdraw <amount> <addr>` lets admin withdraw recorded fees only.
 - `/admin resolve|stats|orders` gives admin controls.
 
+## Website feed
+
+The bot writes a sanitized public feed to
+`/opt/btc09/public/otc-bot-feed.json`. The feed includes order IDs, status,
+amount, total price, currency, and timestamps. It does not include Discord IDs,
+usernames, wallet addresses, deposit addresses, or off-chain payment details.
+
+`serve_otc_feed.py` serves that JSON at `/otc-bot-feed.json`. GitHub Actions
+pulls the feed into `docs/otc-bot-feed.json` so the static market page can load
+it over HTTPS.
+
 ## Safety model
 
 - Every order gets a fresh 09C deposit address.

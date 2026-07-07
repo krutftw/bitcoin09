@@ -44,6 +44,8 @@ DB_PATH = os.environ.get("DB_PATH", "/opt/btc09/otc_bot.db")
 FEE_PERCENT = Decimal(os.environ.get("FEE_PERCENT", "1.0"))
 TX_FEE = os.environ.get("BTC09_TX_FEE", "0.0001")
 ORDER_TIMEOUT_SECONDS = int(os.environ.get("ORDER_TIMEOUT_SECONDS", "86400"))
+PUBLIC_FEED_PATH = os.environ.get("PUBLIC_FEED_PATH", "/opt/btc09/public/otc-bot-feed.json")
+PUBLIC_FEED_LIMIT = int(os.environ.get("PUBLIC_FEED_LIMIT", "100"))
 ADMIN_IDS = {int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()}
 
 SEND_LOCK = threading.Lock()
@@ -52,6 +54,12 @@ BOT_LOOP: asyncio.AbstractEventLoop | None = None
 
 def now_ts() -> int:
     return int(time.time())
+
+
+def iso_ts(ts: int | None) -> str | None:
+    if not ts:
+        return None
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(ts)))
 
 
 def db() -> sqlite3.Connection:
@@ -399,6 +407,111 @@ def wallet_total_balance() -> tuple[Decimal, int]:
     return total.quantize(COIN), len(addresses)
 
 
+def public_status(status: str) -> str:
+    labels = {
+        "open": "open",
+        "matched": "matched",
+        "disputed": "disputed",
+        "completed": "completed",
+        "resolved_buyer": "resolved to buyer",
+        "resolved_seller": "resolved to seller",
+        "release_failed": "release needs admin",
+    }
+    return labels.get(status, status.replace("_", " "))
+
+
+def price_per_coin(total_price: str, amount: str) -> str | None:
+    try:
+        total = Decimal(total_price)
+        coins = Decimal(amount)
+        if coins <= 0:
+            return None
+        return f"{(total / coins).quantize(Decimal('0.0000000001')):f}".rstrip("0").rstrip(".")
+    except (InvalidOperation, ZeroDivisionError):
+        return None
+
+
+def export_public_feed() -> None:
+    public_statuses = (
+        "open",
+        "matched",
+        "disputed",
+        "completed",
+        "resolved_buyer",
+        "resolved_seller",
+        "release_failed",
+    )
+    placeholders = ",".join("?" for _ in public_statuses)
+    with db() as conn:
+        counts = {
+            row["status"]: row["n"]
+            for row in conn.execute("SELECT status, COUNT(*) AS n FROM orders GROUP BY status")
+        }
+        rows = conn.execute(
+            f"""
+            SELECT order_id, amount, price, currency, status, created_at, updated_at,
+                   matched_at, disputed_at, completed_at
+            FROM orders
+            WHERE status IN ({placeholders})
+            ORDER BY updated_at DESC, order_id DESC
+            LIMIT ?
+            """,
+            (*public_statuses, PUBLIC_FEED_LIMIT),
+        ).fetchall()
+
+    orders = []
+    for row in rows:
+        order_id = int(row["order_id"])
+        status = row["status"]
+        orders.append(
+            {
+                "id": order_id,
+                "source": "discord-escrow-bot",
+                "kind": "sell",
+                "status": status,
+                "publicStatus": public_status(status),
+                "amount": row["amount"],
+                "totalPrice": row["price"],
+                "currency": row["currency"],
+                "pricePer09c": price_per_coin(row["price"], row["amount"]),
+                "createdAt": iso_ts(row["created_at"]),
+                "updatedAt": iso_ts(row["updated_at"]),
+                "matchedAt": iso_ts(row["matched_at"]),
+                "disputedAt": iso_ts(row["disputed_at"]),
+                "completedAt": iso_ts(row["completed_at"]),
+                "action": f"Use /buy {order_id} in the Bitcoin 09 Discord" if status == "open" else f"Use /admin orders or /dispute {order_id} in Discord",
+            }
+        )
+
+    feed = {
+        "schema": 1,
+        "generatedAt": iso_ts(now_ts()),
+        "source": "Bitcoin 09 Discord OTC escrow bot",
+        "privacy": "No Discord IDs, usernames, wallet addresses, deposit addresses, or off-chain payment details are published.",
+        "summary": {
+            "open": counts.get("open", 0),
+            "matched": counts.get("matched", 0),
+            "disputed": counts.get("disputed", 0),
+            "completed": counts.get("completed", 0) + counts.get("resolved_buyer", 0) + counts.get("resolved_seller", 0),
+            "releaseFailed": counts.get("release_failed", 0),
+        },
+        "orders": orders,
+    }
+
+    path = Path(PUBLIC_FEED_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(feed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def safe_export_public_feed() -> None:
+    try:
+        export_public_feed()
+    except Exception as exc:
+        print(f"[WARN] public feed export failed: {exc}")
+
+
 def escrow_embed(title: str, description: str = "", color: int = 0x09C4A1) -> discord.Embed:
     embed = discord.Embed(title=title, description=description, color=color)
     embed.set_footer(text=f"{COIN_TICKER} OTC escrow bot {BOT_VERSION} | fee {FEE_PERCENT}%")
@@ -496,6 +609,7 @@ async def sell(interaction: discord.Interaction, amount: str, price: str, curren
         )
         order_id = cur.lastrowid
         conn.commit()
+    safe_export_public_feed()
 
     embed = escrow_embed(
         f"Order #{order_id} created",
@@ -559,6 +673,7 @@ async def deposit(interaction: discord.Interaction, order_id: int) -> None:
             (fmt_amt(bal), now_ts(), order_id),
         ).rowcount
         conn.commit()
+    safe_export_public_feed()
 
     if not updated:
         await interaction.followup.send("Order status changed while checking. Run `/orders`.", ephemeral=True)
@@ -627,6 +742,7 @@ async def buy(interaction: discord.Interaction, order_id: int) -> None:
             (interaction.user.id, interaction.user.name, now_ts(), now_ts(), order_id),
         ).rowcount
         conn.commit()
+    safe_export_public_feed()
 
     if not updated:
         await interaction.response.send_message("Someone else accepted this order first.", ephemeral=True)
@@ -693,6 +809,7 @@ async def confirm(interaction: discord.Interaction, order_id: int) -> None:
             (now_ts(), order_id),
         ).rowcount
         conn.commit()
+    safe_export_public_feed()
     if not updated:
         await interaction.followup.send("Release already started or order status changed.", ephemeral=True)
         return
@@ -705,6 +822,7 @@ async def confirm(interaction: discord.Interaction, order_id: int) -> None:
         with db() as conn:
             conn.execute("UPDATE orders SET status = 'release_failed', updated_at = ? WHERE order_id = ?", (now_ts(), order_id))
             conn.commit()
+        safe_export_public_feed()
         await interaction.followup.send("Buyer has no withdrawal address. Admin needs to resolve this.", ephemeral=True)
         return
 
@@ -714,6 +832,7 @@ async def confirm(interaction: discord.Interaction, order_id: int) -> None:
         with db() as conn:
             conn.execute("UPDATE orders SET status = 'release_failed', updated_at = ? WHERE order_id = ?", (now_ts(), order_id))
             conn.commit()
+        safe_export_public_feed()
         await interaction.followup.send(f"Release failed: `{str(exc)[:500]}`", ephemeral=True)
         for admin_id in ADMIN_IDS:
             await dm_user(admin_id, escrow_embed(f"Release failed for order #{order_id}", str(exc)[:1000], color=0xED4245))
@@ -729,6 +848,7 @@ async def confirm(interaction: discord.Interaction, order_id: int) -> None:
             (txout[:500], fmt_amt(fee), now_ts(), now_ts(), order_id),
         )
         conn.commit()
+    safe_export_public_feed()
 
     done = escrow_embed(
         f"Order #{order_id} completed",
@@ -766,6 +886,7 @@ async def cancel(interaction: discord.Interaction, order_id: int) -> None:
                 (now_ts(), order_id),
             )
             conn.commit()
+        safe_export_public_feed()
         await interaction.followup.send(f"Order #{order_id} cancelled.", ephemeral=True)
         return
 
@@ -782,6 +903,7 @@ async def cancel(interaction: discord.Interaction, order_id: int) -> None:
                 (now_ts(), order_id),
             )
             conn.commit()
+        safe_export_public_feed()
         await interaction.followup.send(f"Order #{order_id} is open again.", ephemeral=True)
         await dm_user(row["seller_id"], escrow_embed(f"Order #{order_id} buyer cancelled", "The order is open again."))
         return
@@ -812,6 +934,7 @@ async def cancel(interaction: discord.Interaction, order_id: int) -> None:
                 (txout[:500], now_ts(), now_ts(), order_id),
             )
             conn.commit()
+        safe_export_public_feed()
         await interaction.followup.send(
             f"Order #{order_id} cancelled and `{fmt_amt(amount)} {COIN_TICKER}` refunded.\nTX: `{txout[:180]}`",
             ephemeral=True,
@@ -882,6 +1005,7 @@ async def dispute(interaction: discord.Interaction, order_id: int) -> None:
             (now_ts(), now_ts(), order_id),
         )
         conn.commit()
+    safe_export_public_feed()
     await interaction.response.send_message(f"Dispute opened for order #{order_id}. Admin has been notified.", ephemeral=True)
     for admin_id in ADMIN_IDS:
         await dm_user(
@@ -976,6 +1100,7 @@ async def admin_cmd(interaction: discord.Interaction, action: str, order_id: int
             (status, txout[:500], fmt_amt(fee) if fee else None, now_ts(), now_ts(), order_id),
         )
         conn.commit()
+    safe_export_public_feed()
     await interaction.followup.send(
         f"Order #{order_id} resolved to {winner}. Sent `{fmt_amt(payout)} {COIN_TICKER}`.\nTX: `{txout[:180]}`",
         ephemeral=True,
@@ -1076,6 +1201,7 @@ def deposit_checker() -> None:
                     conn.commit()
                 if updated:
                     print(f"[INFO] Auto-disputed stale order #{row['order_id']}")
+                    safe_export_public_feed()
                     dispatch(notify_timeout(row["order_id"]))
 
             with db() as conn:
@@ -1103,6 +1229,7 @@ def deposit_checker() -> None:
                     conn.commit()
                 if updated:
                     print(f"[INFO] Auto-confirmed deposit for order #{row['order_id']}")
+                    safe_export_public_feed()
                     dispatch(notify_deposit(row["order_id"], row["seller_id"], row["amount"]))
         except Exception as exc:
             print(f"[ERROR] deposit checker: {exc}")
@@ -1115,6 +1242,7 @@ def main() -> None:
     if not ADMIN_IDS:
         raise SystemExit("Set ADMIN_IDS")
     init_db()
+    safe_export_public_feed()
     print(f"[INFO] Starting {BOT_VERSION}")
     print(f"[INFO] BTC09_DATADIR={BTC09_DATADIR}")
     print(f"[INFO] Explorer={EXPLORER_URL}")

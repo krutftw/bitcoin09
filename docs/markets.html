@@ -294,6 +294,14 @@ textarea {
   background: #9fc3ef;
 }
 
+.side.bot {
+  background: #84d399;
+}
+
+.side.warn {
+  background: #f1c15d;
+}
+
 .meta {
   color: #665c45;
   font-size: 12px;
@@ -376,6 +384,7 @@ code {
 
 <section class="tape" aria-live="polite">
 <div class="ticker"><b id="open-count">-</b><span>open offers</span></div>
+<div class="ticker"><b id="escrow-count">-</b><span>escrow bot orders</span></div>
 <div class="ticker"><b id="receipt-count">-</b><span>completed records</span></div>
 <div class="ticker"><b id="last-record">loading</b><span>latest public record</span></div>
 <div class="ticker"><b id="data-age">loading</b><span>board snapshot</span></div>
@@ -442,6 +451,17 @@ Notes: Trade small first. Public record or Discord escrow bot preferred.</pre>
 <li>Open the public GitHub record when the offer or completed trade should be visible on the board.</li>
 <li>Add only public proof: 09C tx link, redacted screenshot, or short note. Do not upload private payment account details.</li>
 </ol>
+</section>
+
+<section class="panel">
+<div class="board-head">
+<div>
+<h2>Live Escrow Bot</h2>
+<p class="muted" id="bot-feed-note">Loading Discord escrow orders...</p>
+</div>
+<p class="muted"><a href="https://discord.gg/fUuGzwRTzP">open Discord</a></p>
+</div>
+<div class="list" id="bot-feed-list"></div>
 </section>
 
 <section class="panel">
@@ -524,6 +544,7 @@ const repo = 'krutftw/bitcoin09';
 const githubIssueBase = 'https://github.com/' + repo + '/issues/new';
 const githubApiBase = 'https://api.github.com/repos/' + repo + '/issues';
 let marketRows = [];
+let botRows = [];
 
 const draftFields = {
   type: document.getElementById('record-type'),
@@ -642,6 +663,52 @@ function renderRow(row) {
         ${fields.map(([key, value]) => `<div class="field"><b>${escapeHtml(key)}</b>${escapeHtml(compact(value))}</div>`).join('')}
       </div>
     </article>`;
+}
+
+function botSideClass(status) {
+  if (status === 'completed' || status === 'resolved_buyer' || status === 'resolved_seller') return 'done';
+  if (status === 'disputed' || status === 'release_failed') return 'warn';
+  return 'bot';
+}
+
+function renderBotRow(row) {
+  const created = row.createdAt ? new Date(row.createdAt).toLocaleString() : '';
+  const updated = row.updatedAt ? new Date(row.updatedAt).toLocaleString() : '';
+  const fields = [
+    ['09C', row.amount],
+    ['Total', row.totalPrice && row.currency ? row.totalPrice + ' ' + row.currency : row.totalPrice],
+    ['Price/09C', row.pricePer09c && row.currency ? row.pricePer09c + ' ' + row.currency : row.pricePer09c],
+    ['Status', row.publicStatus],
+    ['Action', row.action],
+  ].filter(([, value]) => value);
+
+  return `
+    <article class="card">
+      <div class="card-title">
+        <div>
+          <span class="side ${escapeHtml(botSideClass(row.status))}">BOT</span>
+          <b>Escrow order #${escapeHtml(row.id)}</b>
+        </div>
+      </div>
+      <div class="meta">created ${escapeHtml(created || 'unknown')} | updated ${escapeHtml(updated || 'unknown')}</div>
+      <div class="fields">
+        ${fields.map(([key, value]) => `<div class="field"><b>${escapeHtml(key)}</b>${escapeHtml(compact(value))}</div>`).join('')}
+      </div>
+    </article>`;
+}
+
+function renderBotFeed(data) {
+  botRows = Array.isArray(data.orders) ? data.orders : [];
+  const note = document.getElementById('bot-feed-note');
+  const list = document.getElementById('bot-feed-list');
+  const active = botRows.filter((row) => ['open', 'matched', 'disputed', 'release_failed'].includes(row.status));
+  const generated = data.generatedAt ? new Date(data.generatedAt).toLocaleString() : '';
+  document.getElementById('escrow-count').textContent = active.length.toLocaleString();
+  note.className = 'muted';
+  note.textContent = botRows.length
+    ? 'Showing sanitized Discord escrow orders. No user IDs, wallet addresses, or payment details are published.' + (generated ? ' Last sync: ' + generated + '.' : '')
+    : 'No public escrow bot orders yet. Create one in Discord with /sell.';
+  list.innerHTML = botRows.slice(0, 20).map(renderBotRow).join('');
 }
 
 function setTape(data) {
@@ -800,6 +867,19 @@ async function loadStaticData() {
   return response.json();
 }
 
+async function loadBotFeed() {
+  try {
+    const response = await fetch('otc-bot-feed.json?ts=' + Date.now(), { cache: 'no-store' });
+    if (!response.ok) throw new Error('otc-bot-feed status ' + response.status);
+    renderBotFeed(await response.json());
+  } catch (error) {
+    document.getElementById('escrow-count').textContent = '-';
+    document.getElementById('bot-feed-note').className = 'error';
+    document.getElementById('bot-feed-note').textContent = 'Could not load escrow bot feed right now. Use Discord /orders.';
+    document.getElementById('bot-feed-list').innerHTML = '';
+  }
+}
+
 async function loadIssuesFallback(labels, completed = false) {
   const state = completed ? 'all' : 'open';
   const response = await fetch(githubApiBase + '?state=' + state + '&labels=' + encodeURIComponent(labels) + '&per_page=30', { cache: 'no-store' });
@@ -861,6 +941,7 @@ document.getElementById('sort-kind').addEventListener('change', renderMarket);
 document.getElementById('market-search').addEventListener('input', renderMarket);
 
 updateDraft();
+loadBotFeed();
 loadMarket();
 </script>
 </body>

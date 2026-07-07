@@ -1,0 +1,16 @@
+[Unit]
+Description=BTC09 OTC public feed
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/btc09/serve_otc_feed.py
+Environment=OTC_FEED_PATH=/opt/btc09/public/otc-bot-feed.json
+Environment=OTC_FEED_LISTEN=0.0.0.0
+Environment=OTC_FEED_PORT=8019
+Restart=always
+RestartSec=10
+WorkingDirectory=/opt/btc09
+
+[Install]
+WantedBy=multi-user.target

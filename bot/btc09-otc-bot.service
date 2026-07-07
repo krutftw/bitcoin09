@@ -13,6 +13,7 @@ Environment=BTC09_BIN=/opt/btc09/btc09
 Environment=BTC09_DATADIR=/opt/btc09/data
 Environment=EXPLORER_URL=http://localhost:8009
 Environment=DB_PATH=/opt/btc09/otc_bot.db
+Environment=PUBLIC_FEED_PATH=/opt/btc09/public/otc-bot-feed.json
 Restart=always
 RestartSec=10
 WorkingDirectory=/opt/btc09
