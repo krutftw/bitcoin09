@@ -96,7 +96,7 @@ Categories, text channels, and voice channels:
 
 The info channels are configured so `@everyone` cannot send messages. The script keeps aliases for the original plain names, so existing channels are renamed/reused instead of duplicated.
 
-`#💱-otc-trading` is for community buy/sell posts only. It is not an official exchange, it does not set an official 09C price, and staff does not provide official escrow.
+`#💱-otc-trading` is for community buy/sell posts and the optional OTC escrow bot. It is not an official exchange and it does not set an official 09C price. The bot can hold the seller's 09C for small trades, but off-chain payment is still between buyer and seller.
 
 `#💡-suggestions` is for practical improvements: miner UX, docs, explorer, wallets, pools, listings, and community setup. Bugs still belong in `#🐞-bug-reports`.
 

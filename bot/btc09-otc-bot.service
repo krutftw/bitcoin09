@@ -1,0 +1,21 @@
+[Unit]
+Description=BTC09 OTC Escrow Bot
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/btc09/btc09_otc_bot.py
+Environment=BOT_TOKEN=PUT_YOUR_DISCORD_BOT_TOKEN_HERE
+Environment=DISCORD_GUILD_ID=PUT_YOUR_DISCORD_SERVER_ID_HERE
+Environment=ADMIN_IDS=PUT_ADMIN_DISCORD_USER_IDS_HERE
+Environment=FEE_PERCENT=1.0
+Environment=BTC09_BIN=/opt/btc09/btc09
+Environment=BTC09_DATADIR=/opt/btc09/data
+Environment=EXPLORER_URL=http://localhost:8009
+Environment=DB_PATH=/opt/btc09/otc_bot.db
+Restart=always
+RestartSec=10
+WorkingDirectory=/opt/btc09
+
+[Install]
+WantedBy=multi-user.target

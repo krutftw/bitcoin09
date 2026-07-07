@@ -371,7 +371,7 @@ code {
 <main>
 <div class="wrap">
 <div class="notice">
-<strong>Not an exchange.</strong> This is a public noticeboard only. Bitcoin 09 does not custody funds, match orders, provide escrow, process payments, set an official price, or guarantee any trade.
+<strong>Not an exchange.</strong> This page is a public noticeboard. Discord also has an optional OTC escrow bot for small trades: it can hold the seller's 09C and release after both sides confirm. It does not verify USDT/BTC/fiat payment, set an official price, or guarantee any trade.
 </div>
 
 <section class="tape" aria-live="polite">
@@ -416,7 +416,7 @@ Public proof or 09C tx
 </label>
 <label class="wide">
 Terms or public notes
-<textarea id="notes" placeholder="Trade small first. No official escrow."></textarea>
+<textarea id="notes" placeholder="Trade small first. Use public records or the Discord escrow bot if needed."></textarea>
 </label>
 </div>
 
@@ -430,7 +430,7 @@ Terms or public notes
 <p class="muted" id="copy-status" aria-live="polite"></p>
 <pre class="preview" id="discord-preview">WTB 09C for USDT
 Contact: Discord @name
-Notes: Trade small first. No official escrow.</pre>
+Notes: Trade small first. Public record or Discord escrow bot preferred.</pre>
 </section>
 
 <section class="panel">
@@ -438,6 +438,7 @@ Notes: Trade small first. No official escrow.</pre>
 <ol>
 <li>Draft the trade record on this page.</li>
 <li>Use the copied text in Discord <code>#💱-otc-trading</code> if you want quick negotiation.</li>
+<li>For escrow, use the Discord bot slash commands: <code>/sell</code>, <code>/deposit</code>, <code>/orders</code>, <code>/buy</code>, and <code>/confirm</code>.</li>
 <li>Open the public GitHub record when the offer or completed trade should be visible on the board.</li>
 <li>Add only public proof: 09C tx link, redacted screenshot, or short note. Do not upload private payment account details.</li>
 </ol>
@@ -502,7 +503,7 @@ btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 82.22.32.82:9009</pre>
 <ul>
 <li>Trade small first.</li>
 <li>Never share seed phrases, private keys, wallet files, Discord tokens, or remote access.</li>
-<li>Staff will not DM you first and does not provide official escrow.</li>
+<li>Staff will not DM you first. Use slash commands with the Bitcoin 09 bot for escrow.</li>
 <li>No fake volume, wash trades, pump groups, price promises, or impersonation.</li>
 <li>Use public completed-trade records for factual price discovery, not hype.</li>
 </ul>
