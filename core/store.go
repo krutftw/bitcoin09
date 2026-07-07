@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Store persists main-chain blocks to an append-only file:
@@ -16,6 +17,7 @@ import (
 // a stored block) the file is rewritten from the in-memory main chain.
 type Store struct {
 	path string
+	mu   sync.Mutex
 }
 
 func NewStore(dataDir string, network string) (*Store, error) {
@@ -65,6 +67,8 @@ func (s *Store) LoadInto(c *Chain) (int64, error) {
 // SaveSnapshot rewrites the file to match the chain's current main chain.
 // Called on new tips; cheap at hobby-chain sizes, atomic via temp+rename.
 func (s *Store) SaveSnapshot(c *Chain) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	tmp := s.path + ".tmp"
 	f, err := os.Create(tmp)
 	if err != nil {

@@ -27,13 +27,13 @@ func TestReleaseNewer(t *testing.T) {
 		current string
 		want    bool
 	}{
-		{"v0.1.14", "v0.1.13", true},
+		{"v0.1.15", "v0.1.14", true},
 		{"v0.2.0", "v0.1.99", true},
 		{"v1.0.0", "v0.9.9", true},
 		{"v0.1.9", "v0.1.9", false},
 		{"v0.1.8", "v0.1.9", false},
 		{"not-a-version", "v0.1.9", false},
-		{"v0.1.14", "not-a-version", false},
+		{"v0.1.15", "not-a-version", false},
 	}
 
 	for _, tt := range tests {
