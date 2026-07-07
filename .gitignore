@@ -6,3 +6,4 @@ dist/
 .DS_Store
 tools/discord/.env
 tools/discord/*.local.*
+tools/discord/*.log
