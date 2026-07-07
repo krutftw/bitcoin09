@@ -241,15 +241,16 @@ const rolePickerComponents = [
 ];
 
 const marketBoardUrl = "https://krutftw.github.io/bitcoin09/markets.html";
-const marketIssueBase = "https://github.com/krutftw/bitcoin09/issues/new";
+const marketDraftUrl = `${marketBoardUrl}#draft`;
+const marketRecordsUrl = "https://github.com/krutftw/bitcoin09/issues?q=label%3Aotc-offer+OR+label%3Aotc-completed";
 const marketBoardComponents = [
   {
     type: 1,
     components: [
+      { type: 2, style: 5, label: "Draft OTC record", url: marketDraftUrl },
       { type: 2, style: 5, label: "OTC board", url: marketBoardUrl },
-      { type: 2, style: 5, label: "Post buy offer", url: `${marketIssueBase}?template=otc-buy.yml` },
-      { type: 2, style: 5, label: "Post sell offer", url: `${marketIssueBase}?template=otc-sell.yml` },
-      { type: 2, style: 5, label: "Record completed trade", url: `${marketIssueBase}?template=otc-completed.yml` },
+      { type: 2, style: 5, label: "Public records", url: marketRecordsUrl },
+      { type: 2, style: 5, label: "Explorer", url: "http://82.22.32.82:8009" },
     ],
   },
 ];
@@ -350,12 +351,14 @@ const seedPosts = [
       "",
       "There is no official 09C price yet. A price only means what a buyer and seller agreed for that trade.",
       "",
-      "Use Discord for quick negotiation. Use the public OTC board buttons below for records, screenshots, tx links, and completed-trade references. The website loads those public records automatically.",
+      "Use Discord for quick negotiation. Use the OTC board to draft a clean post, copy it here, and open a public GitHub record when the offer or completed trade should be visible.",
       "",
       "Use simple posts:",
       "- WTB 500 09C, paying in BTC/USDT/AUD",
       "- WTS 1000 09C, asking BTC/USDT/AUD",
       "- Completed: 500 09C for $X or X BTC",
+      "",
+      "The website reads public GitHub records into the board automatically. Do not post private payment account details, wallet files, seed phrases, Discord tokens, or remote access screenshots.",
       "",
       "Sending 09C is done with the native btc09 wallet, not MetaMask or Phantom:",
       "`btc09 send -to ADDRESS -amount 100 -seeds 82.22.32.82:9009`",

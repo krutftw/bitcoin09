@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bitcoin 09 (09C) OTC Market Board</title>
-<meta name="description" content="Bitcoin 09 public OTC market board: community buy/sell offers and completed-trade references.">
+<meta name="description" content="Bitcoin 09 public OTC market board: draft community buy/sell posts, open public GitHub records, and watch completed-trade references.">
 <link rel="icon" type="image/png" href="assets/bitcoin09-ai-logo-512.png">
 <style>
 :root {
@@ -36,6 +36,13 @@ a {
   text-underline-offset: 2px;
 }
 
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
 .top {
   color: #e7ddbf;
   background: var(--coal);
@@ -43,7 +50,7 @@ a {
 }
 
 .wrap {
-  width: min(980px, calc(100% - 28px));
+  width: min(1040px, calc(100% - 28px));
   margin: 0 auto;
 }
 
@@ -71,7 +78,7 @@ h1 {
 }
 
 .tag {
-  max-width: 720px;
+  max-width: 760px;
   margin: 9px 0 0;
   color: #d8c797;
 }
@@ -145,11 +152,6 @@ h2 {
   font-size: 20px;
 }
 
-h3 {
-  margin: 0 0 8px;
-  font-size: 16px;
-}
-
 p {
   margin: 0 0 12px;
 }
@@ -158,20 +160,68 @@ p {
   color: #665c45;
 }
 
-.actions {
+.form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.form-grid label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  font-weight: 700;
+}
+
+.form-grid .wide {
+  grid-column: 1 / -1;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  color: var(--ink);
+  background: #fff8e6;
+  border: 1px solid #9a8758;
+  border-radius: 0;
+}
+
+textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.price-line {
+  margin: 12px 0;
+  padding: 9px 10px;
+  color: #d8c797;
+  background: #0b0e0a;
+  border: 1px solid #3f371f;
+}
+
+.actions,
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 10px;
+  align-items: end;
 }
 
 .button {
   display: block;
+  width: 100%;
   padding: 11px 12px;
   color: #0d120b;
   background: #f1c15d;
   border: 1px solid #7d6525;
+  border-radius: 0;
+  text-align: left;
   text-decoration: none;
   font-weight: 700;
+  cursor: pointer;
 }
 
 .button.sell {
@@ -182,10 +232,30 @@ p {
   background: #9fc3ef;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
+.button.ghost {
+  color: #e7ddbf;
+  background: #10150d;
+  border-color: #3f371f;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.preview {
+  min-height: 96px;
+}
+
+.board-head {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: start;
+}
+
+.filters {
+  margin: 12px 0;
 }
 
 .list {
@@ -208,6 +278,7 @@ p {
 
 .side {
   display: inline-block;
+  margin-right: 6px;
   padding: 2px 6px;
   color: #0d120b;
   background: var(--gold);
@@ -268,7 +339,8 @@ code {
 }
 
 @media (max-width: 760px) {
-  .hero {
+  .hero,
+  .form-grid {
     grid-template-columns: 1fr;
   }
 
@@ -276,8 +348,8 @@ code {
     width: 74px;
   }
 
-  .grid {
-    grid-template-columns: 1fr;
+  .board-head {
+    display: block;
   }
 }
 </style>
@@ -288,7 +360,7 @@ code {
 <img src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
 <div>
 <h1>09C OTC Board</h1>
-<p class="tag">Public buy/sell offers and completed-trade references for early Bitcoin 09 price discovery.</p>
+<p class="tag">Draft an offer here, talk in Discord if you want, then open a public GitHub record for the trail.</p>
 </div>
 </div>
 <div class="wrap nav">
@@ -299,32 +371,75 @@ code {
 <main>
 <div class="wrap">
 <div class="notice">
-<strong>Not an exchange.</strong> This page is a public noticeboard only. Bitcoin 09 does not custody funds, match orders, provide escrow, process payments, set an official price, or guarantee any trade.
+<strong>Not an exchange.</strong> This is a public noticeboard only. Bitcoin 09 does not custody funds, match orders, provide escrow, process payments, set an official price, or guarantee any trade.
 </div>
 
 <section class="tape" aria-live="polite">
 <div class="ticker"><b id="open-count">-</b><span>open offers</span></div>
-<div class="ticker"><b id="receipt-count">-</b><span>public receipts</span></div>
+<div class="ticker"><b id="receipt-count">-</b><span>completed records</span></div>
 <div class="ticker"><b id="last-record">loading</b><span>latest public record</span></div>
+<div class="ticker"><b id="data-age">loading</b><span>board snapshot</span></div>
 </section>
 
-<section class="panel">
-<h2>Post A Public Record</h2>
-<p>Submissions are public GitHub issues. Users can attach redacted screenshots or tx links there. Post only details both sides are comfortable making public. Close your offer when it is filled or cancelled.</p>
-<div class="actions">
-<a class="button" href="https://github.com/krutftw/bitcoin09/issues/new?template=otc-buy.yml">Post buy offer</a>
-<a class="button sell" href="https://github.com/krutftw/bitcoin09/issues/new?template=otc-sell.yml">Post sell offer</a>
-<a class="button record" href="https://github.com/krutftw/bitcoin09/issues/new?template=otc-completed.yml">Record completed trade</a>
+<section class="panel" id="draft">
+<h2>Draft A Public Record</h2>
+<p>Fill this out on the website first. You can copy a Discord post, or open a prefilled GitHub record for the public board. GitHub is where redacted screenshots, tx links, and timestamps live.</p>
+
+<div class="form-grid">
+<label>
+Record type
+<select id="record-type">
+<option value="buy">WTB buy offer</option>
+<option value="sell">WTS sell offer</option>
+<option value="completed">Completed trade</option>
+</select>
+</label>
+<label>
+09C amount
+<input id="amount" inputmode="decimal" placeholder="20000">
+</label>
+<label>
+Total price
+<input id="total-price" placeholder="20">
+</label>
+<label>
+Payment asset
+<input id="payment-asset" placeholder="USDT">
+</label>
+<label>
+Public contact or parties
+<input id="contact" placeholder="Discord @name">
+</label>
+<label>
+Public proof or 09C tx
+<input id="proof" placeholder="explorer tx/address link or redacted proof note">
+</label>
+<label class="wide">
+Terms or public notes
+<textarea id="notes" placeholder="Trade small first. No official escrow."></textarea>
+</label>
 </div>
+
+<div class="price-line" id="price-line">Enter an amount and total price to see price per 09C.</div>
+
+<div class="actions">
+<a class="button" id="github-link" href="https://github.com/krutftw/bitcoin09/issues/new?template=otc-buy.yml" target="_blank" rel="noopener">Open public GitHub record</a>
+<button class="button ghost" id="copy-discord" type="button">Copy Discord post</button>
+<button class="button ghost" id="clear-form" type="button">Clear draft</button>
+</div>
+<p class="muted" id="copy-status" aria-live="polite"></p>
+<pre class="preview" id="discord-preview">WTB 09C for USDT
+Contact: Discord @name
+Notes: Trade small first. No official escrow.</pre>
 </section>
 
 <section class="panel">
 <h2>How It Works</h2>
 <ol>
-<li>Use Discord <code>#💱-otc-trading</code> for quick negotiation.</li>
-<li>Click a board button to create a public GitHub record.</li>
-<li>Add only public proof: 09C tx link, completed-trade screenshot, or short note. Do not upload private payment account details.</li>
-<li>The board reads GitHub issues and updates automatically.</li>
+<li>Draft the trade record on this page.</li>
+<li>Use the copied text in Discord <code>#💱-otc-trading</code> if you want quick negotiation.</li>
+<li>Open the public GitHub record when the offer or completed trade should be visible on the board.</li>
+<li>Add only public proof: 09C tx link, redacted screenshot, or short note. Do not upload private payment account details.</li>
 </ol>
 </section>
 
@@ -339,18 +454,39 @@ code {
 </ul>
 </section>
 
-<section class="grid">
-<div class="panel">
-<h2>Open Offers</h2>
-<p class="muted" id="offer-note">Loading public GitHub issues...</p>
-<div class="list" id="offer-list"></div>
+<section class="panel">
+<div class="board-head">
+<div>
+<h2>Public Board</h2>
+<p class="muted" id="market-note">Loading public market records...</p>
 </div>
-
-<div class="panel">
-<h2>Completed Trade References</h2>
-<p class="muted" id="completed-note">Loading public GitHub issues...</p>
-<div class="list" id="completed-list"></div>
+<p class="muted"><a href="#draft">draft a record</a></p>
 </div>
+<div class="filters">
+<label>
+Show
+<select id="filter-kind">
+<option value="all">All records</option>
+<option value="buy">WTB only</option>
+<option value="sell">WTS only</option>
+<option value="completed">Completed only</option>
+</select>
+</label>
+<label>
+Sort
+<select id="sort-kind">
+<option value="newest">Newest</option>
+<option value="price-low">Price per 09C: low</option>
+<option value="price-high">Price per 09C: high</option>
+<option value="amount-high">09C amount: high</option>
+</select>
+</label>
+<label>
+Search
+<input id="market-search" placeholder="address, handle, asset, notes">
+</label>
+</div>
+<div class="list" id="market-list"></div>
 </section>
 
 <section class="panel">
@@ -384,8 +520,19 @@ http://82.22.32.82:8009/api/circulating_supply</pre>
 
 <script>
 const repo = 'krutftw/bitcoin09';
-const issueBase = 'https://api.github.com/repos/' + repo + '/issues';
-let latestRecord = null;
+const githubIssueBase = 'https://github.com/' + repo + '/issues/new';
+const githubApiBase = 'https://api.github.com/repos/' + repo + '/issues';
+let marketRows = [];
+
+const draftFields = {
+  type: document.getElementById('record-type'),
+  amount: document.getElementById('amount'),
+  totalPrice: document.getElementById('total-price'),
+  paymentAsset: document.getElementById('payment-asset'),
+  contact: document.getElementById('contact'),
+  proof: document.getElementById('proof'),
+  notes: document.getElementById('notes'),
+};
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -396,9 +543,12 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function issueSection(body, heading) {
-  const safeHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp('### ' + safeHeading + '\\s*\\n+([\\s\\S]*?)(?=\\n### |$)', 'i');
+  const re = new RegExp('### ' + escapeRegExp(heading) + '\\s*\\n+([\\s\\S]*?)(?=\\n### |$)', 'i');
   const match = String(body ?? '').match(re);
   if (!match) return '';
   const text = match[1].replace(/<!--.*?-->/gs, '').trim();
@@ -407,91 +557,299 @@ function issueSection(body, heading) {
 
 function compact(value) {
   const text = String(value ?? '').trim();
-  return text.length > 90 ? text.slice(0, 87) + '...' : text;
+  return text.length > 100 ? text.slice(0, 97) + '...' : text;
+}
+
+function numeric(value) {
+  const match = String(value ?? '').replaceAll(',', '').match(/-?\d+(\.\d+)?/);
+  return match ? Number(match[0]) : NaN;
+}
+
+function fixed(value, digits = 8) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '';
+  return n.toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: 0,
+  });
 }
 
 function sideFor(issue) {
-  const labels = issue.labels.map((label) => label.name);
-  if (labels.includes('otc-buy') || issue.title.toUpperCase().includes('WTB')) return 'WTB';
-  if (labels.includes('otc-sell') || issue.title.toUpperCase().includes('WTS')) return 'WTS';
+  const labels = issue.labels.map((label) => typeof label === 'string' ? label : label.name);
+  if (labels.includes('otc-buy') || issue.title.toUpperCase().includes('WTB')) return 'buy';
+  if (labels.includes('otc-sell') || issue.title.toUpperCase().includes('WTS')) return 'sell';
+  return 'offer';
+}
+
+function rowFromIssue(issue, completed) {
+  const kind = completed ? 'completed' : sideFor(issue);
+  const amountText = issueSection(issue.body, '09C amount') || issueSection(issue.body, 'Amount traded');
+  const priceText = issueSection(issue.body, 'Total offer price') || issueSection(issue.body, 'Total trade price');
+  const amount = numeric(amountText);
+  const total = numeric(priceText);
+  const pricePer09c = Number.isFinite(amount) && amount > 0 && Number.isFinite(total) ? total / amount : null;
+  return {
+    number: issue.number,
+    title: issue.title,
+    url: issue.html_url,
+    state: issue.state,
+    kind,
+    author: issue.user?.login ?? '',
+    createdAt: issue.created_at,
+    updatedAt: issue.updated_at,
+    amountText,
+    priceText,
+    paymentAsset: issueSection(issue.body, 'Payment asset'),
+    contact: issueSection(issue.body, 'Public contact') || issueSection(issue.body, 'Public parties'),
+    proof: issueSection(issue.body, 'Public chain proof'),
+    notes: issueSection(issue.body, 'Terms or notes') || issueSection(issue.body, 'Public notes'),
+    amount,
+    pricePer09c,
+  };
+}
+
+function labelForKind(kind) {
+  if (kind === 'buy') return 'WTB';
+  if (kind === 'sell') return 'WTS';
+  if (kind === 'completed') return 'DONE';
   return 'OTC';
 }
 
-function renderIssue(issue, completed) {
-  const side = completed ? 'DONE' : sideFor(issue);
-  const sideClass = completed ? 'done' : side === 'WTS' ? 'sell' : '';
-  const amount = issueSection(issue.body, '09C amount') || issueSection(issue.body, 'Amount traded');
-  const price = issueSection(issue.body, 'Total offer price') || issueSection(issue.body, 'Total trade price');
-  const asset = issueSection(issue.body, 'Payment asset');
-  const contact = issueSection(issue.body, 'Public contact') || issueSection(issue.body, 'Public parties');
-  const terms = issueSection(issue.body, 'Terms or notes') || issueSection(issue.body, 'Public notes');
-  const created = new Date(issue.created_at).toLocaleString();
+function renderRow(row) {
+  const sideClass = row.kind === 'completed' ? 'done' : row.kind === 'sell' ? 'sell' : '';
+  const created = row.createdAt ? new Date(row.createdAt).toLocaleString() : '';
   const fields = [
-    ['09C', amount],
-    ['Price', price],
-    ['Payment', asset],
-    ['Contact', contact],
-    ['Notes', terms],
+    ['09C', row.amountText],
+    ['Total', row.priceText],
+    ['Price/09C', row.pricePer09c == null ? '' : fixed(row.pricePer09c, 10) + ' ' + (row.paymentAsset || '')],
+    ['Payment', row.paymentAsset],
+    [row.kind === 'completed' ? 'Parties' : 'Contact', row.contact],
+    ['Proof', row.proof],
+    ['Notes', row.notes],
   ].filter(([, value]) => value);
 
   return `
     <article class="card">
       <div class="card-title">
         <div>
-          <span class="side ${sideClass}">${escapeHtml(side)}</span>
-          <a href="${issue.html_url}">${escapeHtml(issue.title)}</a>
+          <span class="side ${sideClass}">${escapeHtml(labelForKind(row.kind))}</span>
+          <a href="${escapeHtml(row.url)}">${escapeHtml(row.title)}</a>
         </div>
       </div>
-      <div class="meta">#${issue.number} opened by ${escapeHtml(issue.user?.login)} on ${escapeHtml(created)}</div>
+      <div class="meta">#${escapeHtml(row.number)} opened by ${escapeHtml(row.author)} on ${escapeHtml(created)}</div>
       <div class="fields">
         ${fields.map(([key, value]) => `<div class="field"><b>${escapeHtml(key)}</b>${escapeHtml(compact(value))}</div>`).join('')}
       </div>
     </article>`;
 }
 
-function updateTape(kind, issues) {
-  if (kind === 'offers') {
-    document.getElementById('open-count').textContent = issues.length.toLocaleString();
-  }
-  if (kind === 'receipts') {
-    document.getElementById('receipt-count').textContent = issues.length.toLocaleString();
+function setTape(data) {
+  const offers = data.offers ?? marketRows.filter((row) => row.kind !== 'completed');
+  const completed = data.completed ?? marketRows.filter((row) => row.kind === 'completed');
+  const newest = [...offers, ...completed].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+  document.getElementById('open-count').textContent = offers.length.toLocaleString();
+  document.getElementById('receipt-count').textContent = completed.length.toLocaleString();
+  document.getElementById('last-record').textContent = newest ? '#' + newest.number + ' ' + new Date(newest.createdAt).toLocaleDateString() : 'none yet';
+  document.getElementById('data-age').textContent = data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : 'live';
+}
+
+function renderMarket() {
+  const kind = document.getElementById('filter-kind').value;
+  const sort = document.getElementById('sort-kind').value;
+  const query = document.getElementById('market-search').value.trim().toLowerCase();
+  let rows = [...marketRows];
+
+  if (kind !== 'all') rows = rows.filter((row) => row.kind === kind);
+  if (query) {
+    rows = rows.filter((row) => [
+      row.title,
+      row.author,
+      row.amountText,
+      row.priceText,
+      row.paymentAsset,
+      row.contact,
+      row.proof,
+      row.notes,
+    ].join(' ').toLowerCase().includes(query));
   }
 
-  for (const issue of issues) {
-    if (!latestRecord || new Date(issue.created_at) > new Date(latestRecord.created_at)) {
-      latestRecord = issue;
+  rows.sort((a, b) => {
+    if (sort === 'price-low') return (a.pricePer09c ?? Infinity) - (b.pricePer09c ?? Infinity);
+    if (sort === 'price-high') return (b.pricePer09c ?? -Infinity) - (a.pricePer09c ?? -Infinity);
+    if (sort === 'amount-high') return (b.amount ?? -Infinity) - (a.amount ?? -Infinity);
+    return new Date(b.createdAt) - new Date(a.createdAt);
+  });
+
+  const list = document.getElementById('market-list');
+  const note = document.getElementById('market-note');
+  note.className = 'muted';
+  note.textContent = rows.length
+    ? 'Showing ' + rows.length.toLocaleString() + ' public record' + (rows.length === 1 ? '.' : 's.')
+    : 'No public records match this view yet.';
+  list.innerHTML = rows.map(renderRow).join('');
+}
+
+function draft() {
+  return {
+    type: draftFields.type.value,
+    amount: draftFields.amount.value.trim(),
+    totalPrice: draftFields.totalPrice.value.trim(),
+    paymentAsset: draftFields.paymentAsset.value.trim() || 'USDT',
+    contact: draftFields.contact.value.trim(),
+    proof: draftFields.proof.value.trim(),
+    notes: draftFields.notes.value.trim(),
+  };
+}
+
+function titleForDraft(item) {
+  const amount = item.amount ? item.amount + ' 09C' : '09C';
+  const total = item.totalPrice ? item.totalPrice + ' ' + item.paymentAsset : item.paymentAsset;
+  if (item.type === 'sell') return '[WTS] ' + amount + ' for ' + total;
+  if (item.type === 'completed') return '[COMPLETED] ' + amount + ' for ' + total;
+  return '[WTB] ' + amount + ' for ' + total;
+}
+
+function discordPost(item) {
+  const side = item.type === 'sell' ? 'WTS' : item.type === 'completed' ? 'Completed' : 'WTB';
+  const amount = item.amount ? item.amount + ' 09C' : '09C amount';
+  const total = item.totalPrice ? item.totalPrice + ' ' + item.paymentAsset : 'total price';
+  const lines = [
+    side + ': ' + amount + ' for ' + total,
+  ];
+  if (item.contact) lines.push((item.type === 'completed' ? 'Parties: ' : 'Contact: ') + item.contact);
+  if (item.proof) lines.push('Proof: ' + item.proof);
+  if (item.notes) lines.push('Notes: ' + item.notes);
+  lines.push('Public record goes on the 09C OTC board.');
+  return lines.join('\n');
+}
+
+function githubUrl(item) {
+  const params = new URLSearchParams();
+  if (item.type === 'sell') {
+    params.set('template', 'otc-sell.yml');
+    params.set('title', titleForDraft(item));
+    params.set('amount', item.amount);
+    params.set('total-price', item.totalPrice + (item.paymentAsset ? ' ' + item.paymentAsset : ''));
+    params.set('payment-asset', item.paymentAsset);
+    params.set('contact', item.contact);
+    params.set('terms', [item.notes, item.proof && 'Proof: ' + item.proof].filter(Boolean).join('\n'));
+  } else if (item.type === 'completed') {
+    params.set('template', 'otc-completed.yml');
+    params.set('title', titleForDraft(item));
+    params.set('amount-traded', item.amount + ' 09C');
+    params.set('total-trade-price', item.totalPrice + (item.paymentAsset ? ' ' + item.paymentAsset : ''));
+    params.set('payment-asset', item.paymentAsset);
+    params.set('public-parties', item.contact);
+    params.set('chain-proof', item.proof);
+    params.set('public-notes', item.notes);
+  } else {
+    params.set('template', 'otc-buy.yml');
+    params.set('title', titleForDraft(item));
+    params.set('amount', item.amount);
+    params.set('total-price', item.totalPrice + (item.paymentAsset ? ' ' + item.paymentAsset : ''));
+    params.set('payment-asset', item.paymentAsset);
+    params.set('contact', item.contact);
+    params.set('terms', [item.notes, item.proof && 'Proof: ' + item.proof].filter(Boolean).join('\n'));
+  }
+  return githubIssueBase + '?' + params.toString();
+}
+
+function updateDraft() {
+  const item = draft();
+  const amount = numeric(item.amount);
+  const total = numeric(item.totalPrice);
+  const priceLine = document.getElementById('price-line');
+  if (Number.isFinite(amount) && amount > 0 && Number.isFinite(total)) {
+    priceLine.textContent = 'Price per 09C: ' + fixed(total / amount, 10) + ' ' + item.paymentAsset;
+  } else {
+    priceLine.textContent = 'Enter an amount and total price to see price per 09C.';
+  }
+  document.getElementById('discord-preview').textContent = discordPost(item);
+  document.getElementById('github-link').href = githubUrl(item);
+  document.getElementById('github-link').className = item.type === 'sell' ? 'button sell' : item.type === 'completed' ? 'button record' : 'button';
+}
+
+async function copyDiscordPost() {
+  const text = document.getElementById('discord-preview').textContent;
+  const status = document.getElementById('copy-status');
+  try {
+    await navigator.clipboard.writeText(text);
+    status.className = 'muted';
+    status.textContent = 'Copied. Paste it in Discord if you want a chat post too.';
+  } catch (error) {
+    status.className = 'error';
+    status.textContent = 'Could not copy automatically. Select the preview text and copy it manually.';
+  }
+}
+
+async function loadStaticData() {
+  const response = await fetch('market-data.json?ts=' + Date.now(), { cache: 'no-store' });
+  if (!response.ok) throw new Error('market-data status ' + response.status);
+  return response.json();
+}
+
+async function loadIssuesFallback(labels, completed = false) {
+  const state = completed ? 'all' : 'open';
+  const response = await fetch(githubApiBase + '?state=' + state + '&labels=' + encodeURIComponent(labels) + '&per_page=30', { cache: 'no-store' });
+  if (!response.ok) throw new Error('GitHub status ' + response.status);
+  const issues = (await response.json()).filter((issue) => !issue.pull_request);
+  return issues.map((issue) => rowFromIssue(issue, completed));
+}
+
+async function loadMarket() {
+  try {
+    const data = await loadStaticData();
+    marketRows = [...(data.offers ?? []), ...(data.completed ?? [])];
+    setTape(data);
+    renderMarket();
+  } catch (staticError) {
+    try {
+      const [offers, completed] = await Promise.all([
+        loadIssuesFallback('otc-offer', false),
+        loadIssuesFallback('otc-completed', true),
+      ]);
+      marketRows = [...offers, ...completed];
+      setTape({ offers, completed });
+      renderMarket();
+    } catch (error) {
+      document.getElementById('market-note').className = 'error';
+      document.getElementById('market-note').textContent = 'Could not load public market records right now. Use the public records link above.';
+      setTape({ offers: [], completed: [] });
     }
   }
-
-  const last = document.getElementById('last-record');
-  if (!latestRecord) {
-    last.textContent = 'none yet';
-    return;
-  }
-  last.textContent = '#' + latestRecord.number + ' ' + new Date(latestRecord.created_at).toLocaleDateString();
 }
 
-async function loadIssues(labels, listId, noteId, completed = false) {
-  const list = document.getElementById(listId);
-  const note = document.getElementById(noteId);
-  try {
-    const state = completed ? 'all' : 'open';
-    const response = await fetch(issueBase + '?state=' + state + '&labels=' + encodeURIComponent(labels) + '&per_page=30', { cache: 'no-store' });
-    if (!response.ok) throw new Error('GitHub status ' + response.status);
-    const issues = (await response.json()).filter((issue) => !issue.pull_request);
-    updateTape(completed ? 'receipts' : 'offers', issues);
-    note.textContent = issues.length
-      ? (completed ? 'Public completed-trade references from GitHub issues.' : 'Open public offers from GitHub issues.')
-      : (completed ? 'No completed trade records posted yet.' : 'No open public offers posted yet.');
-    list.innerHTML = issues.map((issue) => renderIssue(issue, completed)).join('');
-  } catch (error) {
-    note.className = 'error';
-    note.textContent = 'Could not load GitHub market records right now. Use the public records link above.';
-  }
+for (const field of Object.values(draftFields)) {
+  field.addEventListener('input', updateDraft);
+  field.addEventListener('change', updateDraft);
 }
 
-loadIssues('otc-offer', 'offer-list', 'offer-note', false);
-loadIssues('otc-completed', 'completed-list', 'completed-note', true);
+document.getElementById('copy-discord').addEventListener('click', copyDiscordPost);
+document.getElementById('clear-form').addEventListener('click', () => {
+  draftFields.type.value = 'buy';
+  draftFields.amount.value = '';
+  draftFields.totalPrice.value = '';
+  draftFields.paymentAsset.value = '';
+  draftFields.contact.value = '';
+  draftFields.proof.value = '';
+  draftFields.notes.value = '';
+  document.getElementById('copy-status').textContent = '';
+  updateDraft();
+});
+document.getElementById('github-link').addEventListener('click', (event) => {
+  const item = draft();
+  if (!item.amount || !item.totalPrice) {
+    event.preventDefault();
+    document.getElementById('copy-status').className = 'error';
+    document.getElementById('copy-status').textContent = 'Add at least the 09C amount and total price before opening GitHub.';
+  }
+});
+document.getElementById('filter-kind').addEventListener('change', renderMarket);
+document.getElementById('sort-kind').addEventListener('change', renderMarket);
+document.getElementById('market-search').addEventListener('input', renderMarket);
+
+updateDraft();
+loadMarket();
 </script>
 </body>
 </html>

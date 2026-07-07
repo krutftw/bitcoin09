@@ -25,15 +25,12 @@ body:
       placeholder: "40 USDT"
     validations:
       required: true
-  - type: dropdown
+  - type: input
     id: payment-asset
     attributes:
       label: Payment asset
-      options:
-        - USDT
-        - BTC
-        - AUD
-        - Other
+      description: What do you want to be paid in?
+      placeholder: "USDT"
     validations:
       required: true
   - type: input
