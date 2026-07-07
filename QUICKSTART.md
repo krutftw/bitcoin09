@@ -58,6 +58,10 @@ third-party closed-source binary miner, not the official 09C wallet or node. It
 only needs your 09C payout address. Do not give any pool miner a seed phrase,
 private key, wallet file, remote access, or Discord token.
 
+NTMminer supports GPU mining for some other algorithms, but its `btc09`
+algorithm is CPU in the current public release. There is no official 09C GPU
+miner right now.
+
 Pool miner count means payout addresses connected to that public pool, not
 guaranteed unique people and not solo miners.
 

@@ -181,6 +181,11 @@ third-party closed-source binary miner that added `-a btc09` support in its
 v1.13.0 release. It only needs a payout address. Do not give any pool miner a
 seed phrase, private key, wallet file, remote access or Discord token.
 
+NTMminer has NVIDIA GPU support for some other algorithms, but its `btc09`
+backend is listed as CPU. There is no official 09C GPU miner right now. If a
+third-party GPU miner appears later, treat it like any other closed-source
+pool miner: use only a payout address and never give it wallet secrets.
+
 ## Tests
 
 ```
