@@ -1,0 +1,69 @@
+name: 09C completed OTC trade
+description: Public completed-trade reference for early Bitcoin 09 price discovery.
+title: "[COMPLETED] "
+labels: ["otc-completed"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Public completed-trade reference only. GitHub lets you attach redacted screenshots or files after opening the issue. Do not post private personal details, payment account details, private wallet data, or anything the other side did not agree to make public.
+  - type: input
+    id: amount-traded
+    attributes:
+      label: Amount traded
+      description: How much 09C changed hands?
+      placeholder: "9000 09C"
+    validations:
+      required: true
+  - type: input
+    id: total-trade-price
+    attributes:
+      label: Total trade price
+      description: Total amount paid.
+      placeholder: "40 USDT"
+    validations:
+      required: true
+  - type: dropdown
+    id: payment-asset
+    attributes:
+      label: Payment asset
+      options:
+        - USDT
+        - BTC
+        - AUD
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: public-parties
+    attributes:
+      label: Public parties
+      description: Optional public handles. Leave out private info.
+      placeholder: "Discord @buyer / @seller"
+    validations:
+      required: false
+  - type: input
+    id: chain-proof
+    attributes:
+      label: Public chain proof
+      description: Optional 09C transaction id, address page, or block explorer reference.
+      placeholder: "http://82.22.32.82:8009/address/..."
+    validations:
+      required: false
+  - type: textarea
+    id: public-notes
+    attributes:
+      label: Public notes
+      description: Optional context, redacted proof notes, or receipt details both sides are happy to make public.
+      placeholder: "Trade completed. No official escrow."
+    validations:
+      required: false
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: This is a factual completed-trade reference, not fake volume or a price promise.
+          required: true
+        - label: I only included details both sides are comfortable making public.
+          required: true

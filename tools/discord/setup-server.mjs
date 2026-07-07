@@ -240,6 +240,20 @@ const rolePickerComponents = [
   },
 ];
 
+const marketBoardUrl = "https://krutftw.github.io/bitcoin09/markets.html";
+const marketIssueBase = "https://github.com/krutftw/bitcoin09/issues/new";
+const marketBoardComponents = [
+  {
+    type: 1,
+    components: [
+      { type: 2, style: 5, label: "OTC board", url: marketBoardUrl },
+      { type: 2, style: 5, label: "Post buy offer", url: `${marketIssueBase}?template=otc-buy.yml` },
+      { type: 2, style: 5, label: "Post sell offer", url: `${marketIssueBase}?template=otc-sell.yml` },
+      { type: 2, style: 5, label: "Record completed trade", url: `${marketIssueBase}?template=otc-completed.yml` },
+    ],
+  },
+];
+
 const seedPosts = [
   {
     channelKey: "announcements",
@@ -269,6 +283,7 @@ const seedPosts = [
       "- Bitcointalk ANN: https://bitcointalk.org/index.php?topic=5587640.0",
       "- Discord: https://discord.gg/fUuGzwRTzP",
       "- Seed node: 82.22.32.82:9009",
+      "- OTC board: https://krutftw.github.io/bitcoin09/markets.html",
       "- Roles: click the buttons in #🎭-roles",
       "",
       "09C has no premine, no ICO, no allocation, and the genesis reward is burned/unspendable.",
@@ -319,6 +334,7 @@ const seedPosts = [
       "- Public pool: https://bitcoin09.tutuit.xyz",
       "- Bitcointalk ANN: https://bitcointalk.org/index.php?topic=5587640.0",
       "- Discord: https://discord.gg/fUuGzwRTzP",
+      "- OTC board: https://krutftw.github.io/bitcoin09/markets.html",
       "- Brand kit: https://github.com/krutftw/bitcoin09/blob/master/BRAND.md",
       "- Logo PNG: https://krutftw.github.io/bitcoin09/assets/bitcoin09-ai-logo-512.png",
       "- Social card: https://krutftw.github.io/bitcoin09/assets/bitcoin09-social.png",
@@ -334,10 +350,15 @@ const seedPosts = [
       "",
       "There is no official 09C price yet. A price only means what a buyer and seller agreed for that trade.",
       "",
+      "Use Discord for quick negotiation. Use the public OTC board buttons below for records, screenshots, tx links, and completed-trade references. The website loads those public records automatically.",
+      "",
       "Use simple posts:",
       "- WTB 500 09C, paying in BTC/USDT/AUD",
       "- WTS 1000 09C, asking BTC/USDT/AUD",
       "- Completed: 500 09C for $X or X BTC",
+      "",
+      "Sending 09C is done with the native btc09 wallet, not MetaMask or Phantom:",
+      "`btc09 send -to ADDRESS -amount 100 -seeds 82.22.32.82:9009`",
       "",
       "Rules:",
       "1. Trade small first.",
@@ -346,6 +367,7 @@ const seedPosts = [
       "4. No fake volume, wash trades, pump groups, price promises, or impersonation.",
       "5. Keep completed-trade references factual so the community can see real price discovery.",
     ].join("\n"),
+    components: marketBoardComponents,
   },
   {
     channelKey: "mining-help",

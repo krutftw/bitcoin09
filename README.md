@@ -79,6 +79,10 @@ Wallet stuff:
 ./btc09 send -to ADDRESS -amount 1.5 -seeds 82.22.32.82:9009
 ```
 
+09C is a native chain coin, not an Ethereum or Solana token. MetaMask,
+Phantom, and token-contract wallets do not support it. Use the `btc09` wallet
+for now.
+
 Balance notes:
 
 - The wallet balance is calculated from your local node's synced chain, so a
@@ -161,9 +165,11 @@ Any node can serve its own explorer with `-explorer :8009`.
 
 There is no official 09C price. Early trading is community OTC only.
 
-Discord has `#💱-otc-trading` for users who want to post buy/sell offers or
-factual completed-trade references. Staff does not provide official escrow and
-there are no price promises.
+Discord has `#💱-otc-trading` for quick negotiation. The public OTC board at
+https://krutftw.github.io/bitcoin09/markets.html lets users post buy offers,
+sell offers, and completed-trade references as public GitHub issues. Staff does
+not provide official escrow, does not process payments, and there are no price
+promises.
 
 ## Brand
 

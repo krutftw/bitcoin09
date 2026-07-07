@@ -328,6 +328,8 @@ pre {
   background: #0b0e0a;
   border: 1px solid #3f371f;
   overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .miner-list {
@@ -436,7 +438,7 @@ release v0.1.11</pre>
 
 <main class="content">
 <div class="wrap">
-<p id="live" class="livebar">Network status: <a href="http://82.22.32.82:8009">live explorer</a>. Current release: v0.1.11. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">early OTC notes</a>.</p>
+<p id="live" class="livebar">Network status: <a href="http://82.22.32.82:8009">live explorer</a>. Current release: v0.1.11. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
 
 <section class="panel">
 <h2>What It Is</h2>
@@ -500,6 +502,15 @@ release v0.1.11</pre>
 </section>
 
 <section class="panel">
+<h2>Wallet And Sending</h2>
+<p>09C is a native chain coin, not an Ethereum or Solana token. MetaMask and Phantom do not support it. Use the <code>btc09</code> wallet/node for now.</p>
+<pre>btc09 wallet list
+btc09 wallet new
+btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 82.22.32.82:9009</pre>
+<p class="muted">The default fee is 0.0001 09C. Your local chain must be synced enough to see spendable coins.</p>
+</section>
+
+<section class="panel">
 <h2>Watch The Chain</h2>
 <p><a href="http://82.22.32.82:8009">Live block explorer</a>: height, difficulty, recent blocks and miner addresses.</p>
 <p>The explorer exposes machine-readable supply data for listings and audits.</p>
@@ -509,7 +520,7 @@ curl http://82.22.32.82:8009/api/circulating_supply</pre>
 
 <section class="panel">
 <h2>Markets</h2>
-<p>There is no official 09C price. Early trading is community OTC only: users can post buy/sell offers in Discord, and completed trades can be referenced as price discovery. Read the <a href="markets.html">markets note</a> before trading.</p>
+<p>There is no official 09C price. Early trading is community OTC only: users can post buy/sell offers in Discord, then record public offers or completed trades on the <a href="markets.html">OTC board</a>. Bitcoin 09 does not custody funds, match orders, provide escrow, or process payments.</p>
 </section>
 
 <section class="panel">

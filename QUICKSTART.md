@@ -77,6 +77,32 @@ http://82.22.32.82:8009/address/YOUR_ADDRESS
 Local wallet balance is calculated from your own synced chain. A fresh node can
 show a balance later than the public explorer while it catches up.
 
+## Send 09C
+
+09C is a native chain coin, not an Ethereum or Solana token. MetaMask and
+Phantom do not support it. Use the `btc09` wallet/node.
+
+List your wallet addresses and local balance:
+
+```powershell
+btc09 wallet list
+```
+
+Create another receiving address:
+
+```powershell
+btc09 wallet new
+```
+
+Send 09C and broadcast through the seed node:
+
+```powershell
+btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 82.22.32.82:9009
+```
+
+The default fee is 0.0001 09C. Your local chain must be synced enough to see
+spendable coins. Mined rewards become spendable after 100 blocks.
+
 ## Run an Explorer
 
 ```powershell

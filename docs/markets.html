@@ -3,52 +3,495 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bitcoin 09 (09C) Markets</title>
-<meta name="description" content="Bitcoin 09 early market notes: no official price, community OTC only.">
+<title>Bitcoin 09 (09C) OTC Market Board</title>
+<meta name="description" content="Bitcoin 09 public OTC market board: community buy/sell offers and completed-trade references.">
+<link rel="icon" type="image/png" href="assets/bitcoin09-ai-logo-512.png">
 <style>
-body { font-family: monospace; background: #f4f1ea; color: #222; margin: 2em auto; max-width: 720px; padding: 0 1em; line-height: 1.5; }
-h1 { font-size: 1.6em; margin-bottom: 0; }
-h2 { margin-top: 1.4em; }
-pre { background: #e8e4da; padding: 12px; overflow-x: auto; }
-a { color: #1a0dab; }
-.note { border: 1px solid #b9b2a5; background: #ede8dc; padding: 12px; margin: 1em 0; }
+:root {
+  --coal: #090c08;
+  --paper: #f3ecd8;
+  --paper-2: #e7dcc0;
+  --ink: #221b10;
+  --gold: #d9a441;
+  --green: #277a3f;
+  --line: #82724f;
+  --blue: #144f8a;
+  --red: #8a1f11;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Courier New", Consolas, monospace;
+  color: var(--ink);
+  background: var(--paper);
+  line-height: 1.5;
+}
+
+a {
+  color: var(--blue);
+  text-underline-offset: 2px;
+}
+
+.top {
+  color: #e7ddbf;
+  background: var(--coal);
+  border-bottom: 3px solid var(--gold);
+}
+
+.wrap {
+  width: min(980px, calc(100% - 28px));
+  margin: 0 auto;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 18px;
+  align-items: center;
+  padding: 24px 0 22px;
+}
+
+.hero img {
+  width: 92px;
+  aspect-ratio: 1;
+  border: 1px solid #725d26;
+  background: #0b0c0d;
+}
+
+h1 {
+  margin: 0;
+  color: #fff3cf;
+  font-size: clamp(30px, 7vw, 54px);
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.tag {
+  max-width: 720px;
+  margin: 9px 0 0;
+  color: #d8c797;
+}
+
+.nav {
+  padding: 9px 0 13px;
+  color: #d8c797;
+}
+
+.nav a {
+  color: #6ce083;
+}
+
+main {
+  padding: 18px 0 42px;
+}
+
+.notice,
+.panel,
+.card {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  box-shadow: 3px 3px 0 #c8b984;
+}
+
+.notice {
+  padding: 13px 15px;
+  background: #efe0b5;
+}
+
+.notice strong {
+  color: var(--red);
+}
+
+.panel {
+  margin: 18px 0;
+  padding: 16px;
+}
+
+.tape {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+  margin: 18px 0;
+  padding: 10px;
+  color: #d8c797;
+  background: #0b0e0a;
+  border: 1px solid #3f371f;
+}
+
+.ticker {
+  padding: 8px;
+  border: 1px solid #3f371f;
+}
+
+.ticker b {
+  display: block;
+  color: #6ce083;
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.ticker span {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 20px;
+}
+
+h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+p {
+  margin: 0 0 12px;
+}
+
+.muted {
+  color: #665c45;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 10px;
+}
+
+.button {
+  display: block;
+  padding: 11px 12px;
+  color: #0d120b;
+  background: #f1c15d;
+  border: 1px solid #7d6525;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.button.sell {
+  background: #84d399;
+}
+
+.button.record {
+  background: #9fc3ef;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.list {
+  display: grid;
+  gap: 10px;
+}
+
+.card {
+  padding: 12px;
+  box-shadow: none;
+  background: #f8f1dd;
+}
+
+.card-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: start;
+}
+
+.side {
+  display: inline-block;
+  padding: 2px 6px;
+  color: #0d120b;
+  background: var(--gold);
+  border: 1px solid #7d6525;
+  font-weight: 700;
+}
+
+.side.sell {
+  background: #84d399;
+}
+
+.side.done {
+  background: #9fc3ef;
+}
+
+.meta {
+  color: #665c45;
+  font-size: 12px;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.field {
+  padding: 7px;
+  background: #fff8e6;
+  border: 1px solid #d2bd80;
+  overflow-wrap: anywhere;
+}
+
+.field b {
+  display: block;
+  font-size: 12px;
+  color: #5c4d2d;
+}
+
+pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  color: #6ce083;
+  background: #0b0e0a;
+  border: 1px solid #3f371f;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+code {
+  font-family: "Courier New", Consolas, monospace;
+}
+
+.error {
+  color: var(--red);
+}
+
+@media (max-width: 760px) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+
+  .hero img {
+    width: 74px;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>
 </head>
 <body>
-<h1>Bitcoin 09 (09C) markets</h1>
-<p><a href="index.html">home</a> / <a href="https://discord.gg/fUuGzwRTzP">Discord</a> / <a href="http://82.22.32.82:8009">explorer</a></p>
+<header class="top">
+<div class="wrap hero">
+<img src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
+<div>
+<h1>09C OTC Board</h1>
+<p class="tag">Public buy/sell offers and completed-trade references for early Bitcoin 09 price discovery.</p>
+</div>
+</div>
+<div class="wrap nav">
+<a href="index.html">home</a> / <a href="https://github.com/krutftw/bitcoin09/issues?q=label%3Aotc-offer+OR+label%3Aotc-completed">public records</a> / <a href="https://discord.gg/fUuGzwRTzP">Discord</a> / <a href="http://82.22.32.82:8009">explorer</a>
+</div>
+</header>
 
-<div class="note">09C has no official price. Any price is only the price agreed by a buyer and seller in a completed trade.</div>
+<main>
+<div class="wrap">
+<div class="notice">
+<strong>Not an exchange.</strong> This page is a public noticeboard only. Bitcoin 09 does not custody funds, match orders, provide escrow, process payments, set an official price, or guarantee any trade.
+</div>
 
-<h2>How early trading works</h2>
-<p>Bitcoin 09 is still in the early mining phase. There is no official exchange
-market. The first market is community OTC: one person wants to buy, one person
-wants to sell, and they agree on the terms themselves.</p>
+<section class="tape" aria-live="polite">
+<div class="ticker"><b id="open-count">-</b><span>open offers</span></div>
+<div class="ticker"><b id="receipt-count">-</b><span>public receipts</span></div>
+<div class="ticker"><b id="last-record">loading</b><span>latest public record</span></div>
+</section>
 
-<h2>Where to post</h2>
-<p>Use the <code>#💱-otc-trading</code> channel in Discord for community buy/sell
-posts.</p>
+<section class="panel">
+<h2>Post A Public Record</h2>
+<p>Submissions are public GitHub issues. Users can attach redacted screenshots or tx links there. Post only details both sides are comfortable making public. Close your offer when it is filled or cancelled.</p>
+<div class="actions">
+<a class="button" href="https://github.com/krutftw/bitcoin09/issues/new?template=otc-buy.yml">Post buy offer</a>
+<a class="button sell" href="https://github.com/krutftw/bitcoin09/issues/new?template=otc-sell.yml">Post sell offer</a>
+<a class="button record" href="https://github.com/krutftw/bitcoin09/issues/new?template=otc-completed.yml">Record completed trade</a>
+</div>
+</section>
 
-<pre>WTB 500 09C, paying in BTC/USDT/AUD
-WTS 1000 09C, asking BTC/USDT/AUD
-Completed: 500 09C for X BTC</pre>
+<section class="panel">
+<h2>How It Works</h2>
+<ol>
+<li>Use Discord <code>#💱-otc-trading</code> for quick negotiation.</li>
+<li>Click a board button to create a public GitHub record.</li>
+<li>Add only public proof: 09C tx link, completed-trade screenshot, or short note. Do not upload private payment account details.</li>
+<li>The board reads GitHub issues and updates automatically.</li>
+</ol>
+</section>
 
-<h2>Ground rules</h2>
+<section class="panel">
+<h2>Scam Checks</h2>
+<ul>
+<li>Public first. Be careful when someone moves straight to DMs.</li>
+<li>No guaranteed profit, no urgent pressure, no "official floor".</li>
+<li>Use a tiny test trade before a larger one.</li>
+<li>Check the 09C address or tx on the explorer when possible.</li>
+<li>Never upload payment account details, private keys, seed phrases, wallet files, Discord tokens, or remote access screenshots.</li>
+</ul>
+</section>
+
+<section class="grid">
+<div class="panel">
+<h2>Open Offers</h2>
+<p class="muted" id="offer-note">Loading public GitHub issues...</p>
+<div class="list" id="offer-list"></div>
+</div>
+
+<div class="panel">
+<h2>Completed Trade References</h2>
+<p class="muted" id="completed-note">Loading public GitHub issues...</p>
+<div class="list" id="completed-list"></div>
+</div>
+</section>
+
+<section class="panel">
+<h2>How To Send 09C</h2>
+<p>09C is its own chain, not an Ethereum, Solana, or token contract asset. MetaMask and Phantom do not support it. Use the Bitcoin 09 wallet/node for now.</p>
+<pre>btc09 wallet list
+btc09 send -to 4THEIR_09C_ADDRESS -amount 100 -seeds 82.22.32.82:9009</pre>
+<p class="muted">Default fee is 0.0001 09C. Your local chain must be synced enough to see spendable coins. Mined rewards become spendable after 100 blocks.</p>
+</section>
+
+<section class="panel">
+<h2>Ground Rules</h2>
 <ul>
 <li>Trade small first.</li>
-<li>Never share seed phrases, private keys, remote access, or wallet files.</li>
+<li>Never share seed phrases, private keys, wallet files, Discord tokens, or remote access.</li>
 <li>Staff will not DM you first and does not provide official escrow.</li>
 <li>No fake volume, wash trades, pump groups, price promises, or impersonation.</li>
-<li>Keep completed-trade references factual so the community can see real price discovery.</li>
+<li>Use public completed-trade records for factual price discovery, not hype.</li>
 </ul>
+</section>
 
-<h2>Supply references</h2>
-<p>The explorer exposes supply data for anyone checking emission or future listing
-requirements:</p>
-
+<section class="panel">
+<h2>Supply References</h2>
+<p>The explorer exposes supply data for anyone checking emission or future listing requirements.</p>
 <pre>http://82.22.32.82:8009/api/supply
 http://82.22.32.82:8009/api/circulating_supply</pre>
+<p class="muted">Circulating supply excludes the burned genesis reward.</p>
+</section>
+</div>
+</main>
 
-<p>Circulating supply excludes the burned genesis reward.</p>
+<script>
+const repo = 'krutftw/bitcoin09';
+const issueBase = 'https://api.github.com/repos/' + repo + '/issues';
+let latestRecord = null;
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function issueSection(body, heading) {
+  const safeHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('### ' + safeHeading + '\\s*\\n+([\\s\\S]*?)(?=\\n### |$)', 'i');
+  const match = String(body ?? '').match(re);
+  if (!match) return '';
+  const text = match[1].replace(/<!--.*?-->/gs, '').trim();
+  return text === '_No response_' ? '' : text;
+}
+
+function compact(value) {
+  const text = String(value ?? '').trim();
+  return text.length > 90 ? text.slice(0, 87) + '...' : text;
+}
+
+function sideFor(issue) {
+  const labels = issue.labels.map((label) => label.name);
+  if (labels.includes('otc-buy') || issue.title.toUpperCase().includes('WTB')) return 'WTB';
+  if (labels.includes('otc-sell') || issue.title.toUpperCase().includes('WTS')) return 'WTS';
+  return 'OTC';
+}
+
+function renderIssue(issue, completed) {
+  const side = completed ? 'DONE' : sideFor(issue);
+  const sideClass = completed ? 'done' : side === 'WTS' ? 'sell' : '';
+  const amount = issueSection(issue.body, '09C amount') || issueSection(issue.body, 'Amount traded');
+  const price = issueSection(issue.body, 'Total offer price') || issueSection(issue.body, 'Total trade price');
+  const asset = issueSection(issue.body, 'Payment asset');
+  const contact = issueSection(issue.body, 'Public contact') || issueSection(issue.body, 'Public parties');
+  const terms = issueSection(issue.body, 'Terms or notes') || issueSection(issue.body, 'Public notes');
+  const created = new Date(issue.created_at).toLocaleString();
+  const fields = [
+    ['09C', amount],
+    ['Price', price],
+    ['Payment', asset],
+    ['Contact', contact],
+    ['Notes', terms],
+  ].filter(([, value]) => value);
+
+  return `
+    <article class="card">
+      <div class="card-title">
+        <div>
+          <span class="side ${sideClass}">${escapeHtml(side)}</span>
+          <a href="${issue.html_url}">${escapeHtml(issue.title)}</a>
+        </div>
+      </div>
+      <div class="meta">#${issue.number} opened by ${escapeHtml(issue.user?.login)} on ${escapeHtml(created)}</div>
+      <div class="fields">
+        ${fields.map(([key, value]) => `<div class="field"><b>${escapeHtml(key)}</b>${escapeHtml(compact(value))}</div>`).join('')}
+      </div>
+    </article>`;
+}
+
+function updateTape(kind, issues) {
+  if (kind === 'offers') {
+    document.getElementById('open-count').textContent = issues.length.toLocaleString();
+  }
+  if (kind === 'receipts') {
+    document.getElementById('receipt-count').textContent = issues.length.toLocaleString();
+  }
+
+  for (const issue of issues) {
+    if (!latestRecord || new Date(issue.created_at) > new Date(latestRecord.created_at)) {
+      latestRecord = issue;
+    }
+  }
+
+  const last = document.getElementById('last-record');
+  if (!latestRecord) {
+    last.textContent = 'none yet';
+    return;
+  }
+  last.textContent = '#' + latestRecord.number + ' ' + new Date(latestRecord.created_at).toLocaleDateString();
+}
+
+async function loadIssues(labels, listId, noteId, completed = false) {
+  const list = document.getElementById(listId);
+  const note = document.getElementById(noteId);
+  try {
+    const state = completed ? 'all' : 'open';
+    const response = await fetch(issueBase + '?state=' + state + '&labels=' + encodeURIComponent(labels) + '&per_page=30', { cache: 'no-store' });
+    if (!response.ok) throw new Error('GitHub status ' + response.status);
+    const issues = (await response.json()).filter((issue) => !issue.pull_request);
+    updateTape(completed ? 'receipts' : 'offers', issues);
+    note.textContent = issues.length
+      ? (completed ? 'Public completed-trade references from GitHub issues.' : 'Open public offers from GitHub issues.')
+      : (completed ? 'No completed trade records posted yet.' : 'No open public offers posted yet.');
+    list.innerHTML = issues.map((issue) => renderIssue(issue, completed)).join('');
+  } catch (error) {
+    note.className = 'error';
+    note.textContent = 'Could not load GitHub market records right now. Use the public records link above.';
+  }
+}
+
+loadIssues('otc-offer', 'offer-list', 'offer-note', false);
+loadIssues('otc-completed', 'completed-list', 'completed-note', true);
+</script>
 </body>
 </html>
