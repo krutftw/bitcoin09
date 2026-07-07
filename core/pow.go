@@ -21,7 +21,7 @@ func SHA256d(b []byte) Hash32 {
 var powSalt = []byte("BTC09/pow/v1")
 
 // PowHash is the mining hash: Argon2id over the 88-byte block header.
-// The 64 MiB memory cost per attempt is what keeps mining on CPUs.
+// The 64 MiB memory cost per attempt is what makes mining memory-bound.
 func PowHash(header []byte, p *Params) Hash32 {
 	var out Hash32
 	key := argon2.IDKey(header, powSalt, p.ArgonTime, p.ArgonMemKiB, 1, 32)

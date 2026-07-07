@@ -44,16 +44,15 @@ harder to misuse, and there is no legacy to stay compatible with.
 
 SHA-256 is pure logic: the cheapest way to compute it is a chip that does
 nothing else, which is why ASICs won. Argon2id is different. Each hash
-attempt requires filling and randomly walking 64 MiB of memory. The cost of
-an attempt is dominated by memory bandwidth, not logic. A GPU has thousands
-of cores but they starve waiting on memory. An ASIC for Argon2id is mostly
-a DRAM array, and DRAM is the one component where custom hardware buys
-almost nothing over the sticks in a desktop.
+attempt requires filling and walking 64 MiB of memory. The cost of an attempt
+is dominated by memory bandwidth, not raw logic, so GPUs and ASICs do not get
+the same clean advantage they get on SHA-256d.
 
-Monero has run this argument in production for years with RandomX. CPU
-mining there remains viable seven years on. Nothing is ASIC-proof forever,
-but memory-hard functions keep the gap between a laptop and custom hardware
-small enough that joining from home stays rational.
+Monero has run a similar memory-hard argument in production for years with
+RandomX. CPU mining there remains viable seven years on. Nothing is
+ASIC-proof or GPU-proof forever, but memory-hard functions can keep the gap
+between a normal CPU and custom hardware small enough that joining from home
+stays rational.
 
 Block identifiers remain double SHA-256 of the header, so verifying a
 chain's connectivity stays cheap. The Argon2id check runs once per block on

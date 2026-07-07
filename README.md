@@ -5,9 +5,9 @@
 The coin that you can mine like it's 2009.
 
 This is Bitcoin, same idea top to bottom, changed in one place: the proof of
-work is Argon2id (memory-hard) instead of SHA-256. That means normal CPUs do
-the mining and ASICs/GPUs get no real advantage. Everything else follows
-Bitcoin.
+work is Argon2id (memory-hard) instead of SHA-256. Normal CPUs can mine it,
+and the 64 MiB memory cost is meant to reduce the easy ASIC/GPU advantage
+that took over Bitcoin. Everything else follows Bitcoin.
 
 | | Bitcoin | Bitcoin 09 |
 |---|---|---|
@@ -108,14 +108,13 @@ took over. Today a laptop has a one in millions share against warehouse
 hardware.
 
 Argon2id needs 64 MiB of memory per hash attempt. Memory bandwidth is the
-bottleneck, not raw logic speed, so a GPU's thousands of cores sit starved
-and an ASIC would basically be a stack of the same DRAM your laptop already
-has. Monero's RandomX has used the same reasoning for years and CPU mining
-is still viable there.
+bottleneck, not raw logic speed, so GPUs and ASICs do not get the same clean
+advantage they get on SHA-256d. Monero's RandomX has used the same broad
+reasoning for years and CPU mining is still viable there.
 
-Nothing stays ASIC-proof forever, but memory-hard keeps the gap between a
-laptop and custom hardware small. That's what makes the 2009 experience
-possible again.
+Nothing stays ASIC-proof or GPU-proof forever. The aim is simpler: make the
+gap between normal CPUs and custom hardware smaller than it is on Bitcoin.
+That's what makes the 2009 experience possible again.
 
 ## Consensus rules, short version
 
@@ -191,10 +190,11 @@ third-party closed-source binary miner that added `-a btc09` support in its
 v1.13.0 release. It only needs a payout address. Do not give any pool miner a
 seed phrase, private key, wallet file, remote access or Discord token.
 
-NTMminer has NVIDIA GPU support for some other algorithms, but its `btc09`
-backend is listed as CPU. There is no official 09C GPU miner right now. If a
-third-party GPU miner appears later, treat it like any other closed-source
-pool miner: use only a payout address and never give it wallet secrets.
+NTMminer has NVIDIA GPU support for some other algorithms, but its public
+`btc09` backend is listed as CPU-only. There is no official 09C GPU miner
+right now. If a third-party GPU miner appears later, treat it like any other
+closed-source pool miner: use only a payout address and never give it wallet
+secrets.
 
 ## Tests
 

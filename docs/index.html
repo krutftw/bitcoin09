@@ -442,7 +442,7 @@ release v0.1.11</pre>
 
 <section class="panel">
 <h2>What It Is</h2>
-<p>Bitcoin 09 is Bitcoin's old idea with one deliberate swap: Argon2id memory-hard proof of work instead of SHA-256. Normal CPUs can mine it, and ASIC/GPU advantage is intentionally pushed down.</p>
+<p>Bitcoin 09 is Bitcoin's old idea with one deliberate swap: Argon2id memory-hard proof of work instead of SHA-256. Normal CPUs can mine it, and the 64 MiB memory cost is meant to reduce the easy ASIC/GPU advantage that took over Bitcoin.</p>
 <table class="facts">
 <tr><th></th><th>Bitcoin</th><th>Bitcoin 09</th></tr>
 <tr><td>Supply cap</td><td>21,000,000</td><td>21,000,000</td></tr>
@@ -526,7 +526,7 @@ curl http://82.22.32.82:8009/api/circulating_supply</pre>
 <section class="panel">
 <h2>Third-party Miners</h2>
 <p>NTMminer is a third-party closed-source binary miner, not the official 09C wallet or node. It only needs your payout address. Do not give any pool miner a seed phrase, private key, wallet file, remote access, or Discord token.</p>
-<p>NTMminer has GPU support for some other algorithms, but the current public <code>btc09</code> backend is CPU. There is no official 09C GPU miner right now.</p>
+<p>NTMminer has GPU support for some other algorithms, but the current public <code>btc09</code> backend is listed as CPU-only. There is no official 09C GPU miner right now. If a third-party GPU miner appears, it should be public and benchmarked like any other miner.</p>
 </section>
 
 <section class="panel">

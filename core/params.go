@@ -46,7 +46,7 @@ var MainNet = Params{
 	RetargetInterval: 2016, // Bitcoin-classic, ~2 weeks at target rate
 	CoinbaseMaturity: 100, // Bitcoin-classic
 	MaxTargetBits:    0x1f00ffff,
-	ArgonMemKiB:      64 * 1024, // 64 MiB per hash: the ASIC/GPU wall
+	ArgonMemKiB:      64 * 1024, // 64 MiB per hash attempt
 	ArgonTime:        1,
 	GenesisTime:      1783274400, // 2026-07-05 18:00:00 UTC, launch day
 	GenesisNonce:     20214,      // mined 2026-07-06; genesis id ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f
