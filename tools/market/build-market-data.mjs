@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 const repo = process.env.GITHUB_REPOSITORY || "krutftw/bitcoin09";
 const outputPath = resolve(process.argv[2] || "docs/market-data.json");
 const apiBase = `https://api.github.com/repos/${repo}/issues`;
+const source = `https://github.com/${repo}/issues?q=label%3Aotc-offer+OR+label%3Aotc-completed`;
 
 function authHeaders() {
   const headers = {
@@ -107,7 +108,7 @@ const completed = completedIssues.map((issue) => rowFromIssue(issue, true));
 
 const payload = {
   generatedAt: new Date().toISOString(),
-  source: `https://github.com/${repo}/issues?q=label%3Aotc-offer+OR+label%3Aotc-completed`,
+  source,
   counts: {
     openOffers: offers.length,
     completed: completed.length,
@@ -116,6 +117,32 @@ const payload = {
   completed,
 };
 
-await mkdir(dirname(outputPath), { recursive: true });
-await writeFile(outputPath, JSON.stringify(payload, null, 2) + "\n", "utf8");
-console.log(`Wrote ${outputPath} (${offers.length} open offers, ${completed.length} completed records)`);
+const existing = await readExisting(outputPath);
+if (existing && sameMarketData(existing, payload)) {
+  console.log(`No market data changes (${offers.length} open offers, ${completed.length} completed records)`);
+} else {
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, JSON.stringify(payload, null, 2) + "\n", "utf8");
+  console.log(`Wrote ${outputPath} (${offers.length} open offers, ${completed.length} completed records)`);
+}
+
+async function readExisting(path) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function sameMarketData(left, right) {
+  return JSON.stringify(stableMarketData(left)) === JSON.stringify(stableMarketData(right));
+}
+
+function stableMarketData(data) {
+  return {
+    source: data.source,
+    counts: data.counts,
+    offers: data.offers,
+    completed: data.completed,
+  };
+}
