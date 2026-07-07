@@ -513,7 +513,7 @@ release v0.1.11</pre>
 <pre>btc09 wallet list
 btc09 wallet new
 btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 82.22.32.82:9009</pre>
-<p class="muted">The default fee is 0.0001 09C. Your local chain must be synced enough to see spendable coins.</p>
+<p class="muted">The default fee is 0.0001 09C. <code>-seeds</code> is plural and means peer nodes to broadcast through, not a wallet seed phrase. Do not paste private keys, seed phrases, or wallet file contents into the command line. <code>send</code> spends from the wallet file in your data directory, and your local chain must be synced enough to see spendable coins.</p>
 </section>
 
 <section class="panel">

@@ -79,6 +79,11 @@ Wallet stuff:
 ./btc09 send -to ADDRESS -amount 1.5 -seeds 82.22.32.82:9009
 ```
 
+`-seeds` is plural and means peer nodes to broadcast through. It is not a wallet
+seed phrase option. Do not paste private keys, seed phrases, or wallet file
+contents into the command line. `send` spends from the wallet file in your data
+directory.
+
 09C is a native chain coin, not an Ethereum or Solana token. MetaMask,
 Phantom, and token-contract wallets do not support it. Use the `btc09` wallet
 for now.

@@ -493,8 +493,8 @@ Search
 <h2>How To Send 09C</h2>
 <p>09C is its own chain, not an Ethereum, Solana, or token contract asset. MetaMask and Phantom do not support it. Use the Bitcoin 09 wallet/node for now.</p>
 <pre>btc09 wallet list
-btc09 send -to 4THEIR_09C_ADDRESS -amount 100 -seeds 82.22.32.82:9009</pre>
-<p class="muted">Default fee is 0.0001 09C. Your local chain must be synced enough to see spendable coins. Mined rewards become spendable after 100 blocks.</p>
+btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 82.22.32.82:9009</pre>
+<p class="muted">Default fee is 0.0001 09C. <code>-seeds</code> is plural and means peer nodes to broadcast through, not a wallet seed phrase. Do not paste private keys, seed phrases, or wallet file contents into the command line. <code>send</code> spends from the wallet file in your data directory. Your local chain must be synced enough to see spendable coins, and mined rewards become spendable after 100 blocks.</p>
 </section>
 
 <section class="panel">

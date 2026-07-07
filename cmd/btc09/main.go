@@ -2,7 +2,7 @@
 //
 //	btc09 node   [-mine] [-listen :9009] [-seeds host:port,...]
 //	btc09 wallet [new|list]
-//	btc09 send   -to ADDRESS -amount COINS [-fee COINS]
+//	btc09 send   -to ADDRESS -amount COINS [-fee COINS] [-seeds host:port,...]
 //	btc09 genesis-mine        (maintainer tool: finds the mainnet genesis nonce)
 package main
 
@@ -67,7 +67,7 @@ func usage() {
 usage:
   btc09 node   [-mine] [-listen :9009] [-seeds host:port,...] [-network mainnet|regtest] [-datadir DIR] [-tag TEXT] [-no-update-check]
   btc09 wallet new|list [-datadir DIR]
-  btc09 send   -to ADDRESS -amount COINS [-fee COINS] [-datadir DIR] ...
+  btc09 send   -to ADDRESS -amount COINS [-fee COINS] [-datadir DIR] [-seeds host:port,...]
   btc09 version
 `, core.CoinName, core.Ticker)
 	os.Exit(2)
@@ -319,6 +319,10 @@ func cmdWallet(args []string) {
 }
 
 func cmdSend(args []string) {
+	if err := rejectSendSeedFlag(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	to := fs.String("to", "", "destination address")
 	amount := fs.Float64("amount", 0, "amount in coins")
@@ -358,6 +362,15 @@ func cmdSend(args []string) {
 	} else {
 		fmt.Println("note: no -seeds given; tx sits in local mempool until your node mines it or peers sync it")
 	}
+}
+
+func rejectSendSeedFlag(args []string) error {
+	for _, arg := range args {
+		if arg == "-seed" || arg == "--seed" || strings.HasPrefix(arg, "-seed=") || strings.HasPrefix(arg, "--seed=") {
+			return fmt.Errorf("error: btc09 send has no -seed wallet option. Use -seeds host:port to broadcast through peers. It spends from the wallet file in -datadir; do not paste private keys or seed phrases on the command line.")
+		}
+	}
+	return nil
 }
 
 func cmdGenesisMine(args []string) {

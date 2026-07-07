@@ -101,8 +101,13 @@ Send 09C and broadcast through the seed node:
 btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 82.22.32.82:9009
 ```
 
-The default fee is 0.0001 09C. Your local chain must be synced enough to see
-spendable coins. Mined rewards become spendable after 100 blocks.
+The default fee is 0.0001 09C. `-seeds` is plural and means peer nodes to
+broadcast through. It is not a wallet seed phrase option. Do not paste private
+keys, seed phrases, or wallet file contents into the command line.
+
+`send` spends from the wallet file in your data directory. Your local chain must
+be synced enough to see spendable coins. Mined rewards become spendable after
+100 blocks.
 
 ## Run an Explorer
 

@@ -23,3 +23,22 @@ func TestReleaseNewer(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectSendSeedFlag(t *testing.T) {
+	tests := [][]string{
+		{"-seed", "abc"},
+		{"--seed", "abc"},
+		{"-seed=abc"},
+		{"--seed=abc"},
+	}
+
+	for _, args := range tests {
+		if err := rejectSendSeedFlag(args); err == nil {
+			t.Fatalf("rejectSendSeedFlag(%v) = nil, want error", args)
+		}
+	}
+
+	if err := rejectSendSeedFlag([]string{"-seeds", "82.22.32.82:9009"}); err != nil {
+		t.Fatalf("rejectSendSeedFlag(-seeds) = %v, want nil", err)
+	}
+}
