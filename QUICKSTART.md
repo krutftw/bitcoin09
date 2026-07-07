@@ -60,7 +60,8 @@ private key, wallet file, remote access, or Discord token.
 
 NTMminer supports GPU mining for some other algorithms, but its `btc09`
 algorithm is CPU in the current public release. There is no official 09C GPU
-miner right now.
+miner right now. 09C does not police hardware at consensus level: if a miner
+finds valid blocks, those blocks are valid.
 
 Pool miner count means payout addresses connected to that public pool, not
 guaranteed unique people and not solo miners.

@@ -449,8 +449,14 @@ release v0.1.11</pre>
 <tr><td>Block reward</td><td>50, halves every 210,000</td><td>50, halves every 210,000</td></tr>
 <tr><td>Block time</td><td>10 minutes</td><td>10 minutes</td></tr>
 <tr><td>Premine</td><td>none</td><td>none</td></tr>
-<tr><td>Proof of work</td><td>SHA-256d</td><td>Argon2id 64 MiB</td></tr>
+<tr><td>Proof of work</td><td>SHA-256d</td><td>Argon2id 64 MiB, CPU-accessible</td></tr>
 </table>
+</section>
+
+<section class="panel">
+<h2>Mining Policy</h2>
+<p>09C is permissionless proof of work. The official node miner is CPU mining, and the current public third-party <code>btc09</code> miner is listed as CPU-only, but the chain does not try to detect or ban hardware. A valid block is valid work.</p>
+<p>If a public GPU, FPGA, or heavily optimized miner appears, it should be shared and benchmarked like any other miner. A stronger CPU-biased PoW would require a coordinated hard fork, not pool-side rules.</p>
 </section>
 
 <section class="panel dark stats" aria-live="polite">
@@ -526,7 +532,7 @@ curl http://82.22.32.82:8009/api/circulating_supply</pre>
 <section class="panel">
 <h2>Third-party Miners</h2>
 <p>NTMminer is a third-party closed-source binary miner, not the official 09C wallet or node. It only needs your payout address. Do not give any pool miner a seed phrase, private key, wallet file, remote access, or Discord token.</p>
-<p>NTMminer has GPU support for some other algorithms, but the current public <code>btc09</code> backend is listed as CPU-only. There is no official 09C GPU miner right now. If a third-party GPU miner appears, it should be public and benchmarked like any other miner.</p>
+<p>NTMminer has GPU support for some other algorithms, but the current public <code>btc09</code> backend is listed as CPU-only. There is no official 09C GPU miner right now. If a third-party GPU miner appears, it is still permissionless mining. Treat any closed-source miner carefully: use only a payout address.</p>
 </section>
 
 <section class="panel">

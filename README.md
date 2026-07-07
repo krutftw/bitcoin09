@@ -16,7 +16,7 @@ that took over Bitcoin. Everything else follows Bitcoin.
 | Block time | 10 minutes | 10 minutes |
 | Premine | none | none |
 | Genesis reward | unspendable | unspendable |
-| Proof of work | SHA-256d (ASICs) | Argon2id 64 MiB (CPUs) |
+| Proof of work | SHA-256d (ASICs) | Argon2id 64 MiB (CPU-accessible) |
 | Signatures | ECDSA/Schnorr | Ed25519 |
 
 ## Read this first
@@ -24,9 +24,9 @@ that took over Bitcoin. Everything else follows Bitcoin.
 09C is worth nothing. Bitcoin was worth nothing in 2009 too, that's the
 whole idea here. No premine, no company, no allocation. The genesis reward is
 burned to an address nobody can spend from, so every coin that will ever
-exist gets mined by someone's CPU starting at block 1. Mine it because it's
-fun and you missed 2009. Don't put in money you care about, and don't expect
-any back.
+exist gets mined publicly starting at block 1. Mine it because it's fun and
+you missed 2009. Don't put in money you care about, and don't expect any
+back.
 
 ## Quick start
 
@@ -116,6 +116,17 @@ Nothing stays ASIC-proof or GPU-proof forever. The aim is simpler: make the
 gap between normal CPUs and custom hardware smaller than it is on Bitcoin.
 That's what makes the 2009 experience possible again.
 
+## Mining policy
+
+09C is permissionless proof of work. The official node miner is CPU mining,
+and the current public third-party `btc09` miner is listed as CPU-only, but
+the chain does not try to detect or ban hardware. A valid block is valid
+work.
+
+If a public GPU, FPGA or heavily optimized miner appears, it should be shared
+and benchmarked like any other miner. If the community later wants a stronger
+CPU-biased PoW, that requires a coordinated hard fork, not pool-side rules.
+
 ## Consensus rules, short version
 
 - 88 byte headers, block ids are SHA-256d, PoW check is Argon2id(header) <= target
@@ -192,9 +203,9 @@ seed phrase, private key, wallet file, remote access or Discord token.
 
 NTMminer has NVIDIA GPU support for some other algorithms, but its public
 `btc09` backend is listed as CPU-only. There is no official 09C GPU miner
-right now. If a third-party GPU miner appears later, treat it like any other
-closed-source pool miner: use only a payout address and never give it wallet
-secrets.
+right now. If a third-party GPU miner appears later, that is still
+permissionless mining. Treat any closed-source pool miner carefully: use only
+a payout address and never give it wallet secrets.
 
 ## Tests
 
