@@ -31,10 +31,12 @@ Genesis message:
 the coin that you can mine like it's 2009
 ```
 
-Seed node:
+Bootstrap seeds:
 
 ```text
 82.22.32.82:9009
+103.80.18.140:9009
+108.190.240.138:9009
 ```
 
 Explorer:
@@ -55,10 +57,10 @@ Build from source:
 git clone https://github.com/krutftw/bitcoin09
 cd bitcoin09
 go build ./cmd/btc09
-./btc09 node -mine -seeds 82.22.32.82:9009
+./btc09 node -mine -seeds 82.22.32.82:9009,103.80.18.140:9009,108.190.240.138:9009
 ```
 
-Or download the latest release, currently v0.1.12:
+Or download the latest release, currently v0.1.13:
 
 ```text
 https://github.com/krutftw/bitcoin09/releases/latest

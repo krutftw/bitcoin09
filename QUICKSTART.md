@@ -18,7 +18,7 @@ btc09 version
 Current release:
 
 ```text
-Bitcoin 09 (09C) reference node v0.1.12
+Bitcoin 09 (09C) reference node v0.1.13
 ```
 
 ## Run a Full Node

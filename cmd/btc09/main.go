@@ -29,7 +29,7 @@ import (
 )
 
 // nodeVersion is the release version; bump alongside git tags.
-const nodeVersion = "v0.1.12"
+const nodeVersion = "v0.1.13"
 
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
@@ -87,7 +87,11 @@ func paramsFor(name string) *core.Params {
 
 func defaultSeeds(p *core.Params) []string {
 	if p.Name == "mainnet" {
-		return []string{"82.22.32.82:9009"}
+		return []string{
+			"82.22.32.82:9009",
+			"103.80.18.140:9009",
+			"108.190.240.138:9009",
+		}
 	}
 	return nil
 }
@@ -161,7 +165,11 @@ func cmdNode(args []string) {
 	}
 	var seedList []string
 	if *seeds != "" {
-		seedList = strings.Split(*seeds, ",")
+		for _, seed := range strings.Split(*seeds, ",") {
+			if seed = strings.TrimSpace(seed); seed != "" {
+				seedList = append(seedList, seed)
+			}
+		}
 	} else {
 		seedList = defaultSeeds(p)
 	}

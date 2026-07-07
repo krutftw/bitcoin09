@@ -145,10 +145,12 @@ Mainnet genesis is pinned by a test:
 `ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f`
 with the message "the coin that you can mine like it's 2009", nonce 20214.
 
-The first seed node is built into the client:
+Default bootstrap seeds are built into the client:
 
 ```text
 82.22.32.82:9009
+103.80.18.140:9009
+108.190.240.138:9009
 ```
 
 Live block explorer:
@@ -224,13 +226,13 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.12 is current. The node, miner, wallet, P2P sync, built-in seed, block
+v0.1.13 is current. The node, miner, wallet, P2P sync, built-in seeds, block
 explorer and supply APIs are live.
 
 Network:
 
 ```text
-seed:     82.22.32.82:9009
+seeds:    82.22.32.82:9009, 103.80.18.140:9009, 108.190.240.138:9009
 explorer: http://82.22.32.82:8009
 release:  https://github.com/krutftw/bitcoin09/releases/latest
 discord:  https://discord.gg/fUuGzwRTzP
@@ -239,9 +241,8 @@ discord:  https://discord.gg/fUuGzwRTzP
 If you downloaded an early build, upgrade to the latest release. Old clients
 from before the fork-sync and retarget fixes can get stuck on stale forks.
 
-Stuff I want next, PRs welcome: a second public seed, peer banning and DoS
-hardening, headers-first sync, DNS seeds, miner/peer stats in the explorer and
-a friendlier miner UI.
+Stuff I want next, PRs welcome: peer banning and DoS hardening, headers-first
+sync, DNS seeds, miner/peer stats in the explorer and a friendlier miner UI.
 
 ## License
 

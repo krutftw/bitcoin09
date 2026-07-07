@@ -2,19 +2,38 @@ package main
 
 import "testing"
 
+func TestDefaultMainnetSeeds(t *testing.T) {
+	seeds := defaultSeeds(paramsFor("mainnet"))
+	if len(seeds) < 3 {
+		t.Fatalf("default mainnet seeds = %v, want at least 3", seeds)
+	}
+	for _, seed := range []string{"82.22.32.82:9009", "103.80.18.140:9009", "108.190.240.138:9009"} {
+		found := false
+		for _, got := range seeds {
+			if got == seed {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("default mainnet seeds missing %s: %v", seed, seeds)
+		}
+	}
+}
+
 func TestReleaseNewer(t *testing.T) {
 	tests := []struct {
 		latest  string
 		current string
 		want    bool
 	}{
-		{"v0.1.12", "v0.1.11", true},
+		{"v0.1.13", "v0.1.12", true},
 		{"v0.2.0", "v0.1.99", true},
 		{"v1.0.0", "v0.9.9", true},
 		{"v0.1.9", "v0.1.9", false},
 		{"v0.1.8", "v0.1.9", false},
 		{"not-a-version", "v0.1.9", false},
-		{"v0.1.12", "not-a-version", false},
+		{"v0.1.13", "not-a-version", false},
 	}
 
 	for _, tt := range tests {

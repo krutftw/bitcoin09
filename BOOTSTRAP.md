@@ -9,9 +9,9 @@ their computers on.
 ## What exists now
 
 - source code is public
-- v0.1.12 binaries are published
+- v0.1.13 binaries are published
 - mainnet genesis is fixed
-- seed node is online at `82.22.32.82:9009`
+- bootstrap seeds are online at `82.22.32.82:9009`, `103.80.18.140:9009`, and `108.190.240.138:9009`
 - explorer is online at `http://82.22.32.82:8009`
 - Discord is live at `https://discord.gg/fUuGzwRTzP`
 - CPU mining works
@@ -21,7 +21,7 @@ their computers on.
 
 ## What to do first
 
-1. Keep the seed node online.
+1. Keep the bootstrap seed nodes online.
 2. Keep at least one home miner online.
 3. Post the launch text from `POSTS.md`.
 4. Ask early miners to reply with:
@@ -60,18 +60,17 @@ public node: IP:9009
 Those addresses can then be passed to `-seeds`:
 
 ```bash
-btc09 node -mine -seeds 82.22.32.82:9009,OTHER_IP:9009
+btc09 node -mine -seeds 82.22.32.82:9009,103.80.18.140:9009,108.190.240.138:9009
 ```
 
 ## When there are a few stable peers
 
-Once at least three independent public nodes are online:
+Once the extra public nodes stay stable:
 
-1. Add them to README as bootstrap peers.
-2. Register a domain.
-3. Point `seed.bitcoin09.org` to the first stable seed.
-4. Add DNS seed support to the client.
-5. Keep the raw IP seed as fallback.
+1. Register a domain.
+2. Point `seed.bitcoin09.org` at stable seed hosts.
+3. Add DNS seed support to the client.
+4. Keep the raw IP seeds as fallback.
 
 ## What not to add yet
 
