@@ -102,6 +102,7 @@ func (n *Node) Start(ctx context.Context, seeds []string) error {
 		}
 	}
 	go n.reconnectLoop(ctx)
+	go n.catchupLoop(ctx)
 	return nil
 }
 
@@ -126,6 +127,20 @@ func (n *Node) reconnectLoop(ctx context.Context) {
 			for _, a := range dialable {
 				go n.dial(ctx, a)
 			}
+		}
+	}
+}
+
+func (n *Node) catchupLoop(ctx context.Context) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			_, h := n.chain.Tip()
+			n.broadcast(&Msg{Type: "getblocks", From: h + 1}, "")
 		}
 	}
 }
