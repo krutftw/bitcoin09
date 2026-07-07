@@ -224,7 +224,7 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.11 is current. The node, miner, wallet, P2P sync, built-in seed, block
+v0.1.12 is current. The node, miner, wallet, P2P sync, built-in seed, block
 explorer and supply APIs are live.
 
 Network:

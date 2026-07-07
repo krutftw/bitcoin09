@@ -58,7 +58,7 @@ go build ./cmd/btc09
 ./btc09 node -mine -seeds 82.22.32.82:9009
 ```
 
-Or download the latest release, currently v0.1.11:
+Or download the latest release, currently v0.1.12:
 
 ```text
 https://github.com/krutftw/bitcoin09/releases/latest
