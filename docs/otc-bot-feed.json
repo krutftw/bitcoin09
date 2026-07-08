@@ -1,14 +1,14 @@
 {
-    "generatedAt": "2026-07-07T17:34:33Z",
-    "orders": [],
-    "privacy": "No Discord IDs, usernames, wallet addresses, deposit addresses, or off-chain payment details are published.",
-    "schema": 1,
-    "source": "Bitcoin 09 Discord OTC escrow bot",
-    "summary": {
-        "completed": 0,
-        "disputed": 0,
-        "matched": 0,
-        "open": 0,
-        "releaseFailed": 0
-    }
+  "generatedAt": "2026-07-08T21:48:39Z",
+  "orders": [],
+  "privacy": "No Discord IDs, usernames, wallet addresses, deposit addresses, or off-chain payment details are published.",
+  "schema": 1,
+  "source": "Bitcoin 09 Discord OTC escrow bot",
+  "summary": {
+    "completed": 0,
+    "disputed": 0,
+    "matched": 0,
+    "open": 0,
+    "releaseFailed": 0
+  }
 }
