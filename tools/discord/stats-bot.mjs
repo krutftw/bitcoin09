@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const API_BASE = "https://discord.com/api/v10";
 const POOL_ID = "09c";
 const POOL_BASE = "https://bitcoin09.tutuit.xyz/api/pools/" + POOL_ID;
-const EXPLORER_STATUS = "http://82.22.32.82:8009/api/status";
+const EXPLORER_STATUS = "https://explorer.btc09.178.128.105.41.sslip.io/api/status";
 const DISCORD_INVITE = "https://discord.gg/fUuGzwRTzP";
 const MESSAGE_MARKER = "Bitcoin 09 live mining stats";
 const DEFAULT_STATS_CHANNEL = "pools-and-nodes";
@@ -340,7 +340,7 @@ function formatStatsMessage(stats) {
     topMiners || "No active pool miners reported.",
     "",
     "Miner count means public-pool payout addresses, not guaranteed unique people.",
-    `Pool: https://bitcoin09.tutuit.xyz | Explorer: http://82.22.32.82:8009 | Discord: ${DISCORD_INVITE}`,
+    `Pool: https://bitcoin09.tutuit.xyz | Explorer: https://explorer.btc09.178.128.105.41.sslip.io | Discord: ${DISCORD_INVITE}`,
     `Updated: <t:${Math.floor(stats.checkedAt.getTime() / 1000)}:R>`,
   ].join("\n");
 }

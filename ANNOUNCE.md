@@ -34,15 +34,21 @@ the coin that you can mine like it's 2009
 Bootstrap seeds:
 
 ```text
-82.22.32.82:9009
+178.128.105.41:9009
 103.80.18.140:9009
 108.190.240.138:9009
+```
+
+Website:
+
+```text
+https://btc09.178.128.105.41.sslip.io
 ```
 
 Explorer:
 
 ```text
-http://82.22.32.82:8009
+https://explorer.btc09.178.128.105.41.sslip.io
 ```
 
 Discord:
@@ -51,16 +57,22 @@ Discord:
 https://discord.gg/fUuGzwRTzP
 ```
 
+OTC board:
+
+```text
+https://btc09.178.128.105.41.sslip.io/markets.html
+```
+
 Build from source:
 
 ```bash
 git clone https://github.com/krutftw/bitcoin09
 cd bitcoin09
 go build ./cmd/btc09
-./btc09 node -mine -seeds 82.22.32.82:9009,103.80.18.140:9009,108.190.240.138:9009
+./btc09 node -mine -seeds 178.128.105.41:9009,103.80.18.140:9009,108.190.240.138:9009
 ```
 
-Or download the latest release, currently v0.1.15:
+Or download the latest release, currently v0.1.16:
 
 ```text
 https://github.com/krutftw/bitcoin09/releases/latest

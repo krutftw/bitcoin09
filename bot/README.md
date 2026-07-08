@@ -30,6 +30,27 @@ usernames, wallet addresses, deposit addresses, or off-chain payment details.
 pulls the feed into `docs/otc-bot-feed.json` so the static market page can load
 it over HTTPS.
 
+## Services
+
+The live setup uses three systemd services:
+
+- `btc09-otc-bot.service`: Discord escrow slash commands.
+- `btc09-otc-feed.service`: localhost JSON feed for nginx.
+- `btc09-discord-stats.service`: `/stats` and clickable Discord role buttons.
+
+Keep Discord secrets out of unit files. Put them in `/etc/btc09/discord.env`
+with `chmod 600`:
+
+```text
+DISCORD_CLIENT_ID=...
+DISCORD_GUILD_ID=...
+DISCORD_BOT_TOKEN=...
+ADMIN_IDS=123456789012345678
+```
+
+`btc09-discord-stats.service` needs Node 22+ because it uses the built-in
+WebSocket API.
+
 ## Safety model
 
 - Every order gets a fresh 09C deposit address.

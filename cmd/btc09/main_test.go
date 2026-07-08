@@ -7,7 +7,7 @@ func TestDefaultMainnetSeeds(t *testing.T) {
 	if len(seeds) < 3 {
 		t.Fatalf("default mainnet seeds = %v, want at least 3", seeds)
 	}
-	for _, seed := range []string{"82.22.32.82:9009", "103.80.18.140:9009", "108.190.240.138:9009"} {
+	for _, seed := range []string{"178.128.105.41:9009", "103.80.18.140:9009", "108.190.240.138:9009"} {
 		found := false
 		for _, got := range seeds {
 			if got == seed {
@@ -57,7 +57,7 @@ func TestRejectSendSeedFlag(t *testing.T) {
 		}
 	}
 
-	if err := rejectSendSeedFlag([]string{"-seeds", "82.22.32.82:9009"}); err != nil {
+	if err := rejectSendSeedFlag([]string{"-seeds", "178.128.105.41:9009"}); err != nil {
 		t.Fatalf("rejectSendSeedFlag(-seeds) = %v, want nil", err)
 	}
 }

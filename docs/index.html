@@ -7,7 +7,7 @@
 <meta name="description" content="Bitcoin 09: the coin you can mine like it's 2009. CPU proof of work, 21M cap, no premine.">
 <meta property="og:title" content="Bitcoin 09 (09C)">
 <meta property="og:description" content="CPU proof of work, 21M cap, no premine. Mine it like it's 2009.">
-<meta property="og:image" content="https://krutftw.github.io/bitcoin09/assets/bitcoin09-social.png">
+<meta property="og:image" content="https://btc09.178.128.105.41.sslip.io/assets/bitcoin09-social.png">
 <link rel="icon" type="image/png" href="assets/bitcoin09-ai-logo-512.png">
 <style>
 :root {
@@ -418,20 +418,20 @@ pre {
 <div class="wrap hero-inner">
 <img class="brand-mark" src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
 <div>
-<p class="kicker">terminal money, mined by normal CPUs</p>
+<p class="kicker">fair-launch cpu proof of work</p>
 <h1>Bitcoin 09</h1>
-<p class="tag">A small fair-launch chain for people who missed the 2009 mining era. 21M cap, 10 minute blocks, no allocation.</p>
+<p class="tag">Bitcoin-style supply, 10 minute blocks, no premine, Argon2id mining.</p>
 <div class="hero-grid">
 <pre class="shell">&gt; btc09 node -mine
-seed 82.22.32.82:9009
+seed 178.128.105.41:9009
 seed 103.80.18.140:9009
 seed 108.190.240.138:9009
 pool bitcoin09.tutuit.xyz
-release v0.1.15</pre>
+release v0.1.16</pre>
 <div class="status-card">
-<b>09C status board</b>
-<span>Mine solo, pool mine, or run a node without mining.</span>
-<span><a href="https://github.com/krutftw/bitcoin09/releases/latest">download</a> / <a href="https://discord.gg/fUuGzwRTzP">discord</a> / <a href="http://82.22.32.82:8009">explorer</a></span>
+<b>09C mainnet</b>
+<span>Official site, explorer, and public seed are running from the Singapore BTC09 node.</span>
+<span><a href="https://github.com/krutftw/bitcoin09/releases/latest">download</a> / <a href="https://discord.gg/fUuGzwRTzP">discord</a> / <a href="https://explorer.btc09.178.128.105.41.sslip.io">explorer</a></span>
 </div>
 </div>
 </div>
@@ -440,7 +440,7 @@ release v0.1.15</pre>
 
 <main class="content">
 <div class="wrap">
-<p id="live" class="livebar">Network status: <a href="http://82.22.32.82:8009">live explorer</a>. Current release: v0.1.15. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
+<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.178.128.105.41.sslip.io">live explorer</a>. Current release: v0.1.16. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
 
 <section class="panel">
 <h2>What It Is</h2>
@@ -462,13 +462,15 @@ release v0.1.15</pre>
 </section>
 
 <section class="panel dark stats" aria-live="polite">
-<h2>Mining Now</h2>
-<p id="stats-note" class="muted">Loading live pool stats...</p>
+<h2>Network Now</h2>
+<p id="stats-note" class="muted">Loading live chain and pool stats...</p>
 <div class="stat-grid">
 <div class="stat"><b id="stat-miners">-</b><span>active pool miner addresses</span></div>
 <div class="stat"><b id="stat-pool-hashrate">-</b><span>pool hashrate</span></div>
-<div class="stat"><b id="stat-height">-</b><span>pool-reported height</span></div>
+<div class="stat"><b id="stat-height">-</b><span>chain height</span></div>
+<div class="stat"><b id="stat-peers">-</b><span>node peers</span></div>
 <div class="stat"><b id="stat-difficulty">-</b><span>difficulty</span></div>
+<div class="stat"><b id="stat-supply">-</b><span>circulating 09C</span></div>
 <div class="stat"><b id="stat-blocks">-</b><span>pool blocks found</span></div>
 <div class="stat"><b id="stat-paid">-</b><span>09C paid by pool</span></div>
 </div>
@@ -514,16 +516,16 @@ release v0.1.15</pre>
 <p>09C is a native chain coin, not an Ethereum or Solana token. MetaMask and Phantom do not support it. Use the <code>btc09</code> wallet/node for now.</p>
 <pre>btc09 wallet list
 btc09 wallet new
-btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 82.22.32.82:9009</pre>
+btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 178.128.105.41:9009</pre>
 <p class="muted">The default fee is 0.0001 09C. <code>-seeds</code> is plural and means peer nodes to broadcast through, not a wallet seed phrase. Do not paste private keys, seed phrases, or wallet file contents into the command line. <code>send</code> spends from the wallet file in your data directory, and your local chain must be synced enough to see spendable coins.</p>
 </section>
 
 <section class="panel">
 <h2>Watch The Chain</h2>
-<p><a href="http://82.22.32.82:8009">Live block explorer</a>: height, difficulty, recent blocks and miner addresses.</p>
+<p><a href="https://explorer.btc09.178.128.105.41.sslip.io">Live block explorer</a>: height, difficulty, recent blocks and miner addresses.</p>
 <p>The explorer exposes machine-readable supply data for listings and audits.</p>
-<pre>curl http://82.22.32.82:8009/api/supply
-curl http://82.22.32.82:8009/api/circulating_supply</pre>
+<pre>curl https://explorer.btc09.178.128.105.41.sslip.io/api/supply
+curl https://explorer.btc09.178.128.105.41.sslip.io/api/circulating_supply</pre>
 </section>
 
 <section class="panel">
@@ -540,6 +542,7 @@ curl http://82.22.32.82:8009/api/circulating_supply</pre>
 <section class="panel">
 <h2>Read</h2>
 <ul class="read-list">
+<li><a href="https://btc09.178.128.105.41.sslip.io">Official site</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09">Source code</a> (MIT, Go)</li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/WHITEPAPER.md">Whitepaper</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/QUICKSTART.md">Quickstart</a></li>
@@ -562,6 +565,7 @@ curl http://82.22.32.82:8009/api/circulating_supply</pre>
 <script>
 const poolApi = 'https://bitcoin09.tutuit.xyz/api/pools/09c';
 const minerApi = 'https://bitcoin09.tutuit.xyz/api/pools/09c/miners?pageSize=20';
+const explorerApi = 'https://explorer.btc09.178.128.105.41.sslip.io/api/status';
 
 function text(id, value) {
   document.getElementById(id).textContent = value;
@@ -584,16 +588,25 @@ function hashRate(value) {
   return fixed(n, 2) + ' H/s';
 }
 
-function setLiveSummary(pool, miners) {
+async function fetchJson(url) {
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) throw new Error(url + ' status ' + response.status);
+  return response.json();
+}
+
+function setLiveSummary(status, pool, miners) {
   const live = document.getElementById('live');
-  const height = Number(pool.networkStats?.blockHeight ?? 0).toLocaleString();
-  const difficulty = fixed(pool.networkStats?.networkDifficulty, 2);
-  const active = Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString();
+  const heightValue = status?.height ?? pool?.networkStats?.blockHeight;
+  const difficultyValue = status?.difficulty ?? pool?.networkStats?.networkDifficulty;
+  const height = Number(heightValue ?? 0).toLocaleString();
+  const difficulty = fixed(difficultyValue, 2);
+  const peers = status ? Number(status.peers ?? 0).toLocaleString() : 'unknown';
+  const active = pool ? Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString() : 'pool unavailable';
   live.replaceChildren(
-    document.createTextNode('network now: height ' + height + ', difficulty ' + difficulty + ', active pool miner addresses ' + active + '. '),
+    document.createTextNode('network now: height ' + height + ', peers ' + peers + ', difficulty ' + difficulty + ', active pool miner addresses ' + active + '. '),
     Object.assign(document.createElement('a'), { href: 'https://bitcoin09.tutuit.xyz', textContent: 'pool' }),
     document.createTextNode(' / '),
-    Object.assign(document.createElement('a'), { href: 'http://82.22.32.82:8009', textContent: 'explorer' }),
+    Object.assign(document.createElement('a'), { href: 'https://explorer.btc09.178.128.105.41.sslip.io', textContent: 'explorer' }),
     document.createTextNode(' / '),
     Object.assign(document.createElement('a'), { href: 'https://discord.gg/fUuGzwRTzP', textContent: 'Discord' }),
     document.createTextNode('.')
@@ -627,32 +640,36 @@ function renderMiners(miners) {
 async function refreshStats() {
   const note = document.getElementById('stats-note');
   try {
-    const [poolResponse, minersResponse] = await Promise.all([
-      fetch(poolApi, { cache: 'no-store' }),
-      fetch(minerApi, { cache: 'no-store' }),
+    const [statusResult, poolResult, minersResult] = await Promise.allSettled([
+      fetchJson(explorerApi),
+      fetchJson(poolApi),
+      fetchJson(minerApi),
     ]);
-    if (!poolResponse.ok) throw new Error('pool status ' + poolResponse.status);
-    if (!minersResponse.ok) throw new Error('miner status ' + minersResponse.status);
 
-    const poolData = await poolResponse.json();
-    const miners = await minersResponse.json();
-    const pool = poolData.pool;
+    const status = statusResult.status === 'fulfilled' ? statusResult.value : null;
+    const poolData = poolResult.status === 'fulfilled' ? poolResult.value : null;
+    const miners = minersResult.status === 'fulfilled' ? minersResult.value : [];
+    const pool = poolData?.pool;
     const updated = new Date();
 
-    text('stat-miners', Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString());
-    text('stat-pool-hashrate', hashRate(pool.poolStats?.poolHashrate));
-    text('stat-height', Number(pool.networkStats?.blockHeight ?? 0).toLocaleString());
-    text('stat-difficulty', fixed(pool.networkStats?.networkDifficulty, 2));
-    text('stat-blocks', Number(pool.blocksFound ?? 0).toLocaleString());
-    text('stat-paid', fixed(pool.totalPaid, 2));
+    if (!status && !pool) throw new Error('no live status source');
+
+    text('stat-height', status ? Number(status.height ?? 0).toLocaleString() : Number(pool?.networkStats?.blockHeight ?? 0).toLocaleString());
+    text('stat-peers', status ? Number(status.peers ?? 0).toLocaleString() : '-');
+    text('stat-difficulty', fixed(status?.difficulty ?? pool?.networkStats?.networkDifficulty, 2));
+    text('stat-supply', status ? fixed(status.circulating_supply, 2) : '-');
+    text('stat-miners', pool ? Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString() : '-');
+    text('stat-pool-hashrate', pool ? hashRate(pool.poolStats?.poolHashrate) : '-');
+    text('stat-blocks', pool ? Number(pool.blocksFound ?? 0).toLocaleString() : '-');
+    text('stat-paid', pool ? fixed(pool.totalPaid, 2) : '-');
     note.className = 'muted';
-    note.textContent = 'Live pool data from bitcoin09.tutuit.xyz. Miner count means pool payout addresses, not guaranteed unique people. Updated ' + updated.toLocaleTimeString() + '.';
+    note.textContent = 'Live chain data from the official explorer and pool data from bitcoin09.tutuit.xyz. Miner count means pool payout addresses, not guaranteed unique people. Updated ' + updated.toLocaleTimeString() + '.';
 
     renderMiners(miners);
-    setLiveSummary(pool, miners);
+    setLiveSummary(status, pool, miners);
   } catch (error) {
     note.className = 'error';
-    note.textContent = 'Live pool stats are unavailable right now. Use the pool or explorer links below.';
+    note.textContent = 'Live stats are unavailable right now. Use the pool or explorer links below.';
   }
 }
 

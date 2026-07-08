@@ -56,7 +56,7 @@ func (s *Store) LoadInto(c *Chain) (int64, error) {
 		if err != nil {
 			break
 		}
-		if err := c.AcceptBlock(blk); err != nil {
+		if err := c.acceptStoredBlock(blk); err != nil {
 			return loaded, fmt.Errorf("stored block rejected at height ~%d: %w", loaded+1, err)
 		}
 		loaded++

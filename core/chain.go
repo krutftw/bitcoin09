@@ -223,7 +223,7 @@ func (c *Chain) checkTxLocked(tx *Tx, height int64) (int64, error) {
 // are stored for future fork choice.
 func (c *Chain) AcceptBlock(b *Block) error {
 	c.mu.Lock()
-	newTip, err := c.acceptBlockLocked(b)
+	newTip, err := c.acceptBlockLocked(b, true)
 	c.mu.Unlock()
 	if err == nil && newTip != nil && c.OnNewTip != nil {
 		c.OnNewTip(newTip.block, newTip.height)
@@ -231,7 +231,21 @@ func (c *Chain) AcceptBlock(b *Block) error {
 	return err
 }
 
-func (c *Chain) acceptBlockLocked(b *Block) (*blockIndex, error) {
+// acceptStoredBlock replays blocks from the local append-only block file.
+// Blocks only reach that file after normal network validation, so replay skips
+// the expensive Argon2id PoW check while still validating structure, chain
+// links, difficulty bits, merkle root, and transaction economics.
+func (c *Chain) acceptStoredBlock(b *Block) error {
+	c.mu.Lock()
+	newTip, err := c.acceptBlockLocked(b, false)
+	c.mu.Unlock()
+	if err == nil && newTip != nil && c.OnNewTip != nil {
+		c.OnNewTip(newTip.block, newTip.height)
+	}
+	return err
+}
+
+func (c *Chain) acceptBlockLocked(b *Block, checkPow bool) (*blockIndex, error) {
 	id := b.Header.ID()
 	if _, ok := c.index[id]; ok {
 		return nil, nil // already have it
@@ -256,7 +270,7 @@ func (c *Chain) acceptBlockLocked(b *Block) (*blockIndex, error) {
 	if b.Header.Bits != requiredBits {
 		return nil, fmt.Errorf("wrong difficulty bits: got %08x want %08x", b.Header.Bits, requiredBits)
 	}
-	if !b.Header.CheckPow(c.params) {
+	if checkPow && !b.Header.CheckPow(c.params) {
 		return nil, errors.New("proof of work invalid")
 	}
 	if MerkleRoot(b.Txs) != b.Header.MerkleRoot {
@@ -335,11 +349,9 @@ func cloneUTXO(src map[OutPoint]UTXOEntry) map[OutPoint]UTXOEntry {
 // connectTipLocked validates and connects the common case: a block extending
 // the current best tip. Full branch replay is only needed when switching forks.
 func (c *Chain) connectTipLocked(newTip *blockIndex) error {
-	scratch := &Chain{params: c.params, utxo: cloneUTXO(c.utxo)}
-	if err := scratch.validateAndApplyLocked(newTip.block, newTip.height); err != nil {
+	if err := c.validateAndApplyLocked(newTip.block, newTip.height); err != nil {
 		return fmt.Errorf("block %d invalid: %w", newTip.height, err)
 	}
-	c.utxo = scratch.utxo
 	c.mainIDs = append(c.mainIDs, newTip.id)
 	c.tip = newTip
 	c.evictMempoolLocked()
@@ -380,30 +392,51 @@ func (c *Chain) evictMempoolLocked() {
 	}
 }
 
-// validateAndApplyLocked checks a block's economics against the (scratch)
-// UTXO set and applies it. Header-level checks are done by AcceptBlock.
+type utxoUndo struct {
+	op      OutPoint
+	existed bool
+	entry   UTXOEntry
+}
+
+// validateAndApplyLocked checks a block's economics against the current UTXO
+// set and applies it. Header-level checks are done by AcceptBlock.
 func (c *Chain) validateAndApplyLocked(b *Block, height int64) error {
+	var undo []utxoUndo
+	rollback := func() {
+		for i := len(undo) - 1; i >= 0; i-- {
+			item := undo[i]
+			if item.existed {
+				c.utxo[item.op] = item.entry
+			} else {
+				delete(c.utxo, item.op)
+			}
+		}
+	}
+
 	var fees int64
 	for i := 1; i < len(b.Txs); i++ {
 		fee, err := c.checkTxLocked(b.Txs[i], height)
 		if err != nil {
+			rollback()
 			return err
 		}
 		fees += fee
-		c.spendAndCreate(b.Txs[i], height, false)
+		c.spendAndCreateWithUndo(b.Txs[i], height, false, &undo)
 	}
 	cb := b.Txs[0]
 	var cbOut int64
 	for _, o := range cb.Outs {
 		if o.Value <= 0 {
+			rollback()
 			return errors.New("non-positive coinbase output")
 		}
 		cbOut += o.Value
 	}
 	if cbOut > SubsidyAt(height)+fees {
+		rollback()
 		return fmt.Errorf("coinbase pays %d > subsidy %d + fees %d", cbOut, SubsidyAt(height), fees)
 	}
-	c.spendAndCreate(cb, height, true)
+	c.spendAndCreateWithUndo(cb, height, true, &undo)
 	return nil
 }
 
@@ -416,6 +449,28 @@ func (c *Chain) spendAndCreate(tx *Tx, height int64, coinbase bool) {
 	id := tx.ID()
 	for i, out := range tx.Outs {
 		c.utxo[OutPoint{TxID: id, Idx: uint32(i)}] = UTXOEntry{
+			Value: out.Value, PKH: out.PubKeyHash, Height: height, Coinbase: coinbase,
+		}
+	}
+}
+
+func (c *Chain) spendAndCreateWithUndo(tx *Tx, height int64, coinbase bool, undo *[]utxoUndo) {
+	record := func(op OutPoint) {
+		entry, existed := c.utxo[op]
+		*undo = append(*undo, utxoUndo{op: op, existed: existed, entry: entry})
+	}
+
+	if !coinbase {
+		for _, in := range tx.Ins {
+			record(in.Prev)
+			delete(c.utxo, in.Prev)
+		}
+	}
+	id := tx.ID()
+	for i, out := range tx.Outs {
+		op := OutPoint{TxID: id, Idx: uint32(i)}
+		record(op)
+		c.utxo[op] = UTXOEntry{
 			Value: out.Value, PKH: out.PubKeyHash, Height: height, Coinbase: coinbase,
 		}
 	}

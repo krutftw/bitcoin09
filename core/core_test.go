@@ -205,6 +205,33 @@ func TestInflationRejected(t *testing.T) {
 	}
 }
 
+func TestStoredReplaySkipsPowButNetworkDoesNot(t *testing.T) {
+	_, pkh := keyAndPKH(t)
+	networkChain, err := NewChain(&MainNet)
+	if err != nil {
+		t.Fatalf("NewChain: %v", err)
+	}
+	tmpl := BuildBlockTemplate(networkChain, pkh, "stored")
+	tmpl.Header.Nonce = 1
+	if tmpl.Header.CheckPow(&MainNet) {
+		t.Fatal("test block unexpectedly has valid proof of work")
+	}
+	if err := networkChain.AcceptBlock(tmpl); err == nil {
+		t.Fatal("network block without proof of work was accepted")
+	}
+
+	storedChain, err := NewChain(&MainNet)
+	if err != nil {
+		t.Fatalf("NewChain: %v", err)
+	}
+	if err := storedChain.acceptStoredBlock(tmpl); err != nil {
+		t.Fatalf("stored replay rejected structurally valid block: %v", err)
+	}
+	if storedChain.Height() != 1 {
+		t.Fatalf("stored replay height = %d, want 1", storedChain.Height())
+	}
+}
+
 func TestDifficultyRetargets(t *testing.T) {
 	c := testChain(t)
 	_, pkh := keyAndPKH(t)

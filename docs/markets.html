@@ -368,18 +368,18 @@ code {
 <img src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
 <div>
 <h1>09C OTC Board</h1>
-<p class="tag">Draft an offer here, talk in Discord if you want, then open a public GitHub record for the trail.</p>
+<p class="tag">Use the Discord bot for escrow. Use this board for public offers, receipts, and price discovery.</p>
 </div>
 </div>
 <div class="wrap nav">
-<a href="index.html">home</a> / <a href="https://github.com/krutftw/bitcoin09/issues?q=label%3Aotc-offer+OR+label%3Aotc-completed">public records</a> / <a href="https://discord.gg/fUuGzwRTzP">Discord</a> / <a href="http://82.22.32.82:8009">explorer</a>
+<a href="index.html">home</a> / <a href="https://github.com/krutftw/bitcoin09/issues?q=label%3Aotc-offer+OR+label%3Aotc-completed">public records</a> / <a href="https://discord.gg/fUuGzwRTzP">Discord</a> / <a href="https://explorer.btc09.178.128.105.41.sslip.io">explorer</a>
 </div>
 </header>
 
 <main>
 <div class="wrap">
 <div class="notice">
-<strong>Not an exchange.</strong> This page is a public noticeboard. Discord also has an optional OTC escrow bot for small trades: it can hold the seller's 09C and release after both sides confirm. It does not verify USDT/BTC/fiat payment, set an official price, or guarantee any trade.
+<strong>Not an exchange.</strong> This page is a public noticeboard. The Discord escrow bot can hold the seller's 09C and release after both sides confirm. It does not verify USDT/BTC/fiat payment, set an official price, or guarantee any trade.
 </div>
 
 <section class="tape" aria-live="polite">
@@ -392,7 +392,7 @@ code {
 
 <section class="panel" id="draft">
 <h2>Draft A Public Record</h2>
-<p>Fill this out on the website first. You can copy a Discord post, or open a prefilled GitHub record for the public board. GitHub is where redacted screenshots, tx links, and timestamps live.</p>
+<p>Fill this out if you want the trade visible. You can copy a Discord post, or open a prefilled GitHub record for the public board. GitHub is where redacted screenshots, tx links, and timestamps live.</p>
 
 <div class="form-grid">
 <label>
@@ -447,7 +447,8 @@ Notes: Trade small first. Public record or Discord escrow bot preferred.</pre>
 <ol>
 <li>Draft the trade record on this page.</li>
 <li>Use the copied text in Discord <code>#💱-otc-trading</code> if you want quick negotiation.</li>
-<li>For escrow, use the Discord bot slash commands: <code>/sell</code>, <code>/deposit</code>, <code>/orders</code>, <code>/buy</code>, and <code>/confirm</code>.</li>
+<li>For escrow, the seller starts with <code>/sell</code> in Discord, deposits 09C, then the buyer accepts with <code>/buy</code>.</li>
+<li>After off-chain payment, both sides use <code>/confirm</code>. If it gets stuck, use <code>/dispute</code>.</li>
 <li>Open the public GitHub record when the offer or completed trade should be visible on the board.</li>
 <li>Add only public proof: 09C tx link, redacted screenshot, or short note. Do not upload private payment account details.</li>
 </ol>
@@ -514,7 +515,7 @@ Search
 <h2>How To Send 09C</h2>
 <p>09C is its own chain, not an Ethereum, Solana, or token contract asset. MetaMask and Phantom do not support it. Use the Bitcoin 09 wallet/node for now.</p>
 <pre>btc09 wallet list
-btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 82.22.32.82:9009</pre>
+btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 178.128.105.41:9009</pre>
 <p class="muted">Default fee is 0.0001 09C. <code>-seeds</code> is plural and means peer nodes to broadcast through, not a wallet seed phrase. Do not paste private keys, seed phrases, or wallet file contents into the command line. <code>send</code> spends from the wallet file in your data directory. Your local chain must be synced enough to see spendable coins, and mined rewards become spendable after 100 blocks.</p>
 </section>
 
@@ -532,8 +533,8 @@ btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 82.22.32.82:9009</pre>
 <section class="panel">
 <h2>Supply References</h2>
 <p>The explorer exposes supply data for anyone checking emission or future listing requirements.</p>
-<pre>http://82.22.32.82:8009/api/supply
-http://82.22.32.82:8009/api/circulating_supply</pre>
+<pre>https://explorer.btc09.178.128.105.41.sslip.io/api/supply
+https://explorer.btc09.178.128.105.41.sslip.io/api/circulating_supply</pre>
 <p class="muted">Circulating supply excludes the burned genesis reward.</p>
 </section>
 </div>

@@ -44,7 +44,7 @@ body:
     attributes:
       label: Public chain proof
       description: Optional 09C transaction id, address page, or block explorer reference.
-      placeholder: "http://82.22.32.82:8009/address/..."
+      placeholder: "https://explorer.btc09.178.128.105.41.sslip.io/address/..."
     validations:
       required: false
   - type: textarea

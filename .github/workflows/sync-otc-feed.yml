@@ -22,7 +22,7 @@ jobs:
         run: |
           set -euo pipefail
           tmp="$(mktemp)"
-          curl -fsSL --max-time 20 "http://82.22.32.82:8019/otc-bot-feed.json" -o "$tmp"
+          curl -fsSL --max-time 20 "https://btc09.178.128.105.41.sslip.io/otc-bot-feed.json" -o "$tmp"
           python -m json.tool "$tmp" > docs/otc-bot-feed.json
 
       - name: Commit feed if changed

@@ -1,0 +1,15 @@
+[Unit]
+Description=BTC09 Discord stats and role button watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/btc09/bitcoin09
+EnvironmentFile=/etc/btc09/discord.env
+ExecStart=/usr/bin/node /opt/btc09/bitcoin09/tools/discord/stats-bot.mjs --watch
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
