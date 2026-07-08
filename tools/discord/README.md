@@ -110,13 +110,16 @@ Print the current stats locally:
 node tools/discord/stats-bot.mjs
 ```
 
-Register the guild slash command:
+The Python OTC bot provides `/stats` on the live server. If you run this
+Node-only bot by itself, register the guild slash command:
 
 ```powershell
 node tools/discord/stats-bot.mjs --register-commands
 ```
 
-This registers `/stats`. Self-serve roles are handled by the clickable buttons in `#🎭-roles`, so the watch process must be running for the buttons to respond.
+This upserts `/stats` without replacing other guild commands. Self-serve roles
+are handled by the clickable buttons in `#🎭-roles`, so the watch process must
+be running for the buttons to respond.
 
 Post or update one bot-authored stats message in `#🏊-pools-and-nodes`:
 
@@ -124,13 +127,15 @@ Post or update one bot-authored stats message in `#🏊-pools-and-nodes`:
 node tools/discord/stats-bot.mjs --post
 ```
 
-Run the bot so `/stats` answers inside Discord:
+Run the watcher so role buttons answer inside Discord:
 
 ```powershell
 node tools/discord/stats-bot.mjs --watch
 ```
 
-The slash command and role buttons only respond while the watch process is running. The one-shot `--post` mode is safe to run repeatedly because it edits the existing bot message when one is already present.
+The role buttons only respond while the watch process is running. The one-shot
+`--post` mode is safe to run repeatedly because it edits the existing bot
+message when one is already present.
 
 ## Official Docs
 

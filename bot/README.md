@@ -16,6 +16,7 @@ USDT, BTC, fiat, or anything else happens directly between buyer and seller.
 - `/cancel <order_id>` cancels when the order state allows it.
 - `/dispute <order_id>` asks admin to resolve.
 - `/balance` shows escrow accounting.
+- `/stats` shows live chain, pool, miner, and payout stats.
 - `/withdraw <amount> <addr>` lets admin withdraw recorded fees only.
 - `/admin resolve|stats|orders` gives admin controls.
 
@@ -36,7 +37,7 @@ The live setup uses three systemd services:
 
 - `btc09-otc-bot.service`: Discord escrow slash commands.
 - `btc09-otc-feed.service`: localhost JSON feed for nginx.
-- `btc09-discord-stats.service`: `/stats` and clickable Discord role buttons.
+- `btc09-discord-stats.service`: clickable Discord role buttons.
 
 Keep Discord secrets out of unit files. Put them in `/etc/btc09/discord.env`
 with `chmod 600`:

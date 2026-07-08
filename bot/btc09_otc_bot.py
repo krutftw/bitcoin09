@@ -28,12 +28,15 @@ import requests
 
 getcontext().prec = 28
 
-BOT_VERSION = "otc-escrow-v0.2.0"
+BOT_VERSION = "otc-escrow-v0.2.1"
 COIN_TICKER = "09C"
 COIN = Decimal("0.00000001")
 MIN_ORDER = Decimal("1")
 ADDRESS_VERSION = 0x09
 BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+POOL_BASE = os.environ.get("POOL_BASE", "https://bitcoin09.tutuit.xyz/api/pools/09c").rstrip("/")
+PUBLIC_EXPLORER_URL = os.environ.get("PUBLIC_EXPLORER_URL", "https://explorer.btc09.178.128.105.41.sslip.io").rstrip("/")
+DISCORD_INVITE = os.environ.get("DISCORD_INVITE", "https://discord.gg/fUuGzwRTzP")
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN") or os.environ.get("DISCORD_BOT_TOKEN", "")
 GUILD_ID = int(os.environ.get("DISCORD_GUILD_ID", "0") or "0")
@@ -429,6 +432,67 @@ def price_per_coin(total_price: str, amount: str) -> str | None:
         return f"{(total / coins).quantize(Decimal('0.0000000001')):f}".rstrip("0").rstrip(".")
     except (InvalidOperation, ZeroDivisionError):
         return None
+
+
+def fmt_number(value, digits: int = 0) -> str:
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError):
+        return "-"
+    if digits <= 0:
+        return f"{int(number):,}"
+    return f"{number:,.{digits}f}"
+
+
+def fmt_hashrate(value) -> str:
+    try:
+        rate = Decimal(str(value))
+    except (InvalidOperation, TypeError):
+        return "-"
+    if rate >= Decimal("1000000"):
+        return f"{rate / Decimal('1000000'):.2f} MH/s"
+    if rate >= Decimal("1000"):
+        return f"{rate / Decimal('1000'):.2f} KH/s"
+    return f"{rate:.2f} H/s"
+
+
+def network_stats_text() -> str:
+    status_response = requests.get(f"{EXPLORER_URL}/api/status", timeout=8)
+    status_response.raise_for_status()
+    status = status_response.json()
+
+    pool_response = requests.get(POOL_BASE, timeout=8)
+    pool_response.raise_for_status()
+    pool = pool_response.json().get("pool", {})
+
+    miners_response = requests.get(f"{POOL_BASE}/miners?pageSize=10", timeout=8)
+    miners_response.raise_for_status()
+    miners = miners_response.json()
+    if not isinstance(miners, list):
+        miners = []
+
+    pool_stats = pool.get("poolStats") or {}
+    top_miners = []
+    for miner in miners[:5]:
+        address = str(miner.get("miner", ""))
+        short = address[:10] + "..." + address[-6:] if len(address) > 20 else address
+        top_miners.append(f"- `{short}` {fmt_hashrate(miner.get('hashrate'))}")
+
+    lines = [
+        "Bitcoin 09 live mining stats",
+        "",
+        f"Height: `{fmt_number(status.get('height'))}` | Peers: `{fmt_number(status.get('peers'))}` | Difficulty: `{fmt_number(status.get('difficulty'), 2)}`",
+        f"Circulating: `{fmt_number(status.get('circulating_supply'), 2)} {COIN_TICKER}`",
+        f"Pool hashrate: `{fmt_hashrate(pool_stats.get('poolHashrate'))}` | Active pool miner addresses: `{fmt_number(pool_stats.get('connectedMiners', len(miners)))}`",
+        f"Pool blocks: `{fmt_number(pool.get('blocksFound'))}` | Pool paid: `{fmt_number(pool.get('totalPaid'), 2)} {COIN_TICKER}`",
+        "",
+        "Top pool addresses:",
+        *(top_miners or ["No active pool miners reported."]),
+        "",
+        "Miner count means public-pool payout addresses, not guaranteed unique people.",
+        f"Pool: https://bitcoin09.tutuit.xyz | Explorer: {PUBLIC_EXPLORER_URL} | Discord: {DISCORD_INVITE}",
+    ]
+    return "\n".join(lines)
 
 
 def export_public_feed() -> None:
@@ -983,6 +1047,17 @@ async def balance(interaction: discord.Interaction) -> None:
         ),
         ephemeral=True,
     )
+
+
+@bot.tree.command(name="stats", description="Show live Bitcoin 09 mining and network stats")
+async def stats(interaction: discord.Interaction) -> None:
+    await interaction.response.defer(thinking=True)
+    try:
+        text = await run_blocking(network_stats_text)
+    except Exception as exc:
+        await interaction.followup.send(f"Stats check failed: `{str(exc)[:500]}`", ephemeral=True)
+        return
+    await interaction.followup.send(text, allowed_mentions=discord.AllowedMentions.none())
 
 
 @bot.tree.command(name="dispute", description="Open a dispute on a trade")

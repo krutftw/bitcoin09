@@ -72,7 +72,10 @@ async function registerCommands() {
     },
   ];
 
-  const registered = await discord("PUT", `/applications/${process.env.DISCORD_CLIENT_ID}/guilds/${process.env.DISCORD_GUILD_ID}/commands`, commands);
+  const registered = [];
+  for (const command of commands) {
+    registered.push(await discord("POST", `/applications/${process.env.DISCORD_CLIENT_ID}/guilds/${process.env.DISCORD_GUILD_ID}/commands`, command));
+  }
   for (const command of registered) {
     console.log(`Registered /${command.name} (${command.id}) in guild ${process.env.DISCORD_GUILD_ID}.`);
   }
@@ -119,7 +122,7 @@ async function watchGateway() {
 
   const gateway = await discord("GET", "/gateway/bot");
   const url = gateway.url + "/?v=10&encoding=json";
-  console.log("Connecting Discord gateway for /stats...");
+  console.log("Connecting Discord gateway for role buttons...");
 
   let sequence = null;
   let heartbeatTimer = null;
@@ -195,11 +198,6 @@ async function watchGateway() {
 }
 
 async function handleInteraction(interaction) {
-  if (interaction.type === 2 && interaction.data?.name === "stats") {
-    await handleStatsInteraction(interaction);
-    return;
-  }
-
   if (interaction.type === 3 && interaction.data?.custom_id?.startsWith("role:toggle:")) {
     await handleRoleButtonInteraction(interaction);
   }
@@ -467,7 +465,7 @@ Modes:
   no args              Print current stats locally.
   --register-commands  Register the guild /stats command.
   --post               Post or update one stats message in Discord.
-  --watch              Keep a gateway connection open and answer /stats plus role buttons.
+  --watch              Keep a gateway connection open for role buttons.
 
 Environment:
   DISCORD_CLIENT_ID
