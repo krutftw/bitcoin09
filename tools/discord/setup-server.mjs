@@ -262,7 +262,7 @@ const seedPosts = [
     content: [
       "Bitcoin 09 Discord is live.",
       "",
-      "Current release: v0.1.16",
+      "Current release: v0.1.17",
       "Source/releases: https://github.com/krutftw/bitcoin09",
       "Explorer: https://explorer.btc09.178.128.105.41.sslip.io",
       "Public pool: https://bitcoin09.tutuit.xyz",

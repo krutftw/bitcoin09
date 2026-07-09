@@ -9,7 +9,7 @@ their computers on.
 ## What exists now
 
 - source code is public
-- v0.1.16 binaries are published
+- v0.1.17 binaries are published
 - website is online at `https://btc09.178.128.105.41.sslip.io`
 - mainnet genesis is fixed
 - bootstrap seeds are online at `178.128.105.41:9009`, `103.80.18.140:9009`, and `108.190.240.138:9009`

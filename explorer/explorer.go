@@ -161,6 +161,20 @@ type supplyData struct {
 	GenesisRewardBurned           bool   `json:"genesis_reward_burned"`
 }
 
+type retargetData struct {
+	TargetBlockSeconds       int64   `json:"target_block_seconds"`
+	RetargetInterval         int64   `json:"retarget_interval"`
+	EpochStartHeight         int64   `json:"retarget_epoch_start_height"`
+	NextRetargetHeight       int64   `json:"next_retarget_height"`
+	BlocksToRetarget         int64   `json:"blocks_to_retarget"`
+	EpochElapsedBlocks       int64   `json:"retarget_epoch_elapsed_blocks"`
+	EpochElapsedSeconds      int64   `json:"retarget_epoch_elapsed_seconds"`
+	EpochAverageBlockSeconds float64 `json:"epoch_average_block_seconds"`
+	RetargetProgress         float64 `json:"retarget_progress"`
+	EstimatedNextDifficulty  float64 `json:"estimated_next_difficulty"`
+	AdjustmentLimitFactor    float64 `json:"difficulty_adjustment_limit_factor"`
+}
+
 func supplyAt(p *core.Params, tip int64) supplyData {
 	totalIssued := totalSubsidyThrough(tip)
 	burnedGenesis := core.SubsidyAt(0)
@@ -203,6 +217,84 @@ func supplyAt(p *core.Params, tip int64) supplyData {
 	}
 }
 
+func (s *Server) retargetAt(tip int64, difficulty float64) retargetData {
+	p := s.chain.Params()
+	interval := p.RetargetInterval
+	if interval <= 0 {
+		interval = 1
+	}
+	epochStart := (tip / interval) * interval
+	nextRetarget := epochStart + interval
+	blocksToRetarget := nextRetarget - tip
+	if blocksToRetarget < 0 {
+		blocksToRetarget = 0
+	}
+	elapsedBlocks := tip - epochStart
+	if elapsedBlocks < 0 {
+		elapsedBlocks = 0
+	}
+
+	data := retargetData{
+		TargetBlockSeconds:      p.TargetBlockTime,
+		RetargetInterval:        interval,
+		EpochStartHeight:        epochStart,
+		NextRetargetHeight:      nextRetarget,
+		BlocksToRetarget:        blocksToRetarget,
+		EpochElapsedBlocks:      elapsedBlocks,
+		RetargetProgress:        float64(elapsedBlocks) / float64(interval),
+		EstimatedNextDifficulty: difficulty,
+		AdjustmentLimitFactor:   4,
+	}
+
+	if elapsedBlocks <= 0 {
+		return data
+	}
+	startBlock := s.chain.BlockAt(epochStart)
+	tipBlock := s.chain.BlockAt(tip)
+	if startBlock == nil || tipBlock == nil {
+		return data
+	}
+	elapsedSeconds := tipBlock.Header.Time - startBlock.Header.Time
+	if elapsedSeconds <= 0 {
+		return data
+	}
+
+	data.EpochElapsedSeconds = elapsedSeconds
+	data.EpochAverageBlockSeconds = float64(elapsedSeconds) / float64(elapsedBlocks)
+
+	expected := float64(p.TargetBlockTime * (interval - 1))
+	if expected <= 0 {
+		return data
+	}
+	projectedActual := data.EpochAverageBlockSeconds * float64(interval-1)
+	minActual := expected / data.AdjustmentLimitFactor
+	maxActual := expected * data.AdjustmentLimitFactor
+	if projectedActual < minActual {
+		projectedActual = minActual
+	}
+	if projectedActual > maxActual {
+		projectedActual = maxActual
+	}
+	if projectedActual > 0 && difficulty > 0 {
+		data.EstimatedNextDifficulty = difficulty * expected / projectedActual
+	}
+
+	return data
+}
+
+func secondsText(seconds float64) string {
+	if seconds <= 0 {
+		return "-"
+	}
+	if seconds >= 3600 {
+		return fmt.Sprintf("%.1fh", seconds/3600)
+	}
+	if seconds >= 60 {
+		return fmt.Sprintf("%.1fm", seconds/60)
+	}
+	return fmt.Sprintf("%.0fs", seconds)
+}
+
 func (s *Server) row(h int64) (blockRow, bool) {
 	b := s.chain.BlockAt(h)
 	if b == nil {
@@ -236,15 +328,21 @@ func (s *Server) row(h int64) (blockRow, bool) {
 }
 
 type homeData struct {
-	Title             string
-	Height            int64
-	Peers             int
-	Difficulty        string
-	Supply            string
-	BlockReward       string
-	NextHalvingHeight int64
-	BlocksToHalving   int64
-	Blocks            []blockRow
+	Title                   string
+	Height                  int64
+	Peers                   int
+	Difficulty              string
+	TargetBlockTime         int64
+	RetargetInterval        int64
+	NextRetargetHeight      int64
+	BlocksToRetarget        int64
+	EpochAverage            string
+	EstimatedNextDifficulty string
+	Supply                  string
+	BlockReward             string
+	NextHalvingHeight       int64
+	BlocksToHalving         int64
+	Blocks                  []blockRow
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -260,7 +358,15 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	d.NextHalvingHeight = supply.NextHalvingHeight
 	d.BlocksToHalving = supply.BlocksToHalving
 	if b := s.chain.BlockAt(tip); b != nil {
-		d.Difficulty = fmt.Sprintf("%.2f", s.difficulty(b.Header.Bits))
+		diff := s.difficulty(b.Header.Bits)
+		retarget := s.retargetAt(tip, diff)
+		d.Difficulty = fmt.Sprintf("%.2f", diff)
+		d.TargetBlockTime = retarget.TargetBlockSeconds
+		d.RetargetInterval = retarget.RetargetInterval
+		d.NextRetargetHeight = retarget.NextRetargetHeight
+		d.BlocksToRetarget = retarget.BlocksToRetarget
+		d.EpochAverage = secondsText(retarget.EpochAverageBlockSeconds)
+		d.EstimatedNextDifficulty = fmt.Sprintf("%.2f", retarget.EstimatedNextDifficulty)
 	}
 	for h := tip; h > tip-25 && h >= 0; h-- {
 		if row, ok := s.row(h); ok {
@@ -332,19 +438,31 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		diff = s.difficulty(b.Header.Bits)
 	}
 	supply := supplyAt(s.chain.Params(), tip)
+	retarget := s.retargetAt(tip, diff)
 	writeJSON(w, map[string]any{
-		"coin":                  core.CoinName,
-		"ticker":                core.Ticker,
-		"height":                tip,
-		"peers":                 s.peers.PeerCount(),
-		"difficulty":            diff,
-		"uptime_sec":            int(time.Since(s.start).Seconds()),
-		"circulating_supply":    supply.CirculatingSupply,
-		"block_reward":          supply.BlockReward,
-		"next_halving_height":   supply.NextHalvingHeight,
-		"blocks_to_halving":     supply.BlocksToHalving,
-		"zero_subsidy_height":   supply.ZeroSubsidyHeight,
-		"genesis_reward_burned": supply.GenesisRewardBurned,
+		"coin":                               core.CoinName,
+		"ticker":                             core.Ticker,
+		"height":                             tip,
+		"peers":                              s.peers.PeerCount(),
+		"difficulty":                         diff,
+		"target_block_seconds":               retarget.TargetBlockSeconds,
+		"retarget_interval":                  retarget.RetargetInterval,
+		"retarget_epoch_start_height":        retarget.EpochStartHeight,
+		"next_retarget_height":               retarget.NextRetargetHeight,
+		"blocks_to_retarget":                 retarget.BlocksToRetarget,
+		"retarget_epoch_elapsed_blocks":      retarget.EpochElapsedBlocks,
+		"retarget_epoch_elapsed_seconds":     retarget.EpochElapsedSeconds,
+		"epoch_average_block_seconds":        retarget.EpochAverageBlockSeconds,
+		"retarget_progress":                  retarget.RetargetProgress,
+		"estimated_next_difficulty":          retarget.EstimatedNextDifficulty,
+		"difficulty_adjustment_limit_factor": retarget.AdjustmentLimitFactor,
+		"uptime_sec":                         int(time.Since(s.start).Seconds()),
+		"circulating_supply":                 supply.CirculatingSupply,
+		"block_reward":                       supply.BlockReward,
+		"next_halving_height":                supply.NextHalvingHeight,
+		"blocks_to_halving":                  supply.BlocksToHalving,
+		"zero_subsidy_height":                supply.ZeroSubsidyHeight,
+		"genesis_reward_burned":              supply.GenesisRewardBurned,
 	})
 }
 
@@ -390,10 +508,14 @@ input { font-family: monospace; width: 24em; }
 <span>height <b>{{.Height}}</b></span>
 <span>peers <b>{{.Peers}}</b></span>
 <span>difficulty <b>{{.Difficulty}}</b></span>
+<span>target <b>{{.TargetBlockTime}}s</b></span>
+<span>avg this window <b>{{.EpochAverage}}</b></span>
+<span>retarget <b>{{.BlocksToRetarget}}</b> blocks</span>
 <span>supply <b>{{.Supply}} 09C</b></span>
 <span>reward <b>{{.BlockReward}} 09C</b></span>
 <span>halving <b>{{.BlocksToHalving}}</b> blocks</span>
 </p>
+<p>difficulty retargets every {{.RetargetInterval}} blocks. next retarget height {{.NextRetargetHeight}}, estimated next difficulty {{.EstimatedNextDifficulty}} if this window keeps the same average.</p>
 <form action="/search"><input name="q" placeholder="block height or address"><button>go</button></form>
 <table>
 <tr><th>height</th><th>time (UTC)</th><th>miner</th><th>txs</th><th>reward</th><th>block id</th></tr>

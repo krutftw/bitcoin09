@@ -320,6 +320,8 @@ function formatStatsMessage(stats) {
     .join("\n");
   const explorerPeers = stats.explorer ? Number(stats.explorer.peers).toLocaleString() : "unavailable";
   const explorerHeight = stats.explorer ? Number(stats.explorer.height).toLocaleString() : "unavailable";
+  const retargetBlocks = stats.explorer?.blocks_to_retarget ?? null;
+  const nextRetargetHeight = stats.explorer?.next_retarget_height ?? null;
 
   return [
     MESSAGE_MARKER,
@@ -329,6 +331,9 @@ function formatStatsMessage(stats) {
     `Pool-reported height: **${Number(network.blockHeight ?? 0).toLocaleString()}**`,
     `Explorer height / peers: **${explorerHeight} / ${explorerPeers}**`,
     `Difficulty: **${formatNumber(network.networkDifficulty, 2)}**`,
+    `Target / avg this window: **${formatDuration(stats.explorer?.target_block_seconds)} / ${formatDuration(stats.explorer?.epoch_average_block_seconds)}**`,
+    `Retarget: **${retargetBlocks == null ? "unavailable" : Number(retargetBlocks).toLocaleString() + " blocks"}**${nextRetargetHeight == null ? "" : `, height **${Number(nextRetargetHeight).toLocaleString()}**`}`,
+    `Est. next difficulty: **${formatNumber(stats.explorer?.estimated_next_difficulty, 2)}**`,
     `Pool blocks found: **${Number(pool.blocksFound ?? 0).toLocaleString()}**`,
     `Pool paid: **${formatNumber(pool.totalPaid, 4)} 09C**`,
     `Recent block winner addresses: **${stats.uniqueBlockMiners.length.toLocaleString()}**`,
@@ -337,7 +342,7 @@ function formatStatsMessage(stats) {
     "Top active pool addresses:",
     topMiners || "No active pool miners reported.",
     "",
-    "Miner count means public-pool payout addresses, not guaranteed unique people.",
+    "Difficulty retargets every 2,016 blocks, Bitcoin-style. Miner count means public-pool payout addresses, not guaranteed unique people.",
     `Pool: https://bitcoin09.tutuit.xyz | Explorer: https://explorer.btc09.178.128.105.41.sslip.io | Discord: ${DISCORD_INVITE}`,
     `Updated: <t:${Math.floor(stats.checkedAt.getTime() / 1000)}:R>`,
   ].join("\n");
@@ -413,6 +418,14 @@ function formatHashrate(value) {
   if (n >= 1_000_000) return `${formatNumber(n / 1_000_000, 2)} MH/s`;
   if (n >= 1_000) return `${formatNumber(n / 1_000, 2)} KH/s`;
   return `${formatNumber(n, 2)} H/s`;
+}
+
+function formatDuration(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "-";
+  if (n >= 3600) return `${formatNumber(n / 3600, 1)}h`;
+  if (n >= 60) return `${formatNumber(n / 60, 1)}m`;
+  return `${formatNumber(n, 0)}s`;
 }
 
 function formatNumber(value, digits) {

@@ -456,6 +456,20 @@ def fmt_hashrate(value) -> str:
     return f"{rate:.2f} H/s"
 
 
+def fmt_seconds(value) -> str:
+    try:
+        seconds = Decimal(str(value))
+    except (InvalidOperation, TypeError):
+        return "-"
+    if seconds <= 0:
+        return "-"
+    if seconds >= Decimal("3600"):
+        return f"{seconds / Decimal('3600'):.1f}h"
+    if seconds >= Decimal("60"):
+        return f"{seconds / Decimal('60'):.1f}m"
+    return f"{seconds:.0f}s"
+
+
 def network_stats_text() -> str:
     status_response = requests.get(f"{EXPLORER_URL}/api/status", timeout=8)
     status_response.raise_for_status()
@@ -482,6 +496,8 @@ def network_stats_text() -> str:
         "Bitcoin 09 live mining stats",
         "",
         f"Height: `{fmt_number(status.get('height'))}` | Peers: `{fmt_number(status.get('peers'))}` | Difficulty: `{fmt_number(status.get('difficulty'), 2)}`",
+        f"Target: `{fmt_seconds(status.get('target_block_seconds'))}` | Avg this window: `{fmt_seconds(status.get('epoch_average_block_seconds'))}` | Retarget: `{fmt_number(status.get('blocks_to_retarget'))}` blocks",
+        f"Next retarget: height `{fmt_number(status.get('next_retarget_height'))}` | Est. next difficulty: `{fmt_number(status.get('estimated_next_difficulty'), 2)}`",
         f"Circulating: `{fmt_number(status.get('circulating_supply'), 2)} {COIN_TICKER}`",
         f"Pool hashrate: `{fmt_hashrate(pool_stats.get('poolHashrate'))}` | Active pool miner addresses: `{fmt_number(pool_stats.get('connectedMiners', len(miners)))}`",
         f"Pool blocks: `{fmt_number(pool.get('blocksFound'))}` | Pool paid: `{fmt_number(pool.get('totalPaid'), 2)} {COIN_TICKER}`",
@@ -489,7 +505,7 @@ def network_stats_text() -> str:
         "Top pool addresses:",
         *(top_miners or ["No active pool miners reported."]),
         "",
-        "Miner count means public-pool payout addresses, not guaranteed unique people.",
+        "Difficulty retargets every 2,016 blocks, Bitcoin-style. Miner count means public-pool payout addresses, not guaranteed unique people.",
         f"Pool: https://bitcoin09.tutuit.xyz | Explorer: {PUBLIC_EXPLORER_URL} | Discord: {DISCORD_INVITE}",
     ]
     return "\n".join(lines)

@@ -176,6 +176,9 @@ https://explorer.btc09.178.128.105.41.sslip.io/api/circulating_supply
 
 `/api/circulating_supply` returns the plain circulating supply number. It
 excludes the burned genesis reward.
+`/api/status` also includes the current retarget window: target seconds,
+observed average block time, blocks to the next retarget, and estimated next
+difficulty if the window keeps the same average.
 
 Discord:
 
@@ -240,7 +243,7 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.16 is current. The node, miner, wallet, P2P sync, built-in seeds, block
+v0.1.17 is current. The node, miner, wallet, P2P sync, built-in seeds, block
 explorer and supply APIs are live.
 
 Network:

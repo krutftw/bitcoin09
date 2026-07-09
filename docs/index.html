@@ -420,14 +420,14 @@ pre {
 <div>
 <p class="kicker">fair-launch cpu proof of work</p>
 <h1>Bitcoin 09</h1>
-<p class="tag">Bitcoin-style supply, 10 minute blocks, no premine, Argon2id mining.</p>
+<p class="tag">Bitcoin-style supply, 10 minute target, no premine, Argon2id mining.</p>
 <div class="hero-grid">
 <pre class="shell">&gt; btc09 node -mine
 seed 178.128.105.41:9009
 seed 103.80.18.140:9009
 seed 108.190.240.138:9009
 pool bitcoin09.tutuit.xyz
-release v0.1.16</pre>
+release v0.1.17</pre>
 <div class="status-card">
 <b>09C mainnet</b>
 <span>Official site, explorer, and public seed are running from the Singapore BTC09 node.</span>
@@ -440,7 +440,7 @@ release v0.1.16</pre>
 
 <main class="content">
 <div class="wrap">
-<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.178.128.105.41.sslip.io">live explorer</a>. Current release: v0.1.16. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
+<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.178.128.105.41.sslip.io">live explorer</a>. Current release: v0.1.17. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
 
 <section class="panel">
 <h2>What It Is</h2>
@@ -449,7 +449,7 @@ release v0.1.16</pre>
 <tr><th></th><th>Bitcoin</th><th>Bitcoin 09</th></tr>
 <tr><td>Supply cap</td><td>21,000,000</td><td>21,000,000</td></tr>
 <tr><td>Block reward</td><td>50, halves every 210,000</td><td>50, halves every 210,000</td></tr>
-<tr><td>Block time</td><td>10 minutes</td><td>10 minutes</td></tr>
+<tr><td>Block target</td><td>10 minutes</td><td>10 minutes</td></tr>
 <tr><td>Premine</td><td>none</td><td>none</td></tr>
 <tr><td>Proof of work</td><td>SHA-256d</td><td>Argon2id 64 MiB, CPU-accessible</td></tr>
 </table>
@@ -470,6 +470,10 @@ release v0.1.16</pre>
 <div class="stat"><b id="stat-height">-</b><span>chain height</span></div>
 <div class="stat"><b id="stat-peers">-</b><span>node peers</span></div>
 <div class="stat"><b id="stat-difficulty">-</b><span>difficulty</span></div>
+<div class="stat"><b id="stat-target">-</b><span>target block time</span></div>
+<div class="stat"><b id="stat-avg-block">-</b><span>avg block time this window</span></div>
+<div class="stat"><b id="stat-retarget">-</b><span>blocks to retarget</span></div>
+<div class="stat"><b id="stat-next-diff">-</b><span>est. next difficulty</span></div>
 <div class="stat"><b id="stat-supply">-</b><span>circulating 09C</span></div>
 <div class="stat"><b id="stat-blocks">-</b><span>pool blocks found</span></div>
 <div class="stat"><b id="stat-paid">-</b><span>09C paid by pool</span></div>
@@ -481,6 +485,12 @@ release v0.1.16</pre>
 <tbody id="miner-rows"><tr><td colspan="2">Loading...</td></tr></tbody>
 </table>
 </details>
+</section>
+
+<section class="panel">
+<h2>Difficulty Retarget</h2>
+<p>09C follows the old Bitcoin rhythm: difficulty changes every 2,016 blocks and can only move by up to 4x per adjustment. If a lot of miners arrive early, blocks can run faster than the 10 minute target until the next retarget catches up.</p>
+<p class="muted">That is why the site shows both the target and the observed average for the current retarget window. The target is the rule; the observed average is what miners are seeing right now.</p>
 </section>
 
 <section class="panel">
@@ -588,6 +598,14 @@ function hashRate(value) {
   return fixed(n, 2) + ' H/s';
 }
 
+function secondsText(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return '-';
+  if (n >= 3600) return fixed(n / 3600, 1) + 'h';
+  if (n >= 60) return fixed(n / 60, 1) + 'm';
+  return fixed(n, 0) + 's';
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, { cache: 'no-store' });
   if (!response.ok) throw new Error(url + ' status ' + response.status);
@@ -602,8 +620,9 @@ function setLiveSummary(status, pool, miners) {
   const difficulty = fixed(difficultyValue, 2);
   const peers = status ? Number(status.peers ?? 0).toLocaleString() : 'unknown';
   const active = pool ? Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString() : 'pool unavailable';
+  const retarget = status?.blocks_to_retarget != null ? ', retarget in ' + Number(status.blocks_to_retarget).toLocaleString() + ' blocks' : '';
   live.replaceChildren(
-    document.createTextNode('network now: height ' + height + ', peers ' + peers + ', difficulty ' + difficulty + ', active pool miner addresses ' + active + '. '),
+    document.createTextNode('network now: height ' + height + ', peers ' + peers + ', difficulty ' + difficulty + retarget + ', active pool miner addresses ' + active + '. '),
     Object.assign(document.createElement('a'), { href: 'https://bitcoin09.tutuit.xyz', textContent: 'pool' }),
     document.createTextNode(' / '),
     Object.assign(document.createElement('a'), { href: 'https://explorer.btc09.178.128.105.41.sslip.io', textContent: 'explorer' }),
@@ -657,13 +676,17 @@ async function refreshStats() {
     text('stat-height', status ? Number(status.height ?? 0).toLocaleString() : Number(pool?.networkStats?.blockHeight ?? 0).toLocaleString());
     text('stat-peers', status ? Number(status.peers ?? 0).toLocaleString() : '-');
     text('stat-difficulty', fixed(status?.difficulty ?? pool?.networkStats?.networkDifficulty, 2));
+    text('stat-target', secondsText(status?.target_block_seconds));
+    text('stat-avg-block', secondsText(status?.epoch_average_block_seconds));
+    text('stat-retarget', status?.blocks_to_retarget != null ? Number(status.blocks_to_retarget).toLocaleString() : '-');
+    text('stat-next-diff', fixed(status?.estimated_next_difficulty, 2));
     text('stat-supply', status ? fixed(status.circulating_supply, 2) : '-');
     text('stat-miners', pool ? Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString() : '-');
     text('stat-pool-hashrate', pool ? hashRate(pool.poolStats?.poolHashrate) : '-');
     text('stat-blocks', pool ? Number(pool.blocksFound ?? 0).toLocaleString() : '-');
     text('stat-paid', pool ? fixed(pool.totalPaid, 2) : '-');
     note.className = 'muted';
-    note.textContent = 'Live chain data from the official explorer and pool data from bitcoin09.tutuit.xyz. Miner count means pool payout addresses, not guaranteed unique people. Updated ' + updated.toLocaleTimeString() + '.';
+    note.textContent = 'Live chain data from the official explorer and pool data from bitcoin09.tutuit.xyz. Difficulty retargets every ' + Number(status?.retarget_interval ?? 2016).toLocaleString() + ' blocks, Bitcoin-style. Miner count means pool payout addresses, not guaranteed unique people. Updated ' + updated.toLocaleTimeString() + '.';
 
     renderMiners(miners);
     setLiveSummary(status, pool, miners);

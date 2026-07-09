@@ -29,7 +29,7 @@ import (
 )
 
 // nodeVersion is the release version; bump alongside git tags.
-const nodeVersion = "v0.1.16"
+const nodeVersion = "v0.1.17"
 
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
