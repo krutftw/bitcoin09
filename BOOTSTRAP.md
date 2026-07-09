@@ -9,7 +9,7 @@ their computers on.
 ## What exists now
 
 - source code is public
-- v0.1.18 binaries are published
+- v0.1.19 binaries are published
 - website is online at `https://btc09.org`
 - mainnet genesis is fixed
 - bootstrap seeds are online at `seed.btc09.org:9009`, `178.128.105.41:9009`, `103.80.18.140:9009`, and `108.190.240.138:9009`

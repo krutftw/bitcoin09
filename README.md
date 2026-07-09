@@ -247,8 +247,10 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.18 is current. The node, miner, wallet, P2P sync, built-in seeds, block
-explorer and supply APIs are live.
+v0.1.19 is current. It prevents duplicate hostname/IP seed connections from
+filling peer slots, caps in-flight dials, and rejects private or malformed
+addresses received through peer gossip. The node, miner, wallet, P2P sync,
+built-in seeds, block explorer and supply APIs are live.
 
 Network:
 
@@ -263,7 +265,7 @@ discord:  https://discord.gg/fUuGzwRTzP
 If you downloaded an early build, upgrade to the latest release. Old clients
 from before the fork-sync and retarget fixes can get stuck on stale forks.
 
-Stuff I want next, PRs welcome: peer banning and DoS hardening, headers-first
+Stuff I want next, PRs welcome: peer scoring/banning, headers-first
 sync, DNS seeds, miner/peer stats in the explorer and a friendlier miner UI.
 
 ## License
