@@ -80,11 +80,14 @@ Your wallet is created automatically under your user folder.
 
 Wallet stuff:
 
+```powershell
+.\btc09-windows-amd64.exe wallet list
+.\btc09-windows-amd64.exe wallet new
+.\btc09-windows-amd64.exe send -to ADDRESS -amount 1.5 -seeds seed.btc09.org:9009
 ```
-./btc09 wallet list
-./btc09 wallet new
-./btc09 send -to ADDRESS -amount 1.5 -seeds seed.btc09.org:9009
-```
+
+PowerShell needs the exact file name. `btc09 wallet new` only works if you
+renamed the file to `btc09.exe` and run `.\btc09.exe`, or added it to PATH.
 
 `-seeds` is plural and means peer nodes to broadcast through. It is not a wallet
 seed phrase option. Do not paste private keys, seed phrases, or wallet file

@@ -13,11 +13,19 @@ Official site:
 
 https://btc09.org
 
+Windows PowerShell note: if you downloaded `btc09-windows-amd64.exe` and did
+not rename it, run it with `.\btc09-windows-amd64.exe`. `btc09` by itself only
+works after renaming the file to `btc09.exe` and using `.\btc09.exe`, or after
+adding it to your PATH.
+
 Check your binary:
 
 ```powershell
-btc09 version
+.\btc09-windows-amd64.exe version
 ```
+
+The examples below use `btc09` for readability. On Windows, replace `btc09`
+with `.\btc09-windows-amd64.exe` unless you renamed or installed the binary.
 
 Current release:
 
@@ -90,19 +98,19 @@ Phantom do not support it. Use the `btc09` wallet/node.
 List your wallet addresses and local balance:
 
 ```powershell
-btc09 wallet list
+.\btc09-windows-amd64.exe wallet list
 ```
 
 Create another receiving address:
 
 ```powershell
-btc09 wallet new
+.\btc09-windows-amd64.exe wallet new
 ```
 
 Send 09C and broadcast through the seed node:
 
 ```powershell
-btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds seed.btc09.org:9009
+.\btc09-windows-amd64.exe send -to THEIR_09C_ADDRESS -amount 100 -seeds seed.btc09.org:9009
 ```
 
 The default fee is 0.0001 09C. `-seeds` is plural and means peer nodes to

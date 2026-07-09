@@ -525,9 +525,10 @@ release v0.1.18</pre>
 <section class="panel">
 <h2>Wallet And Sending</h2>
 <p>09C is a native chain coin, not an Ethereum or Solana token. MetaMask and Phantom do not support it. Use the <code>btc09</code> wallet/node for now.</p>
-<pre>btc09 wallet list
-btc09 wallet new
-btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds seed.btc09.org:9009</pre>
+<p class="muted">Windows PowerShell needs the downloaded file name. If you downloaded <code>btc09-windows-amd64.exe</code>, use <code>.\btc09-windows-amd64.exe</code>. <code>btc09</code> by itself only works after renaming the file or adding it to PATH.</p>
+<pre>.\btc09-windows-amd64.exe wallet list
+.\btc09-windows-amd64.exe wallet new
+.\btc09-windows-amd64.exe send -to THEIR_09C_ADDRESS -amount 100 -seeds seed.btc09.org:9009</pre>
 <p class="muted">The default fee is 0.0001 09C. <code>-seeds</code> is plural and means peer nodes to broadcast through, not a wallet seed phrase. Do not paste private keys, seed phrases, or wallet file contents into the command line. <code>send</code> spends from the wallet file in your data directory, and your local chain must be synced enough to see spendable coins.</p>
 </section>
 
