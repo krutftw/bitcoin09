@@ -33,6 +33,10 @@ btc09-discord-stats
 nginx
 ```
 
+Temporary `sslip.io` launch hostnames should use
+`deploy/nginx/bitcoin09-legacy-redirects.conf` and redirect to the canonical
+`btc09.org` hosts. They should not serve duplicate site or explorer content.
+
 `btc09-market-refresh.timer` refreshes `/var/www/bitcoin09/market-data.json`
 from the public GitHub OTC issue records. This keeps the VPS-hosted market
 board current even when GitHub Actions are unavailable.
