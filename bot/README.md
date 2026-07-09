@@ -27,17 +27,18 @@ The bot writes a sanitized public feed to
 amount, total price, currency, and timestamps. It does not include Discord IDs,
 usernames, wallet addresses, deposit addresses, or off-chain payment details.
 
-`serve_otc_feed.py` serves that JSON at `/otc-bot-feed.json`. GitHub Actions
-pulls the feed into `docs/otc-bot-feed.json` so the static market page can load
-it over HTTPS.
+`serve_otc_feed.py` serves that JSON at `/otc-bot-feed.json` through nginx on
+`btc09.org`, so the market page can load the live sanitized feed over HTTPS.
 
 ## Services
 
-The live setup uses three systemd services:
+The live setup uses four systemd services and one timer:
 
 - `btc09-otc-bot.service`: Discord escrow slash commands.
 - `btc09-otc-feed.service`: localhost JSON feed for nginx.
 - `btc09-discord-stats.service`: clickable Discord role buttons.
+- `btc09-market-refresh.timer`: refreshes public GitHub OTC issue records for
+  the hosted market board.
 
 Keep Discord secrets out of unit files. Put them in `/etc/btc09/discord.env`
 with `chmod 600`:
