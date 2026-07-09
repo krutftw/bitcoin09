@@ -17,6 +17,7 @@ Runtime layout:
 /opt/btc09/serve_otc_feed.py
 /opt/btc09/otc_bot.db
 /opt/btc09/public/otc-bot-feed.json
+/opt/btc09/bitcoin09/tools/market/build-market-data.mjs
 /var/www/bitcoin09
 /etc/btc09/discord.env
 ```
@@ -27,9 +28,14 @@ Services:
 btc09-seed
 btc09-otc-bot
 btc09-otc-feed
+btc09-market-refresh.timer
 btc09-discord-stats
 nginx
 ```
+
+`btc09-market-refresh.timer` refreshes `/var/www/bitcoin09/market-data.json`
+from the public GitHub OTC issue records. This keeps the VPS-hosted market
+board current even when GitHub Actions are unavailable.
 
 After uploading static site files to `/var/www/bitcoin09`, make the files
 readable by nginx:

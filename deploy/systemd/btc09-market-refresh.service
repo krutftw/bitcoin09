@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh BTC09 public OTC market data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/btc09/bitcoin09
+Environment=BTC09_MARKET_ALWAYS_WRITE=1
+ExecStart=/usr/bin/node /opt/btc09/bitcoin09/tools/market/build-market-data.mjs /var/www/bitcoin09/market-data.json

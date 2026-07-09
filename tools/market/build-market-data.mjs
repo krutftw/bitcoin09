@@ -7,6 +7,7 @@ const repo = process.env.GITHUB_REPOSITORY || "krutftw/bitcoin09";
 const outputPath = resolve(process.argv[2] || "docs/market-data.json");
 const apiBase = `https://api.github.com/repos/${repo}/issues`;
 const source = `https://github.com/${repo}/issues?q=label%3Aotc-offer+OR+label%3Aotc-completed`;
+const alwaysWrite = process.env.BTC09_MARKET_ALWAYS_WRITE === "1";
 
 function authHeaders() {
   const headers = {
@@ -118,7 +119,7 @@ const payload = {
 };
 
 const existing = await readExisting(outputPath);
-if (existing && sameMarketData(existing, payload)) {
+if (!alwaysWrite && existing && sameMarketData(existing, payload)) {
   console.log(`No market data changes (${offers.length} open offers, ${completed.length} completed records)`);
 } else {
   await mkdir(dirname(outputPath), { recursive: true });
