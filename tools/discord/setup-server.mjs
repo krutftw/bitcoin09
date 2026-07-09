@@ -777,7 +777,18 @@ async function ensureSeedMessage(botUserId, channel, post) {
 }
 
 function sameComponents(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return JSON.stringify(withoutGeneratedComponentIds(left)) === JSON.stringify(withoutGeneratedComponentIds(right));
+}
+
+function withoutGeneratedComponentIds(value) {
+  if (Array.isArray(value)) return value.map(withoutGeneratedComponentIds);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "id")
+      .map(([key, child]) => [key, withoutGeneratedComponentIds(child)]),
+  );
 }
 
 async function ensureMemberRole(userId, role, label) {
