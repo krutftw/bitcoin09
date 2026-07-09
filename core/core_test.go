@@ -87,7 +87,11 @@ func TestAddressRoundTrip(t *testing.T) {
 	if got != pkh {
 		t.Fatal("address roundtrip mismatch")
 	}
-	if _, err := DecodeAddress(addr[:len(addr)-1] + "X"); err == nil {
+	replacement := byte('X')
+	if addr[len(addr)-1] == replacement {
+		replacement = 'Y'
+	}
+	if _, err := DecodeAddress(addr[:len(addr)-1] + string(replacement)); err == nil {
 		t.Fatal("checksum not enforced")
 	}
 }
