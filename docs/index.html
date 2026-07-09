@@ -7,7 +7,7 @@
 <meta name="description" content="Bitcoin 09: the coin you can mine like it's 2009. CPU proof of work, 21M cap, no premine.">
 <meta property="og:title" content="Bitcoin 09 (09C)">
 <meta property="og:description" content="CPU proof of work, 21M cap, no premine. Mine it like it's 2009.">
-<meta property="og:image" content="https://btc09.178.128.105.41.sslip.io/assets/bitcoin09-social.png">
+<meta property="og:image" content="https://btc09.org/assets/bitcoin09-social.png">
 <link rel="icon" type="image/png" href="assets/bitcoin09-ai-logo-512.png">
 <style>
 :root {
@@ -423,15 +423,16 @@ pre {
 <p class="tag">Bitcoin-style supply, 10 minute target, no premine, Argon2id mining.</p>
 <div class="hero-grid">
 <pre class="shell">&gt; btc09 node -mine
+seed seed.btc09.org:9009
 seed 178.128.105.41:9009
 seed 103.80.18.140:9009
 seed 108.190.240.138:9009
 pool bitcoin09.tutuit.xyz
-release v0.1.17</pre>
+release v0.1.18</pre>
 <div class="status-card">
 <b>09C mainnet</b>
 <span>Official site, explorer, and public seed are running from the Singapore BTC09 node.</span>
-<span><a href="https://github.com/krutftw/bitcoin09/releases/latest">download</a> / <a href="https://discord.gg/fUuGzwRTzP">discord</a> / <a href="https://explorer.btc09.178.128.105.41.sslip.io">explorer</a></span>
+<span><a href="https://github.com/krutftw/bitcoin09/releases/latest">download</a> / <a href="https://discord.gg/fUuGzwRTzP">discord</a> / <a href="https://explorer.btc09.org">explorer</a></span>
 </div>
 </div>
 </div>
@@ -440,7 +441,7 @@ release v0.1.17</pre>
 
 <main class="content">
 <div class="wrap">
-<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.178.128.105.41.sslip.io">live explorer</a>. Current release: v0.1.17. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
+<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.org">live explorer</a>. Current release: v0.1.18. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
 
 <section class="panel">
 <h2>What It Is</h2>
@@ -526,16 +527,16 @@ release v0.1.17</pre>
 <p>09C is a native chain coin, not an Ethereum or Solana token. MetaMask and Phantom do not support it. Use the <code>btc09</code> wallet/node for now.</p>
 <pre>btc09 wallet list
 btc09 wallet new
-btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 178.128.105.41:9009</pre>
+btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds seed.btc09.org:9009</pre>
 <p class="muted">The default fee is 0.0001 09C. <code>-seeds</code> is plural and means peer nodes to broadcast through, not a wallet seed phrase. Do not paste private keys, seed phrases, or wallet file contents into the command line. <code>send</code> spends from the wallet file in your data directory, and your local chain must be synced enough to see spendable coins.</p>
 </section>
 
 <section class="panel">
 <h2>Watch The Chain</h2>
-<p><a href="https://explorer.btc09.178.128.105.41.sslip.io">Live block explorer</a>: height, difficulty, recent blocks and miner addresses.</p>
+<p><a href="https://explorer.btc09.org">Live block explorer</a>: height, difficulty, recent blocks and miner addresses.</p>
 <p>The explorer exposes machine-readable supply data for listings and audits.</p>
-<pre>curl https://explorer.btc09.178.128.105.41.sslip.io/api/supply
-curl https://explorer.btc09.178.128.105.41.sslip.io/api/circulating_supply</pre>
+<pre>curl https://explorer.btc09.org/api/supply
+curl https://explorer.btc09.org/api/circulating_supply</pre>
 </section>
 
 <section class="panel">
@@ -552,7 +553,7 @@ curl https://explorer.btc09.178.128.105.41.sslip.io/api/circulating_supply</pre>
 <section class="panel">
 <h2>Read</h2>
 <ul class="read-list">
-<li><a href="https://btc09.178.128.105.41.sslip.io">Official site</a></li>
+<li><a href="https://btc09.org">Official site</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09">Source code</a> (MIT, Go)</li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/WHITEPAPER.md">Whitepaper</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/QUICKSTART.md">Quickstart</a></li>
@@ -575,7 +576,7 @@ curl https://explorer.btc09.178.128.105.41.sslip.io/api/circulating_supply</pre>
 <script>
 const poolApi = 'https://bitcoin09.tutuit.xyz/api/pools/09c';
 const minerApi = 'https://bitcoin09.tutuit.xyz/api/pools/09c/miners?pageSize=20';
-const explorerApi = 'https://explorer.btc09.178.128.105.41.sslip.io/api/status';
+const explorerApi = 'https://explorer.btc09.org/api/status';
 
 function text(id, value) {
   document.getElementById(id).textContent = value;
@@ -625,7 +626,7 @@ function setLiveSummary(status, pool, miners) {
     document.createTextNode('network now: height ' + height + ', peers ' + peers + ', difficulty ' + difficulty + retarget + ', active pool miner addresses ' + active + '. '),
     Object.assign(document.createElement('a'), { href: 'https://bitcoin09.tutuit.xyz', textContent: 'pool' }),
     document.createTextNode(' / '),
-    Object.assign(document.createElement('a'), { href: 'https://explorer.btc09.178.128.105.41.sslip.io', textContent: 'explorer' }),
+    Object.assign(document.createElement('a'), { href: 'https://explorer.btc09.org', textContent: 'explorer' }),
     document.createTextNode(' / '),
     Object.assign(document.createElement('a'), { href: 'https://discord.gg/fUuGzwRTzP', textContent: 'Discord' }),
     document.createTextNode('.')

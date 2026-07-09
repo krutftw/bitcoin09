@@ -3,9 +3,9 @@
 Current public host:
 
 ```text
-site:     https://btc09.178.128.105.41.sslip.io
-explorer: https://explorer.btc09.178.128.105.41.sslip.io
-seed:     178.128.105.41:9009
+site:     https://btc09.org
+explorer: https://explorer.btc09.org
+seed:     seed.btc09.org:9009
 ```
 
 Runtime layout:

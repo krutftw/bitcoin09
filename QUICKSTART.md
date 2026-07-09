@@ -11,7 +11,7 @@ https://github.com/krutftw/bitcoin09/releases/latest
 
 Official site:
 
-https://btc09.178.128.105.41.sslip.io
+https://btc09.org
 
 Check your binary:
 
@@ -22,7 +22,7 @@ btc09 version
 Current release:
 
 ```text
-Bitcoin 09 (09C) reference node v0.1.17
+Bitcoin 09 (09C) reference node v0.1.18
 ```
 
 ## Run a Full Node
@@ -76,7 +76,7 @@ The node prints your reward address at startup. You can check it in the public
 explorer:
 
 ```text
-https://explorer.btc09.178.128.105.41.sslip.io/address/YOUR_ADDRESS
+https://explorer.btc09.org/address/YOUR_ADDRESS
 ```
 
 Local wallet balance is calculated from your own synced chain. A fresh node can
@@ -102,7 +102,7 @@ btc09 wallet new
 Send 09C and broadcast through the seed node:
 
 ```powershell
-btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds 178.128.105.41:9009
+btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds seed.btc09.org:9009
 ```
 
 The default fee is 0.0001 09C. `-seeds` is plural and means peer nodes to

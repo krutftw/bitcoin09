@@ -9,13 +9,13 @@ their computers on.
 ## What exists now
 
 - source code is public
-- v0.1.17 binaries are published
-- website is online at `https://btc09.178.128.105.41.sslip.io`
+- v0.1.18 binaries are published
+- website is online at `https://btc09.org`
 - mainnet genesis is fixed
-- bootstrap seeds are online at `178.128.105.41:9009`, `103.80.18.140:9009`, and `108.190.240.138:9009`
-- explorer is online at `https://explorer.btc09.178.128.105.41.sslip.io`
+- bootstrap seeds are online at `seed.btc09.org:9009`, `178.128.105.41:9009`, `103.80.18.140:9009`, and `108.190.240.138:9009`
+- explorer is online at `https://explorer.btc09.org`
 - Discord is live at `https://discord.gg/fUuGzwRTzP`
-- OTC board is online at `https://btc09.178.128.105.41.sslip.io/markets.html`
+- OTC board is online at `https://btc09.org/markets.html`
 - CPU mining works
 - blocks and transactions sync between peers
 - launch thread exists in GitHub issues
@@ -62,7 +62,7 @@ public node: IP:9009
 Those addresses can then be passed to `-seeds`:
 
 ```bash
-btc09 node -mine -seeds 178.128.105.41:9009,103.80.18.140:9009,108.190.240.138:9009
+btc09 node -mine -seeds seed.btc09.org:9009,178.128.105.41:9009,103.80.18.140:9009,108.190.240.138:9009
 ```
 
 ## When there are a few stable peers
@@ -70,7 +70,7 @@ btc09 node -mine -seeds 178.128.105.41:9009,103.80.18.140:9009,108.190.240.138:9
 Once the extra public nodes stay stable:
 
 1. Register a domain.
-2. Point `seed.bitcoin09.org` at stable seed hosts.
+2. Point `seed.btc09.org` at stable seed hosts.
 3. Add DNS seed support to the client.
 4. Keep the raw IP seeds as fallback.
 

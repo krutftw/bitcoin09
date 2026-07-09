@@ -35,7 +35,7 @@ MIN_ORDER = Decimal("1")
 ADDRESS_VERSION = 0x09
 BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 POOL_BASE = os.environ.get("POOL_BASE", "https://bitcoin09.tutuit.xyz/api/pools/09c").rstrip("/")
-PUBLIC_EXPLORER_URL = os.environ.get("PUBLIC_EXPLORER_URL", "https://explorer.btc09.178.128.105.41.sslip.io").rstrip("/")
+PUBLIC_EXPLORER_URL = os.environ.get("PUBLIC_EXPLORER_URL", "https://explorer.btc09.org").rstrip("/")
 DISCORD_INVITE = os.environ.get("DISCORD_INVITE", "https://discord.gg/fUuGzwRTzP")
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN") or os.environ.get("DISCORD_BOT_TOKEN", "")

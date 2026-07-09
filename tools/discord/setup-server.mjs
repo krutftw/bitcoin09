@@ -240,7 +240,7 @@ const rolePickerComponents = [
   },
 ];
 
-const marketBoardUrl = "https://btc09.178.128.105.41.sslip.io/markets.html";
+const marketBoardUrl = "https://btc09.org/markets.html";
 const marketDraftUrl = `${marketBoardUrl}#draft`;
 const marketRecordsUrl = "https://github.com/krutftw/bitcoin09/issues?q=label%3Aotc-offer+OR+label%3Aotc-completed";
 const marketBoardComponents = [
@@ -250,7 +250,7 @@ const marketBoardComponents = [
       { type: 2, style: 5, label: "Draft OTC record", url: marketDraftUrl },
       { type: 2, style: 5, label: "OTC board", url: marketBoardUrl },
       { type: 2, style: 5, label: "Public records", url: marketRecordsUrl },
-      { type: 2, style: 5, label: "Explorer", url: "https://explorer.btc09.178.128.105.41.sslip.io" },
+      { type: 2, style: 5, label: "Explorer", url: "https://explorer.btc09.org" },
     ],
   },
 ];
@@ -262,12 +262,12 @@ const seedPosts = [
     content: [
       "Bitcoin 09 Discord is live.",
       "",
-      "Current release: v0.1.17",
+      "Current release: v0.1.18",
       "Source/releases: https://github.com/krutftw/bitcoin09",
-      "Explorer: https://explorer.btc09.178.128.105.41.sslip.io",
+      "Explorer: https://explorer.btc09.org",
       "Public pool: https://bitcoin09.tutuit.xyz",
       "Discord invite: https://discord.gg/fUuGzwRTzP",
-      "Seeds: 178.128.105.41:9009, 103.80.18.140:9009, 108.190.240.138:9009",
+      "Seeds: seed.btc09.org:9009, 178.128.105.41:9009, 103.80.18.140:9009, 108.190.240.138:9009",
       "",
       "If you mined on an early build, upgrade before syncing or mining. Older clients can get stuck on stale forks from before the sync and retarget fixes.",
     ].join("\n"),
@@ -279,12 +279,12 @@ const seedPosts = [
       "Bitcoin 09 quick links",
       "",
       "- Source/releases: https://github.com/krutftw/bitcoin09",
-      "- Explorer: https://explorer.btc09.178.128.105.41.sslip.io",
+      "- Explorer: https://explorer.btc09.org",
       "- Public pool: https://bitcoin09.tutuit.xyz",
       "- Bitcointalk ANN: https://bitcointalk.org/index.php?topic=5587640.0",
       "- Discord: https://discord.gg/fUuGzwRTzP",
-      "- Seed nodes: 178.128.105.41:9009, 103.80.18.140:9009, 108.190.240.138:9009",
-      "- OTC board: https://btc09.178.128.105.41.sslip.io/markets.html",
+      "- Seed nodes: seed.btc09.org:9009, 178.128.105.41:9009, 103.80.18.140:9009, 108.190.240.138:9009",
+      "- OTC board: https://btc09.org/markets.html",
       "- Roles: click the buttons in #🎭-roles",
       "",
       "09C has no premine, no ICO, no allocation, and the genesis reward is burned/unspendable.",
@@ -331,14 +331,14 @@ const seedPosts = [
       "",
       "- GitHub: https://github.com/krutftw/bitcoin09",
       "- Latest release: https://github.com/krutftw/bitcoin09/releases/latest",
-      "- Explorer: https://explorer.btc09.178.128.105.41.sslip.io",
+      "- Explorer: https://explorer.btc09.org",
       "- Public pool: https://bitcoin09.tutuit.xyz",
       "- Bitcointalk ANN: https://bitcointalk.org/index.php?topic=5587640.0",
       "- Discord: https://discord.gg/fUuGzwRTzP",
-      "- OTC board: https://btc09.178.128.105.41.sslip.io/markets.html",
+      "- OTC board: https://btc09.org/markets.html",
       "- Brand kit: https://github.com/krutftw/bitcoin09/blob/master/BRAND.md",
-      "- Logo PNG: https://btc09.178.128.105.41.sslip.io/assets/bitcoin09-ai-logo-512.png",
-      "- Social card: https://btc09.178.128.105.41.sslip.io/assets/bitcoin09-social.png",
+      "- Logo PNG: https://btc09.org/assets/bitcoin09-ai-logo-512.png",
+      "- Social card: https://btc09.org/assets/bitcoin09-social.png",
     ].join("\n"),
   },
   {
@@ -361,7 +361,7 @@ const seedPosts = [
       "The website reads public GitHub records into the board automatically. Do not post private payment account details, wallet files, seed phrases, Discord tokens, or remote access screenshots.",
       "",
       "Sending 09C is done with the native btc09 wallet, not MetaMask or Phantom:",
-      "`btc09 send -to ADDRESS -amount 100 -seeds 178.128.105.41:9009`",
+      "`btc09 send -to ADDRESS -amount 100 -seeds seed.btc09.org:9009`",
       "",
       "Rules:",
       "1. Trade small first.",
@@ -407,8 +407,8 @@ const seedPosts = [
     content: [
       "Current public endpoints",
       "",
-      "- Seeds: 178.128.105.41:9009, 103.80.18.140:9009, 108.190.240.138:9009",
-      "- Explorer: https://explorer.btc09.178.128.105.41.sslip.io",
+      "- Seeds: seed.btc09.org:9009, 178.128.105.41:9009, 103.80.18.140:9009, 108.190.240.138:9009",
+      "- Explorer: https://explorer.btc09.org",
       "- Public pool: https://bitcoin09.tutuit.xyz",
       "",
       "Post new pools or reliable nodes here with host, port, fee/payout details, and operator contact.",

@@ -10,8 +10,8 @@ Argon2id instead of SHA-256. Normal CPUs can mine it, and the 64 MiB memory
 cost is meant to reduce the easy ASIC/GPU advantage that took over Bitcoin.
 
 ```text
-site:     https://btc09.178.128.105.41.sslip.io
-explorer: https://explorer.btc09.178.128.105.41.sslip.io
+site:     https://btc09.org
+explorer: https://explorer.btc09.org
 discord:  https://discord.gg/fUuGzwRTzP
 release:  https://github.com/krutftw/bitcoin09/releases/latest
 ```
@@ -83,7 +83,7 @@ Wallet stuff:
 ```
 ./btc09 wallet list
 ./btc09 wallet new
-./btc09 send -to ADDRESS -amount 1.5 -seeds 178.128.105.41:9009
+./btc09 send -to ADDRESS -amount 1.5 -seeds seed.btc09.org:9009
 ```
 
 `-seeds` is plural and means peer nodes to broadcast through. It is not a wallet
@@ -155,6 +155,7 @@ with the message "the coin that you can mine like it's 2009", nonce 20214.
 Default bootstrap seeds are built into the client:
 
 ```text
+seed.btc09.org:9009
 178.128.105.41:9009
 103.80.18.140:9009
 108.190.240.138:9009
@@ -163,15 +164,15 @@ Default bootstrap seeds are built into the client:
 Live block explorer:
 
 ```text
-https://explorer.btc09.178.128.105.41.sslip.io
+https://explorer.btc09.org
 ```
 
 Supply/status APIs:
 
 ```text
-https://explorer.btc09.178.128.105.41.sslip.io/api/status
-https://explorer.btc09.178.128.105.41.sslip.io/api/supply
-https://explorer.btc09.178.128.105.41.sslip.io/api/circulating_supply
+https://explorer.btc09.org/api/status
+https://explorer.btc09.org/api/supply
+https://explorer.btc09.org/api/circulating_supply
 ```
 
 `/api/circulating_supply` returns the plain circulating supply number. It
@@ -198,7 +199,7 @@ deposit address, and release after both sides confirm. Payment in USDT/BTC/fiat
 still happens directly between buyer and seller, so disputes still need human
 review.
 
-The public OTC board at https://btc09.178.128.105.41.sslip.io/markets.html lets
+The public OTC board at https://btc09.org/markets.html lets
 users draft buy offers, sell offers, and completed-trade references on the
 website, copy a Discord post, and open a prefilled GitHub issue for the public
 record. It is not an exchange, it does not set an official price, and there are
@@ -243,15 +244,15 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.17 is current. The node, miner, wallet, P2P sync, built-in seeds, block
+v0.1.18 is current. The node, miner, wallet, P2P sync, built-in seeds, block
 explorer and supply APIs are live.
 
 Network:
 
 ```text
-site:     https://btc09.178.128.105.41.sslip.io
-seeds:    178.128.105.41:9009, 103.80.18.140:9009, 108.190.240.138:9009
-explorer: https://explorer.btc09.178.128.105.41.sslip.io
+site:     https://btc09.org
+seeds:    seed.btc09.org:9009, 178.128.105.41:9009, 103.80.18.140:9009, 108.190.240.138:9009
+explorer: https://explorer.btc09.org
 release:  https://github.com/krutftw/bitcoin09/releases/latest
 discord:  https://discord.gg/fUuGzwRTzP
 ```

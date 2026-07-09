@@ -4,10 +4,10 @@ import "testing"
 
 func TestDefaultMainnetSeeds(t *testing.T) {
 	seeds := defaultSeeds(paramsFor("mainnet"))
-	if len(seeds) < 3 {
-		t.Fatalf("default mainnet seeds = %v, want at least 3", seeds)
+	if len(seeds) < 4 {
+		t.Fatalf("default mainnet seeds = %v, want at least 4", seeds)
 	}
-	for _, seed := range []string{"178.128.105.41:9009", "103.80.18.140:9009", "108.190.240.138:9009"} {
+	for _, seed := range []string{"seed.btc09.org:9009", "178.128.105.41:9009", "103.80.18.140:9009", "108.190.240.138:9009"} {
 		found := false
 		for _, got := range seeds {
 			if got == seed {
