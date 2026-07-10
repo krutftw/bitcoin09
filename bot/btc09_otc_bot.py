@@ -45,6 +45,12 @@ BTC09_DATADIR = os.environ.get("BTC09_DATADIR", "/opt/btc09/data")
 EXPLORER_URL = os.environ.get("EXPLORER_URL", "http://localhost:8009").rstrip("/")
 DB_PATH = os.environ.get("DB_PATH", "/opt/btc09/otc_bot.db")
 FEE_PERCENT = Decimal(os.environ.get("FEE_PERCENT", "1.0"))
+TRADING_ENABLED = os.environ.get("OTC_TRADING_ENABLED", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 TX_FEE = os.environ.get("BTC09_TX_FEE", "0.0001")
 ORDER_TIMEOUT_SECONDS = int(os.environ.get("ORDER_TIMEOUT_SECONDS", "86400"))
 PUBLIC_FEED_PATH = os.environ.get("PUBLIC_FEED_PATH", "/opt/btc09/public/otc-bot-feed.json")
@@ -57,6 +63,18 @@ BOT_LOOP: asyncio.AbstractEventLoop | None = None
 
 def now_ts() -> int:
     return int(time.time())
+
+
+async def require_trading_enabled(interaction: discord.Interaction) -> bool:
+    if TRADING_ENABLED:
+        return True
+    await interaction.response.send_message(
+        "New OTC escrow actions are temporarily paused while the safer WTS/WTB "
+        "trade system completes its controlled pilot. Do not send 09C to an old "
+        "deposit address. Follow #announcements for the verified launch.",
+        ephemeral=True,
+    )
+    return False
 
 
 def iso_ts(ts: int | None) -> str | None:
@@ -642,6 +660,8 @@ async def on_ready() -> None:
 @bot.tree.command(name="sell", description="Create a 09C sell order")
 @app_commands.describe(amount="Amount of 09C to sell", price="Total price", currency="Payment currency, e.g. USDT")
 async def sell(interaction: discord.Interaction, amount: str, price: str, currency: str) -> None:
+    if not await require_trading_enabled(interaction):
+        return
     ensure_user(interaction.user)
     try:
         amt = parse_coin_amount(amount, minimum=MIN_ORDER)
@@ -712,6 +732,8 @@ async def sell(interaction: discord.Interaction, amount: str, price: str, curren
 @bot.tree.command(name="deposit", description="Verify a seller deposit")
 @app_commands.describe(order_id="Order ID")
 async def deposit(interaction: discord.Interaction, order_id: int) -> None:
+    if not await require_trading_enabled(interaction):
+        return
     ensure_user(interaction.user)
     row = fetch_order(order_id)
     if not row:
@@ -792,6 +814,8 @@ async def orders(interaction: discord.Interaction) -> None:
 @bot.tree.command(name="buy", description="Accept an open sell order")
 @app_commands.describe(order_id="Order ID")
 async def buy(interaction: discord.Interaction, order_id: int) -> None:
+    if not await require_trading_enabled(interaction):
+        return
     ensure_user(interaction.user)
     buyer_wallet = get_user_wallet(interaction.user.id)
     if not buyer_wallet:
@@ -856,6 +880,8 @@ async def buy(interaction: discord.Interaction, order_id: int) -> None:
 @bot.tree.command(name="confirm", description="Confirm your side of a trade")
 @app_commands.describe(order_id="Order ID")
 async def confirm(interaction: discord.Interaction, order_id: int) -> None:
+    if not await require_trading_enabled(interaction):
+        return
     ensure_user(interaction.user)
     uid = interaction.user.id
 
@@ -943,6 +969,8 @@ async def confirm(interaction: discord.Interaction, order_id: int) -> None:
 @bot.tree.command(name="cancel", description="Cancel an order")
 @app_commands.describe(order_id="Order ID")
 async def cancel(interaction: discord.Interaction, order_id: int) -> None:
+    if not await require_trading_enabled(interaction):
+        return
     ensure_user(interaction.user)
     row = fetch_order(order_id)
     if not row:
@@ -1079,6 +1107,8 @@ async def stats(interaction: discord.Interaction) -> None:
 @bot.tree.command(name="dispute", description="Open a dispute on a trade")
 @app_commands.describe(order_id="Order ID")
 async def dispute(interaction: discord.Interaction, order_id: int) -> None:
+    if not await require_trading_enabled(interaction):
+        return
     ensure_user(interaction.user)
     row = fetch_order(order_id)
     if not row:
@@ -1148,6 +1178,9 @@ async def admin_cmd(interaction: discord.Interaction, action: str, order_id: int
         await interaction.response.send_message("Actions: `resolve`, `stats`, `orders`.", ephemeral=True)
         return
 
+    if not await require_trading_enabled(interaction):
+        return
+
     winner = winner.strip().lower()
     if winner not in ("buyer", "seller") or not order_id:
         await interaction.response.send_message("Usage: `/admin resolve <order_id> <buyer|seller>`.", ephemeral=True)
@@ -1202,6 +1235,8 @@ async def admin_cmd(interaction: discord.Interaction, action: str, order_id: int
 @bot.tree.command(name="withdraw", description="Admin: withdraw recorded escrow fees")
 @app_commands.describe(amount="Amount of 09C fees to withdraw", address="Destination 09C address")
 async def withdraw(interaction: discord.Interaction, amount: str, address: str) -> None:
+    if not await require_trading_enabled(interaction):
+        return
     if not is_admin(interaction.user.id):
         await interaction.response.send_message("Admin only.", ephemeral=True)
         return
@@ -1247,17 +1282,12 @@ async def help_cmd(interaction: discord.Interaction) -> None:
             "\n".join(
                 [
                     "`/setaddress <addr>` - set your 09C receive/refund address.",
-                    "`/sell <amount> <price> <currency>` - create a sell order.",
-                    "`/deposit <order_id>` - check the order deposit address.",
+                    "New escrow orders are temporarily paused during the controlled WTS/WTB pilot.",
                     "`/orders` - list open orders.",
-                    "`/buy <order_id>` - accept an order.",
-                    "`/confirm <order_id>` - confirm your side.",
-                    "`/cancel <order_id>` - cancel when allowed.",
-                    "`/dispute <order_id>` - call admin in.",
                     "`/balance` - show escrow accounting.",
                     "",
                     "The bot holds 09C only. Payment in USDT/BTC/fiat happens between buyer and seller.",
-                    "Start small. This is early hot-wallet escrow, not an exchange.",
+                    "Do not send 09C to an old deposit address. The verified pilot launch will be posted in #announcements.",
                 ]
             ),
         ),
@@ -1276,6 +1306,9 @@ async def notify_timeout(order_id: int) -> None:
 
 def deposit_checker() -> None:
     while True:
+        if not TRADING_ENABLED:
+            time.sleep(60)
+            continue
         try:
             cutoff = now_ts() - ORDER_TIMEOUT_SECONDS
             with db() as conn:
@@ -1338,6 +1371,7 @@ def main() -> None:
     print(f"[INFO] BTC09_DATADIR={BTC09_DATADIR}")
     print(f"[INFO] Explorer={EXPLORER_URL}")
     print(f"[INFO] Admin count={len(ADMIN_IDS)}")
+    print(f"[INFO] OTC trading enabled={TRADING_ENABLED}")
     thread = threading.Thread(target=deposit_checker, daemon=True)
     thread.start()
     bot.run(BOT_TOKEN)
