@@ -787,6 +787,7 @@ function withoutGeneratedComponentIds(value) {
   return Object.fromEntries(
     Object.entries(value)
       .filter(([key]) => key !== "id")
+      .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, child]) => [key, withoutGeneratedComponentIds(child)]),
   );
 }
