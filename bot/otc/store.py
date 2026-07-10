@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
@@ -119,18 +120,41 @@ _SCHEMA_STATEMENTS = (
     """,
 )
 
+_REQUIRED_SCHEMA_OBJECTS = {
+    "schema_meta": ("table", _SCHEMA_STATEMENTS[0]),
+    "users": ("table", _SCHEMA_STATEMENTS[1]),
+    "orders": ("table", _SCHEMA_STATEMENTS[2]),
+    "transfers": ("table", _SCHEMA_STATEMENTS[3]),
+    "orders_by_state": ("index", _SCHEMA_STATEMENTS[4]),
+    "orders_by_deposit": ("index", _SCHEMA_STATEMENTS[5]),
+    "one_active_order_transfer": ("index", _SCHEMA_STATEMENTS[6]),
+    "audit_events": ("table", _SCHEMA_STATEMENTS[7]),
+}
+
+_PROTOTYPE_USERS_INFO = (
+    ("user_id", "INTEGER", 0, None, 1),
+    ("username", "TEXT", 0, None, 0),
+    ("wallet_addr", "TEXT", 0, None, 0),
+    ("created_at", "INTEGER", 0, None, 0),
+    ("updated_at", "INTEGER", 0, None, 0),
+)
+
 
 class Store:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
 
     def connect(self) -> sqlite3.Connection:
+        return self._connect(apply_wal=True)
+
+    def _connect(self, *, apply_wal: bool) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         try:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA busy_timeout=30000")
             conn.execute("PRAGMA foreign_keys=ON")
-            conn.execute("PRAGMA journal_mode=WAL")
+            if apply_wal:
+                conn.execute("PRAGMA journal_mode=WAL")
         except BaseException:
             conn.close()
             raise
@@ -138,33 +162,24 @@ class Store:
 
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = self.connect()
+        conn = self._connect(apply_wal=False)
         try:
             conn.execute("BEGIN IMMEDIATE")
-            version = self._existing_schema_version(conn)
-            if version is not None and version > SCHEMA_VERSION:
-                raise UnsupportedSchemaVersion(
-                    f"database schema version {version} is newer than supported "
-                    f"version {SCHEMA_VERSION}"
-                )
+            self._preflight_initialization(conn)
+            conn.execute("ROLLBACK")
 
-            if self._is_prototype_orders_table(conn):
-                order_count = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
-                if order_count:
-                    raise MigrationBlocked(
-                        "cannot migrate the prototype database because it contains "
-                        "existing orders; migrate those orders explicitly"
-                    )
-                if self._table_exists(conn, "orders_v2_archive"):
-                    raise MigrationBlocked(
-                        "cannot migrate the prototype database because the migration "
-                        "archive already exists"
-                    )
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("BEGIN IMMEDIATE")
+            migrate_orders, migrate_users = self._preflight_initialization(conn)
+
+            if migrate_orders:
                 conn.execute("ALTER TABLE orders RENAME TO orders_v2_archive")
+            if migrate_users:
                 self._migrate_prototype_users(conn)
 
             for statement in _SCHEMA_STATEMENTS:
                 conn.execute(statement)
+            self._validate_complete_schema(conn)
             conn.execute(
                 """
                 INSERT INTO schema_meta(id, version) VALUES(1, ?)
@@ -421,6 +436,164 @@ class Store:
             is not None
         )
 
+    @staticmethod
+    def _schema_object(
+        conn: sqlite3.Connection, name: str
+    ) -> sqlite3.Row | None:
+        return conn.execute(
+            "SELECT type, name, sql FROM sqlite_master WHERE name = ?", (name,)
+        ).fetchone()
+
+    @staticmethod
+    def _canonical_schema_sql(sql: str) -> str:
+        normalized = re.sub(r"\s+", " ", sql.strip().removesuffix(";").strip())
+        normalized = re.sub(r"\s*([(),])\s*", r"\1", normalized)
+        normalized = normalized.replace(
+            "CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ", 1
+        )
+        return normalized.replace(
+            "CREATE INDEX IF NOT EXISTS ", "CREATE INDEX ", 1
+        ).replace(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ", "CREATE UNIQUE INDEX ", 1
+        )
+
+    @classmethod
+    def _required_object_matches(
+        cls, row: sqlite3.Row, name: str
+    ) -> bool:
+        expected_type, expected_sql = _REQUIRED_SCHEMA_OBJECTS[name]
+        actual_sql = row["sql"]
+        return (
+            row["type"] == expected_type
+            and type(actual_sql) is str
+            and cls._canonical_schema_sql(actual_sql)
+            == cls._canonical_schema_sql(expected_sql)
+        )
+
+    @classmethod
+    def _validate_existing_required_object(
+        cls, conn: sqlite3.Connection, name: str
+    ) -> None:
+        row = cls._schema_object(conn, name)
+        if row is None:
+            return
+        if not cls._required_object_matches(row, name):
+            expected_type = _REQUIRED_SCHEMA_OBJECTS[name][0]
+            raise MigrationBlocked(
+                f"cannot initialize database because {name} {expected_type} does "
+                "not match the required v3 definition"
+            )
+
+    @classmethod
+    def _preflight_initialization(
+        cls, conn: sqlite3.Connection
+    ) -> tuple[bool, bool]:
+        cls._validate_existing_required_object(conn, "schema_meta")
+        version = cls._existing_schema_version(conn)
+        if version is not None and version > SCHEMA_VERSION:
+            raise UnsupportedSchemaVersion(
+                f"database schema version {version} is newer than supported "
+                f"version {SCHEMA_VERSION}"
+            )
+        return cls._preflight_schema(conn)
+
+    @classmethod
+    def _preflight_schema(cls, conn: sqlite3.Connection) -> tuple[bool, bool]:
+        migrate_orders = cls._preflight_orders(conn)
+        migrate_users = cls._preflight_users(conn)
+        for name in (
+            "transfers",
+            "audit_events",
+            "orders_by_state",
+            "orders_by_deposit",
+            "one_active_order_transfer",
+        ):
+            cls._validate_existing_required_object(conn, name)
+        return migrate_orders, migrate_users
+
+    @classmethod
+    def _preflight_orders(cls, conn: sqlite3.Connection) -> bool:
+        row = cls._schema_object(conn, "orders")
+        if row is None:
+            return False
+        if cls._required_object_matches(row, "orders"):
+            return False
+        if row["type"] != "table":
+            cls._validate_existing_required_object(conn, "orders")
+        columns = {item["name"] for item in conn.execute("PRAGMA table_info(orders)")}
+        if "side" in columns:
+            cls._validate_existing_required_object(conn, "orders")
+
+        order_count = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+        if order_count:
+            raise MigrationBlocked(
+                "cannot migrate the prototype database because it contains existing "
+                "orders; migrate those orders explicitly"
+            )
+        if cls._schema_object(conn, "orders_v2_archive") is not None:
+            raise MigrationBlocked(
+                "cannot migrate the prototype database because the migration archive "
+                "already exists"
+            )
+        return True
+
+    @classmethod
+    def _preflight_users(cls, conn: sqlite3.Connection) -> bool:
+        row = cls._schema_object(conn, "users")
+        if row is None:
+            return False
+        if cls._required_object_matches(row, "users"):
+            return False
+        if row["type"] != "table" or not cls._has_prototype_users_shape(conn):
+            cls._validate_existing_required_object(conn, "users")
+        if cls._schema_object(conn, "users_v2_migration") is not None:
+            raise MigrationBlocked(
+                "cannot migrate the prototype database because a temporary users "
+                "table already exists"
+            )
+        invalid_user = conn.execute(
+            """
+            SELECT user_id FROM users
+            WHERE username IS NULL OR created_at IS NULL OR updated_at IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if invalid_user is not None:
+            raise MigrationBlocked(
+                "cannot migrate the prototype database because user records are "
+                "missing a username or timestamp"
+            )
+        return True
+
+    @staticmethod
+    def _has_prototype_users_shape(conn: sqlite3.Connection) -> bool:
+        actual = tuple(
+            (
+                row["name"],
+                row["type"].upper(),
+                row["notnull"],
+                row["dflt_value"],
+                row["pk"],
+            )
+            for row in conn.execute("PRAGMA table_info(users)")
+        )
+        return actual == _PROTOTYPE_USERS_INFO
+
+    @classmethod
+    def _validate_complete_schema(cls, conn: sqlite3.Connection) -> None:
+        for name, (expected_type, _) in _REQUIRED_SCHEMA_OBJECTS.items():
+            row = cls._schema_object(conn, name)
+            if row is None:
+                raise MigrationBlocked(
+                    f"cannot initialize database because required v3 {expected_type} "
+                    f"{name} is missing"
+                )
+            if not cls._required_object_matches(row, name):
+                raise MigrationBlocked(
+                    f"cannot initialize database because {name} {expected_type} does "
+                    "not match the required v3 definition"
+                )
+
     @classmethod
     def _existing_schema_version(cls, conn: sqlite3.Connection) -> int | None:
         if not cls._table_exists(conn, "schema_meta"):
@@ -434,13 +607,6 @@ class Store:
         if type(version) is not int:
             raise RuntimeError("database schema version is not an integer")
         return version
-
-    @classmethod
-    def _is_prototype_orders_table(cls, conn: sqlite3.Connection) -> bool:
-        if not cls._table_exists(conn, "orders"):
-            return False
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(orders)")}
-        return "side" not in columns
 
     @classmethod
     def _migrate_prototype_users(cls, conn: sqlite3.Connection) -> None:

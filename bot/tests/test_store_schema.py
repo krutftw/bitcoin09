@@ -227,6 +227,30 @@ class StoreSchemaTests(unittest.TestCase):
                 conn.execute("SELECT version FROM schema_meta").fetchone(), sqlite3.Row
             )
 
+    def test_wal_activation_failure_does_not_commit_or_stamp_schema(self):
+        class WalDeniedStore(Store):
+            def _connect(self, *, apply_wal):
+                conn = super()._connect(apply_wal=False)
+
+                def authorizer(action, arg1, arg2, database, source):
+                    if (
+                        action == sqlite3.SQLITE_PRAGMA
+                        and arg1 == "journal_mode"
+                        and arg2 == "WAL"
+                    ):
+                        return sqlite3.SQLITE_DENY
+                    return sqlite3.SQLITE_OK
+
+                conn.set_authorizer(authorizer)
+                return conn
+
+        original_schema = self._schema_snapshot()
+        with self.assertRaises(sqlite3.DatabaseError):
+            WalDeniedStore(self.path).initialize()
+
+        self.assertEqual(self._schema_snapshot(), original_schema)
+        self.assertEqual(self._journal_mode(), "delete")
+
     def test_empty_prototype_database_migrates_and_preserves_legacy_rows(self):
         with managed_connection(sqlite3.connect(self.path)) as conn:
             conn.executescript(PROTOTYPE_SCHEMA)
@@ -285,6 +309,7 @@ class StoreSchemaTests(unittest.TestCase):
                 (7, "1", "100", "AUD", "open", 1, 1),
             )
 
+        self.assertEqual(self._journal_mode(), "delete")
         original_schema = self._schema_snapshot()
         with self.assertRaisesRegex(
             MigrationBlocked, "cannot migrate.*existing order"
@@ -292,6 +317,7 @@ class StoreSchemaTests(unittest.TestCase):
             Store(self.path).initialize()
 
         self.assertEqual(self._schema_snapshot(), original_schema)
+        self.assertEqual(self._journal_mode(), "delete")
         with managed_connection(sqlite3.connect(self.path)) as conn:
             self.assertEqual(
                 conn.execute(
@@ -339,6 +365,139 @@ class StoreSchemaTests(unittest.TestCase):
                 ).fetchone()
             )
 
+    def test_users_only_prototype_with_compatible_rows_is_rebuilt(self):
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    wallet_addr TEXT,
+                    created_at INTEGER,
+                    updated_at INTEGER
+                )
+                """
+            )
+            conn.execute("INSERT INTO users VALUES (7, 'pilot', NULL, 1, 1)")
+
+        Store(self.path).initialize()
+
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            columns = {
+                row[1]: row for row in conn.execute("PRAGMA table_info(users)")
+            }
+            self.assertEqual(
+                conn.execute("SELECT * FROM users WHERE user_id = ?", (7,)).fetchone(),
+                (7, "pilot", None, 1, 1),
+            )
+            for column in ("username", "created_at", "updated_at"):
+                with self.subTest(column=column):
+                    self.assertEqual(columns[column][3], 1)
+
+    def test_users_only_prototype_with_null_row_is_blocked_without_mutation(self):
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    wallet_addr TEXT,
+                    created_at INTEGER,
+                    updated_at INTEGER
+                )
+                """
+            )
+            conn.execute("INSERT INTO users VALUES (7, NULL, NULL, 1, 1)")
+
+        original_schema = self._schema_snapshot()
+        self.assertEqual(self._journal_mode(), "delete")
+        with self.assertRaisesRegex(MigrationBlocked, "user records.*missing"):
+            Store(self.path).initialize()
+
+        self.assertEqual(self._schema_snapshot(), original_schema)
+        self.assertEqual(self._journal_mode(), "delete")
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(
+                conn.execute("SELECT * FROM users WHERE user_id = ?", (7,)).fetchone(),
+                (7, None, None, 1, 1),
+            )
+
+    def test_side_bearing_incomplete_orders_table_is_blocked_without_stamp(self):
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE orders (
+                    order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    side TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    deposit_addr TEXT,
+                    updated_at INTEGER NOT NULL
+                )
+                """
+            )
+
+        original_schema = self._schema_snapshot()
+        with self.assertRaisesRegex(MigrationBlocked, "orders table.*required v3"):
+            Store(self.path).initialize()
+
+        self.assertEqual(self._schema_snapshot(), original_schema)
+        self.assertEqual(self._journal_mode(), "delete")
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            self.assertIsNone(
+                conn.execute(
+                    "SELECT name FROM sqlite_master WHERE name = 'schema_meta'"
+                ).fetchone()
+            )
+
+    def test_wrong_required_index_is_blocked_without_mutation(self):
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            for name in (
+                "schema_meta",
+                "users",
+                "orders",
+                "transfers",
+                "audit_events",
+                "orders_by_deposit",
+                "one_active_order_transfer",
+            ):
+                conn.execute(EXPECTED_V3_SCHEMA_SQL[name])
+            conn.execute(
+                "CREATE INDEX orders_by_state ON orders(updated_at, state)"
+            )
+            conn.execute("INSERT INTO schema_meta VALUES (1, ?)", (SCHEMA_VERSION,))
+
+        original_schema = self._schema_snapshot()
+        with self.assertRaisesRegex(MigrationBlocked, "orders_by_state.*required v3"):
+            Store(self.path).initialize()
+
+        self.assertEqual(self._schema_snapshot(), original_schema)
+        self.assertEqual(self._journal_mode(), "delete")
+
+    def test_wrong_schema_meta_definition_is_blocked_without_stamp(self):
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE schema_meta (
+                    id INTEGER PRIMARY KEY,
+                    version INTEGER NOT NULL
+                );
+                INSERT INTO schema_meta VALUES (1, 3);
+                CREATE TABLE future_data (value TEXT NOT NULL);
+                INSERT INTO future_data VALUES ('keep me');
+                """
+            )
+
+        original_schema = self._schema_snapshot()
+        with self.assertRaisesRegex(MigrationBlocked, "schema_meta.*required v3"):
+            Store(self.path).initialize()
+
+        self.assertEqual(self._schema_snapshot(), original_schema)
+        self.assertEqual(self._journal_mode(), "delete")
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(
+                conn.execute("SELECT value FROM future_data").fetchone()[0], "keep me"
+            )
+
     def test_initialize_is_idempotent_and_keeps_archive_as_evidence(self):
         with managed_connection(sqlite3.connect(self.path)) as conn:
             conn.executescript(PROTOTYPE_SCHEMA)
@@ -373,6 +532,7 @@ class StoreSchemaTests(unittest.TestCase):
                 """
             )
 
+        self.assertEqual(self._journal_mode(), "delete")
         original_schema = self._schema_snapshot()
         with self.assertRaisesRegex(
             UnsupportedSchemaVersion, "version 4.*supported version 3"
@@ -380,6 +540,7 @@ class StoreSchemaTests(unittest.TestCase):
             Store(self.path).initialize()
 
         self.assertEqual(self._schema_snapshot(), original_schema)
+        self.assertEqual(self._journal_mode(), "delete")
         with managed_connection(sqlite3.connect(self.path)) as conn:
             self.assertEqual(
                 conn.execute("SELECT value FROM future_data").fetchone()[0], "keep me"
@@ -582,6 +743,10 @@ class StoreSchemaTests(unittest.TestCase):
                 ORDER BY type, name
                 """
             ).fetchall()
+
+    def _journal_mode(self):
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            return conn.execute("PRAGMA journal_mode").fetchone()[0]
 
 
 if __name__ == "__main__":
