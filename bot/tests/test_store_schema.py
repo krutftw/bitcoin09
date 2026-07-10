@@ -153,6 +153,103 @@ class StoreSchemaTests(unittest.TestCase):
             )
         return store, order_id
 
+    def create_capped_order(
+        self,
+        store,
+        *,
+        maker_id,
+        sequence,
+        max_total,
+        max_per_maker,
+    ):
+        return store.create_order(
+            **self.order_values(
+                maker_id=maker_id,
+                maker_name=f"Maker {maker_id}",
+                deposit_addr=f"capacity-deposit-{sequence}",
+                created_at=100 + sequence,
+                updated_at=100 + sequence,
+            ),
+            max_active_orders_total=max_total,
+            max_active_orders_per_maker=max_per_maker,
+        )
+
+    def test_active_order_total_and_per_maker_boundaries(self):
+        store = self.make_store()
+        self.create_capped_order(
+            store, maker_id=1, sequence=1, max_total=3, max_per_maker=2
+        )
+        self.create_capped_order(
+            store, maker_id=1, sequence=2, max_total=3, max_per_maker=2
+        )
+        with self.assertRaisesRegex(ValueError, "maker active order capacity"):
+            self.create_capped_order(
+                store, maker_id=1, sequence=3, max_total=3, max_per_maker=2
+            )
+        self.create_capped_order(
+            store, maker_id=2, sequence=4, max_total=3, max_per_maker=2
+        )
+        with self.assertRaisesRegex(ValueError, "total active order capacity"):
+            self.create_capped_order(
+                store, maker_id=3, sequence=5, max_total=3, max_per_maker=2
+            )
+        with managed_connection(store.connect()) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 3)
+            self.assertIsNone(
+                conn.execute("SELECT 1 FROM users WHERE user_id=3").fetchone()
+            )
+
+    def test_terminal_order_frees_active_capacity(self):
+        store = self.make_store()
+        order_id = self.create_capped_order(
+            store, maker_id=7, sequence=1, max_total=1, max_per_maker=1
+        )
+        with self.assertRaises(ValueError):
+            self.create_capped_order(
+                store, maker_id=8, sequence=2, max_total=1, max_per_maker=1
+            )
+        store.cancel_order(order_id=order_id, actor_id=7, now=200)
+        replacement = self.create_capped_order(
+            store, maker_id=7, sequence=3, max_total=1, max_per_maker=1
+        )
+        self.assertGreater(replacement, order_id)
+
+    def test_simultaneous_creates_cannot_race_past_total_capacity(self):
+        self.make_store()
+        barrier = threading.Barrier(2)
+        outcomes = []
+        outcome_lock = threading.Lock()
+
+        def create(maker_id):
+            store = Store(self.path)
+            barrier.wait(timeout=5)
+            try:
+                outcome = self.create_capped_order(
+                    store,
+                    maker_id=maker_id,
+                    sequence=maker_id,
+                    max_total=1,
+                    max_per_maker=1,
+                )
+            except BaseException as exc:
+                outcome = exc
+            with outcome_lock:
+                outcomes.append(outcome)
+
+        threads = [threading.Thread(target=create, args=(maker,)) for maker in (11, 12)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(5)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(sum(type(item) is int for item in outcomes), 1)
+        failures = [item for item in outcomes if isinstance(item, BaseException)]
+        self.assertEqual(len(failures), 1)
+        self.assertIsInstance(failures[0], ValueError)
+        self.assertIn("total active order capacity", str(failures[0]))
+        with managed_connection(Store(self.path).connect()) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 1)
+
     def add_user(self, conn, user_id, username, wallet):
         conn.execute(
             """

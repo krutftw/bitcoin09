@@ -979,6 +979,7 @@ type walletSnapshotJSON struct {
 	Network            string                    `json:"network"`
 	Stage              string                    `json:"stage"`
 	Tip                machineTip                `json:"tip"`
+	PrimaryAddress     string                    `json:"primary_address"`
 	Addresses          []string                  `json:"addresses"`
 	Outpoints          []wallet.SnapshotOutpoint `json:"outpoints"`
 	SpendableUnits     int64                     `json:"spendable_units"`
@@ -988,8 +989,9 @@ type walletSnapshotJSON struct {
 func walletSnapshotResponse(snapshot wallet.Snapshot) walletSnapshotJSON {
 	return walletSnapshotJSON{
 		OK: true, SchemaVersion: wallet.SchemaVersion, Network: snapshot.Network, Stage: "snapshot",
-		Tip:       machineTip{Height: snapshot.Tip.Height, Hash: fmt.Sprintf("%x", snapshot.Tip.Hash)},
-		Addresses: snapshot.Addresses, Outpoints: snapshot.Outpoints,
+		Tip:            machineTip{Height: snapshot.Tip.Height, Hash: fmt.Sprintf("%x", snapshot.Tip.Hash)},
+		PrimaryAddress: snapshot.PrimaryAddress,
+		Addresses:      snapshot.Addresses, Outpoints: snapshot.Outpoints,
 		SpendableUnits: snapshot.SpendableUnits, WalletSnapshotHash: snapshot.WalletSnapshotHash,
 	}
 }

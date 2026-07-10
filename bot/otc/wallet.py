@@ -7,6 +7,7 @@ import os
 import re
 import struct
 import subprocess
+import stat
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -61,6 +62,129 @@ class WalletInvariantError(WalletError):
     """Trusted state contradicted a hard custody invariant."""
 
 
+class AllocationLockBusy(SafeSendFailure):
+    """Another process owns the wallet allocation recovery sequence."""
+
+
+class WalletAllocationLock:
+    """Crash-releasing advisory lock distinct from the Go wallet command lock."""
+
+    def __init__(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        acquire_timeout: float = 5.0,
+        poll_interval: float = 0.05,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        resolved = os.path.abspath(os.fspath(path))
+        if resolved != os.fspath(path) or not os.path.isabs(resolved):
+            raise ValueError("allocation lock path must be absolute")
+        if (
+            type(acquire_timeout) not in {int, float}
+            or not math.isfinite(acquire_timeout)
+            or not 0.05 <= acquire_timeout <= 60
+            or type(poll_interval) not in {int, float}
+            or not math.isfinite(poll_interval)
+            or not 0.001 <= poll_interval <= min(1.0, acquire_timeout)
+        ):
+            raise ValueError("allocation lock timing is invalid")
+        self.path = resolved
+        self.acquire_timeout = float(acquire_timeout)
+        self.poll_interval = float(poll_interval)
+        self._monotonic = monotonic
+        self._sleep = sleep
+        self._fd: int | None = None
+
+    def __enter__(self) -> "WalletAllocationLock":
+        parent = os.path.dirname(self.path)
+        if not os.path.isdir(parent):
+            raise SafeSendFailure("wallet allocation lock failed safely")
+        if os.name != "nt":
+            parent_mode = stat.S_IMODE(os.stat(parent, follow_symlinks=False).st_mode)
+            if parent_mode & 0o022:
+                raise SafeSendFailure("wallet allocation lock failed safely")
+        # The protected parent prevents path replacement; lstat covers systems
+        # without O_NOFOLLOW while O_NOFOLLOW closes the open-time race on POSIX.
+        if os.path.lexists(self.path) and stat.S_ISLNK(os.lstat(self.path).st_mode):
+            raise SafeSendFailure("wallet allocation lock failed safely")
+        flags = os.O_RDWR | os.O_CREAT
+        flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(self.path, flags, 0o600)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or (os.name != "nt" and info.st_nlink != 1):
+                raise OSError("allocation lock is not a single regular file")
+            if os.name != "nt":
+                os.fchmod(fd, 0o600)
+            elif info.st_size == 0:
+                os.write(fd, b"\0")
+                os.fsync(fd)
+            deadline = self._monotonic() + self.acquire_timeout
+            while True:
+                try:
+                    self._try_lock(fd)
+                    self._fd = fd
+                    return self
+                except BlockingIOError:
+                    if self._monotonic() >= deadline:
+                        raise AllocationLockBusy(
+                            "wallet address allocation is busy"
+                        ) from None
+                    self._sleep(
+                        min(self.poll_interval, max(0.0, deadline - self._monotonic()))
+                    )
+        except AllocationLockBusy:
+            if "fd" in locals():
+                os.close(fd)
+            raise
+        except Exception:
+            if "fd" in locals():
+                os.close(fd)
+            raise SafeSendFailure("wallet allocation lock failed safely") from None
+        except BaseException:
+            if "fd" in locals():
+                self._fd = None
+                try:
+                    os.close(fd)
+                except BaseException:
+                    pass
+            raise
+
+    @staticmethod
+    def _try_lock(fd: int) -> None:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise BlockingIOError from exc
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        fd, self._fd = self._fd, None
+        if fd is None:
+            return
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
 @dataclass(frozen=True, slots=True)
 class WalletOutpoint:
     outpoint: str
@@ -75,6 +199,7 @@ class WalletOutpoint:
 class WalletSnapshot:
     network: str
     tip: Tip
+    primary_address: str
     addresses: tuple[str, ...]
     outpoints: tuple[WalletOutpoint, ...]
     spendable_units: int
@@ -148,6 +273,7 @@ class Wallet:
     ) -> None:
         self.binary_path = _absolute_path(binary_path, "wallet binary")
         self.wallet_path = _absolute_path(wallet_path, "wallet file")
+        self.allocation_lock_path = self.wallet_path + ".allocation.lock"
         self.data_dir = _absolute_path(data_dir, "chain data directory")
         if network not in (MAINNET, REGTEST):
             raise ValueError("wallet network is not canonical")
@@ -172,6 +298,14 @@ class Wallet:
         self._runner = _runner or _run_subprocess
         self._monotonic = _monotonic
         self._sleep = _sleep
+
+    def allocation_lock(self, *, timeout: float = 5.0) -> WalletAllocationLock:
+        return WalletAllocationLock(
+            self.allocation_lock_path,
+            acquire_timeout=timeout,
+            monotonic=self._monotonic,
+            sleep=self._sleep,
+        )
 
     def new_address(self) -> str:
         payload = self._invoke(
@@ -772,6 +906,7 @@ def _parse_snapshot(
             "network",
             "stage",
             "tip",
+            "primary_address",
             "addresses",
             "outpoints",
             "spendable_units",
@@ -790,6 +925,9 @@ def _parse_snapshot(
         raise _ContractError
     addresses = tuple(_address(item) for item in raw_addresses)
     if tuple(sorted(addresses)) != addresses or len(set(addresses)) != len(addresses):
+        raise _ContractError
+    primary_address = _address(payload["primary_address"])
+    if addresses.count(primary_address) != 1:
         raise _ContractError
     raw_outpoints = payload["outpoints"]
     if not isinstance(raw_outpoints, list):
@@ -831,6 +969,7 @@ def _parse_snapshot(
     snapshot = WalletSnapshot(
         network,
         tip,
+        primary_address,
         addresses,
         outpoints,
         spendable,
@@ -846,6 +985,9 @@ def _snapshot_hash(snapshot: WalletSnapshot) -> str:
         raise _ContractError
     tip = _tip_value(snapshot.tip)
     if not 1 <= len(snapshot.addresses) <= MAX_WALLET_ADDRESSES:
+        raise _ContractError
+    primary_address = _address(snapshot.primary_address)
+    if snapshot.addresses.count(primary_address) != 1:
         raise _ContractError
     if (
         tuple(sorted(snapshot.addresses)) != snapshot.addresses
@@ -880,7 +1022,11 @@ def _snapshot_hash(snapshot: WalletSnapshot) -> str:
     if total != snapshot.spendable_units:
         raise _ContractError
     preimage = _snapshot_hash_preimage_fields(
-        snapshot.network, tip, snapshot.addresses, tuple(fields)
+        snapshot.network,
+        tip,
+        snapshot.primary_address,
+        snapshot.addresses,
+        tuple(fields),
     )
     return hashlib.sha256(preimage).hexdigest()
 
@@ -888,6 +1034,7 @@ def _snapshot_hash(snapshot: WalletSnapshot) -> str:
 def _snapshot_hash_preimage_fields(
     network: str,
     tip: Tip,
+    primary_address: str,
     addresses: Sequence[str],
     outpoints: Sequence[tuple[str, int, int, int]],
 ) -> bytes:
@@ -903,11 +1050,23 @@ def _snapshot_hash_preimage_fields(
         or len(set(canonical_addresses)) != len(canonical_addresses)
     ):
         raise _ContractError
-    encoded = bytearray(b"btc09-wallet-snapshot-v1\0")
+    try:
+        primary_bytes = primary_address.encode("ascii")
+    except (AttributeError, UnicodeEncodeError):
+        raise _ContractError from None
+    if (
+        not primary_bytes
+        or len(primary_bytes) > 0xFFFF
+        or canonical_addresses.count(primary_address) != 1
+    ):
+        raise _ContractError
+    encoded = bytearray(b"btc09-wallet-snapshot-v2\0")
     encoded.extend(struct.pack(">H", len(network_bytes)))
     encoded.extend(network_bytes)
     encoded.extend(bytes.fromhex(anchor.hash))
     encoded.extend(struct.pack(">Q", anchor.height))
+    encoded.extend(struct.pack(">H", len(primary_bytes)))
+    encoded.extend(primary_bytes)
     encoded.extend(struct.pack(">I", len(canonical_addresses)))
     for owner in canonical_addresses:
         if not isinstance(owner, str):

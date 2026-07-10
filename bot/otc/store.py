@@ -13,7 +13,16 @@ from pathlib import Path
 from typing import Any
 
 from bot.otc.domain import (
+    DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_PER_SELLER,
+    DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_TOTAL,
+    DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_PER_SELLER,
+    DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL,
+    DEFAULT_MAX_ACTIVE_ORDERS_PER_MAKER,
+    DEFAULT_MAX_ACTIVE_ORDERS_TOTAL,
+    MAX_CONFIGURABLE_ACTIVE_ORDERS_TOTAL,
+    MAX_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL,
     MAX_09C_UNITS,
+    TERMINAL_ORDER_STATES,
     FeeQuote,
     OrderSide,
     OrderState,
@@ -23,6 +32,8 @@ from bot.otc.domain import (
 )
 
 SCHEMA_VERSION = 4
+PUBLIC_TERMINAL_HISTORY_LIMIT = 100
+_PUBLIC_TERMINAL_STATES = tuple(sorted(TERMINAL_ORDER_STATES))
 
 
 class MigrationBlocked(RuntimeError):
@@ -600,6 +611,209 @@ class Store:
         finally:
             conn.close()
 
+    def public_feed_snapshot(self) -> Mapping[str, Any]:
+        """Read the public market and every DB health fact from one WAL snapshot."""
+
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN")
+            orders = tuple(
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT * FROM (
+                      SELECT order_id,side,state,net_amount_units,total_price,
+                        settlement_asset,settlement_network,payment_method,
+                        created_at,updated_at,matched_at,completed_at
+                      FROM orders
+                      WHERE state NOT IN (?,?,?,?) AND state!='address_pending'
+                      UNION ALL
+                      SELECT * FROM (
+                        SELECT order_id,side,state,net_amount_units,total_price,
+                          settlement_asset,settlement_network,payment_method,
+                          created_at,updated_at,matched_at,completed_at
+                        FROM orders
+                        WHERE state IN (?,?,?,?)
+                        ORDER BY updated_at DESC,order_id DESC
+                        LIMIT ?
+                      )
+                    ) ORDER BY created_at,order_id
+                    """,
+                    (
+                        *_PUBLIC_TERMINAL_STATES,
+                        *_PUBLIC_TERMINAL_STATES,
+                        PUBLIC_TERMINAL_HISTORY_LIMIT,
+                    ),
+                ).fetchall()
+            )
+            self._public_feed_checkpoint("after_orders")
+            summary = {state: 0 for state in ("open", "matched", "completed", "disputed")}
+            for row in conn.execute(
+                """
+                SELECT state,COUNT(*) AS order_count FROM orders
+                WHERE state IN ('open','matched','completed','disputed')
+                GROUP BY state
+                """
+            ).fetchall():
+                summary[row["state"]] = int(row["order_count"])
+            integrity_row = conn.execute("PRAGMA integrity_check").fetchone()
+            integrity = (
+                integrity_row[0]
+                if integrity_row is not None and type(integrity_row[0]) is str
+                else "failed"
+            )
+            foreign_key_failures = len(
+                conn.execute("PRAGMA foreign_key_check").fetchall()
+            )
+            transfer_counts = {
+                state: conn.execute(
+                    "SELECT COUNT(*) FROM transfers WHERE state=?", (state,)
+                ).fetchone()[0]
+                for state in ("queued", "reserved", "prepared", "broadcast", "uncertain")
+            }
+            gross_fee_units = conn.execute(
+                """
+                SELECT COALESCE(SUM(earned_fee_units),0) FROM transfers
+                WHERE state='confirmed' AND kind IN ('release','resolve_buyer')
+                """
+            ).fetchone()[0]
+            encumbered_fee_units = conn.execute(
+                """
+                SELECT COALESCE(SUM(amount_units + network_fee_units),0)
+                FROM transfers WHERE kind='fee_withdrawal' AND state!='cancelled'
+                """
+            ).fetchone()[0]
+            credited_noncanonical_count = conn.execute(
+                """
+                SELECT COUNT(*) FROM deposit_credits
+                WHERE network=? AND credited_at IS NOT NULL AND current_best_chain=0
+                """,
+                (self.network,),
+            ).fetchone()[0]
+            unknown_spend_count = conn.execute(
+                """
+                SELECT COUNT(*) FROM deposit_credits c
+                WHERE c.network=? AND c.current_best_chain=1
+                  AND c.spent_by_txid IS NOT NULL
+                  AND NOT EXISTS(
+                    SELECT 1 FROM transfers t WHERE t.txid=c.spent_by_txid
+                  )
+                """,
+                (self.network,),
+            ).fetchone()[0]
+            provisional_restricted_units = conn.execute(
+                """
+                SELECT COALESCE(SUM(amount_units),0) FROM deposit_credits
+                WHERE network=? AND credited_at IS NULL
+                  AND current_best_chain=1 AND mature=1 AND spent_by_txid IS NULL
+                """,
+                (self.network,),
+            ).fetchone()[0]
+            latest_watched_scans = tuple(
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT watched.deposit_addr AS address,
+                      scan.tip_hash,scan.tip_height
+                    FROM (
+                      SELECT DISTINCT deposit_addr FROM orders
+                      WHERE deposit_addr IS NOT NULL
+                    ) watched
+                    LEFT JOIN deposit_scans scan ON scan.scan_id=(
+                      SELECT latest.scan_id FROM deposit_scans latest
+                      WHERE latest.network=?
+                        AND latest.address=watched.deposit_addr
+                      ORDER BY latest.scan_id DESC LIMIT 1
+                    )
+                    ORDER BY watched.deposit_addr
+                    """,
+                    (self.network,),
+                ).fetchall()
+            )
+            result = {
+                "orders": orders,
+                "summary": summary,
+                "integrity": "ok" if integrity.lower() == "ok" else "failed",
+                "foreign_key_integrity": (
+                    "ok" if foreign_key_failures == 0 else "failed"
+                ),
+                "customer_liability_units": self._customer_liability_conn(
+                    conn, network=self.network
+                ),
+                "pending_platform_outflow_units": self._pending_platform_outflow_conn(
+                    conn
+                ),
+                "provisional_restricted_units": self._nonnegative_aggregate(
+                    provisional_restricted_units,
+                    "provisional restricted units",
+                ),
+                "gross_fee_units": self._nonnegative_aggregate(
+                    gross_fee_units, "gross fee units"
+                ),
+                "available_fee_units": gross_fee_units - encumbered_fee_units,
+                "transfer_counts": transfer_counts,
+                "credited_noncanonical_count": credited_noncanonical_count,
+                "unknown_spend_count": unknown_spend_count,
+                "latest_watched_scans": latest_watched_scans,
+            }
+            self._public_feed_checkpoint("before_commit")
+            conn.execute("COMMIT")
+            return result
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def _public_feed_checkpoint(self, phase: str) -> None:
+        """Fault/concurrency seam proving public health uses one read snapshot."""
+
+    @staticmethod
+    def _check_deposit_allocation_budget_conn(
+        conn: sqlite3.Connection,
+        *,
+        seller_id: int,
+        now: int,
+        lifetime_total: int,
+        lifetime_per_seller: int,
+        daily_total: int,
+        daily_per_seller: int,
+    ) -> None:
+        limits = (lifetime_total, lifetime_per_seller, daily_total, daily_per_seller)
+        if any(type(value) is not int or value < 1 for value in limits):
+            raise ValueError("deposit allocation limits must be positive integers")
+        if lifetime_total > MAX_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL:
+            raise ValueError("deposit allocation lifetime total exceeds the hard maximum")
+        if lifetime_per_seller > lifetime_total or daily_total > lifetime_total:
+            raise ValueError("deposit allocation global limits are inconsistent")
+        if daily_per_seller > lifetime_per_seller or daily_per_seller > daily_total:
+            raise ValueError("deposit allocation seller limits are inconsistent")
+        window_start = max(0, now - 86_400 + 1)
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS lifetime_total,
+              COALESCE(SUM(CASE WHEN seller_id=? THEN 1 ELSE 0 END),0)
+                AS lifetime_seller,
+              COALESCE(SUM(CASE WHEN deposit_allocation_reserved_at>=?
+                THEN 1 ELSE 0 END),0) AS daily_total,
+              COALESCE(SUM(CASE WHEN seller_id=?
+                AND deposit_allocation_reserved_at>=? THEN 1 ELSE 0 END),0)
+                AS daily_seller
+            FROM orders WHERE deposit_allocation_reserved_at IS NOT NULL
+            """,
+            (seller_id, window_start, seller_id, window_start),
+        ).fetchone()
+        checks = (
+            (row["lifetime_total"], lifetime_total, "global lifetime"),
+            (row["lifetime_seller"], lifetime_per_seller, "seller lifetime"),
+            (row["daily_total"], daily_total, "global daily"),
+            (row["daily_seller"], daily_per_seller, "seller daily"),
+        )
+        for used, limit, label in checks:
+            if used >= limit:
+                raise ValueError(f"deposit allocation {label} capacity reached")
+
     def create_order(
         self,
         *,
@@ -631,11 +845,29 @@ class Store:
         completed_at: int | None = None,
         funded_at: int | None = None,
         maker_wallet_addr: str | None = None,
+        max_active_orders_total: int = DEFAULT_MAX_ACTIVE_ORDERS_TOTAL,
+        max_active_orders_per_maker: int = DEFAULT_MAX_ACTIVE_ORDERS_PER_MAKER,
+        max_deposit_allocations_lifetime_total: int = DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL,
+        max_deposit_allocations_lifetime_per_seller: int = DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_PER_SELLER,
+        max_deposit_allocations_daily_total: int = DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_TOTAL,
+        max_deposit_allocations_daily_per_seller: int = DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_PER_SELLER,
     ) -> int:
         if type(side) is not OrderSide:
             raise ValueError("side must be a valid order side")
         if type(state) is not OrderState:
             raise ValueError("state must be a valid order state")
+        if (
+            type(max_active_orders_total) is not int
+            or not 1
+            <= max_active_orders_total
+            <= MAX_CONFIGURABLE_ACTIVE_ORDERS_TOTAL
+        ):
+            raise ValueError("total active order capacity is out of range")
+        if (
+            type(max_active_orders_per_maker) is not int
+            or not 1 <= max_active_orders_per_maker <= max_active_orders_total
+        ):
+            raise ValueError("maker active order capacity is out of range")
 
         self._require_integer(maker_id, "maker ID")
         quote = FeeQuote(
@@ -714,6 +946,38 @@ class Store:
         try:
             conn.execute("BEGIN IMMEDIATE")
             self._raise_if_unhealthy_conn(conn)
+            if state.value not in TERMINAL_ORDER_STATES:
+                terminal_states = tuple(sorted(TERMINAL_ORDER_STATES))
+                placeholders = ",".join("?" for _ in terminal_states)
+                total_active = conn.execute(
+                    f"SELECT COUNT(*) FROM orders WHERE state NOT IN ({placeholders})",
+                    terminal_states,
+                ).fetchone()[0]
+                if total_active >= max_active_orders_total:
+                    raise ValueError("total active order capacity reached")
+                maker_active = conn.execute(
+                    f"""
+                    SELECT COUNT(*) FROM orders
+                    WHERE maker_id=? AND state NOT IN ({placeholders})
+                    """,
+                    (maker_id, *terminal_states),
+                ).fetchone()[0]
+                if maker_active >= max_active_orders_per_maker:
+                    raise ValueError("maker active order capacity reached")
+            allocation_reserved_at = None
+            if state is OrderState.ADDRESS_PENDING:
+                if side is not OrderSide.SELL or deposit_addr is not None:
+                    raise ValueError("only WTS may reserve an initial deposit allocation")
+                self._check_deposit_allocation_budget_conn(
+                    conn,
+                    seller_id=maker_id,
+                    now=created_at,
+                    lifetime_total=max_deposit_allocations_lifetime_total,
+                    lifetime_per_seller=max_deposit_allocations_lifetime_per_seller,
+                    daily_total=max_deposit_allocations_daily_total,
+                    daily_per_seller=max_deposit_allocations_daily_per_seller,
+                )
+                allocation_reserved_at = created_at
             conn.execute(
                 """
                 INSERT INTO users(user_id, username, wallet_addr, created_at, updated_at)
@@ -738,12 +1002,13 @@ class Store:
                   seller_id, seller_name, net_amount_units, network_fee_units,
                   service_fee_units, deposit_required_units, total_price,
                   settlement_asset, settlement_network, payment_method, state,
-                  deposit_addr, buyer_confirmed, seller_confirmed,
+                  deposit_addr, deposit_allocation_reserved_at,
+                  deposit_allocated_at, buyer_confirmed, seller_confirmed,
                   deposit_deadline, matched_at, trade_deadline, disputed_at,
                   completed_at, funded_at, created_at, updated_at
                 ) VALUES (
                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                  ?, ?, ?, ?, ?, ?, ?
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -764,6 +1029,8 @@ class Store:
                     payment_method,
                     state.value,
                     deposit_addr,
+                    allocation_reserved_at,
+                    None,
                     buyer_confirmed,
                     seller_confirmed,
                     deposit_deadline,
@@ -779,6 +1046,17 @@ class Store:
             if cursor.lastrowid is None:
                 raise RuntimeError("database did not return the new order ID")
             order_id = int(cursor.lastrowid)
+            if allocation_reserved_at is not None:
+                self._append_audit_conn(
+                    conn,
+                    order_id=order_id,
+                    actor_id=maker_id,
+                    event_type="deposit_allocation_reserved",
+                    old_state=None,
+                    new_state="address_pending",
+                    detail={"side": side.value},
+                    created_at=created_at,
+                )
             conn.execute("COMMIT")
             return order_id
         except BaseException:
@@ -795,6 +1073,119 @@ class Store:
             return conn.execute(
                 "SELECT * FROM orders WHERE order_id = ?", (order_id,)
             ).fetchone()
+        finally:
+            conn.close()
+
+    def pending_address_order(self) -> Mapping[str, Any] | None:
+        conn = self.connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM orders WHERE state='address_pending' ORDER BY order_id"
+            ).fetchall()
+            if len(rows) > 1:
+                raise AccountingInvariantError("multiple address allocations are pending")
+            return None if not rows else dict(rows[0])
+        finally:
+            conn.close()
+
+    def attached_deposit_addresses(self) -> tuple[str, ...]:
+        conn = self.connect()
+        try:
+            return tuple(
+                row[0]
+                for row in conn.execute(
+                    """
+                    SELECT deposit_addr FROM orders WHERE deposit_addr IS NOT NULL
+                    ORDER BY order_id
+                    """
+                ).fetchall()
+            )
+        finally:
+            conn.close()
+
+    def attach_pending_deposit_address(
+        self,
+        *,
+        order_id: int,
+        address: str,
+        deposit_deadline: int,
+        now: int,
+    ) -> Mapping[str, Any]:
+        self._require_integer(order_id, "order ID")
+        self._require_integer(now, "allocation time")
+        self._require_integer(deposit_deadline, "deposit deadline")
+        if deposit_deadline <= now:
+            raise ValueError("deposit deadline must follow allocation")
+        address = self._bounded_text(address, "deposit address", 128)
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM orders WHERE order_id=? AND state='address_pending'",
+                (order_id,),
+            ).fetchone()
+            if row is None:
+                raise AccountingInvariantError("pending address order changed")
+            cursor = conn.execute(
+                """
+                UPDATE orders SET deposit_addr=?,deposit_allocated_at=?,
+                  deposit_deadline=?,state='awaiting_deposit',updated_at=?
+                WHERE order_id=? AND state='address_pending' AND deposit_addr IS NULL
+                  AND deposit_allocated_at IS NULL
+                """,
+                (address, now, deposit_deadline, now, order_id),
+            )
+            if cursor.rowcount != 1:
+                raise AccountingInvariantError("pending address attachment lost its race")
+            self._append_audit_conn(
+                conn,
+                order_id=order_id,
+                actor_id=row["seller_id"],
+                event_type="deposit_address_allocated",
+                old_state="address_pending",
+                new_state="awaiting_deposit",
+                detail={},
+                created_at=now,
+            )
+            self._address_allocation_checkpoint("before_commit")
+            conn.execute("COMMIT")
+            attached = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            return dict(attached)
+        except sqlite3.IntegrityError as exc:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise AccountingInvariantError(
+                "deposit address attachment violated durable identity"
+            ) from exc
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def _address_allocation_checkpoint(self, phase: str) -> None:
+        """Fault-injection seam for address attachment crash recovery."""
+
+    def deposit_allocation_usage(self, *, now: int) -> Mapping[str, int]:
+        self._require_integer(now, "allocation usage time")
+        window_start = max(0, now - 86_400 + 1)
+        conn = self.connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS lifetime_count,
+                  COALESCE(SUM(CASE WHEN deposit_allocation_reserved_at>=?
+                    THEN 1 ELSE 0 END),0) AS daily_count,
+                  COALESCE(SUM(CASE WHEN state='address_pending' THEN 1 ELSE 0 END),0)
+                    AS pending_count
+                FROM orders WHERE deposit_allocation_reserved_at IS NOT NULL
+                """,
+                (window_start,),
+            ).fetchone()
+            return {key: int(row[key]) for key in row.keys()}
         finally:
             conn.close()
 
@@ -1049,6 +1440,13 @@ class Store:
             issues = set(self._health_issues_conn(conn, network=self.network))
             if self._health_failure is not None:
                 issues.add("process_health_failure")
+            pending_count = conn.execute(
+                "SELECT COUNT(*) FROM orders WHERE state='address_pending'"
+            ).fetchone()[0]
+            if pending_count:
+                issues.add("address_allocation_pending")
+            if pending_count > 1:
+                issues.add("address_allocation_ambiguous")
             return tuple(sorted(issues))
         finally:
             conn.close()
@@ -1252,6 +1650,10 @@ class Store:
         now: int,
         actor_wallet: str | None = None,
         trade_deadline: int | None = None,
+        max_deposit_allocations_lifetime_total: int = DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL,
+        max_deposit_allocations_lifetime_per_seller: int = DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_PER_SELLER,
+        max_deposit_allocations_daily_total: int = DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_TOTAL,
+        max_deposit_allocations_daily_per_seller: int = DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_PER_SELLER,
     ) -> Mapping[str, Any] | None:
         self._require_integer(order_id, "order ID")
         self._require_integer(actor_id, "actor ID")
@@ -1319,33 +1721,66 @@ class Store:
                     ),
                 )
             else:
-                if preallocated_deposit_addr is None or deposit_deadline is None:
-                    raise ValueError(
-                        "WTB acceptance requires a fresh address and deposit deadline"
-                    )
-                if deposit_deadline <= now:
-                    raise ValueError("deposit deadline must be in the future")
                 if trade_deadline is not None:
                     raise ValueError("WTB trade deadline starts after deposit funding")
-                cursor = conn.execute(
-                    """
-                    UPDATE orders SET seller_id=?,seller_name=?,deposit_addr=?,
-                      deposit_deadline=?,state='awaiting_deposit',matched_at=?,updated_at=?
-                    WHERE order_id=? AND side='buy' AND state='open'
-                      AND seller_id IS NULL AND seller_name IS NULL
-                      AND deposit_addr IS NULL AND maker_id!=?
-                    """,
-                    (
-                        actor_id,
-                        actor_name,
-                        preallocated_deposit_addr,
-                        deposit_deadline,
-                        now,
-                        now,
-                        order_id,
-                        actor_id,
-                    ),
-                )
+                if preallocated_deposit_addr is None:
+                    if deposit_deadline is not None:
+                        raise ValueError("pending WTB allocation cannot start its deadline")
+                    if conn.execute(
+                        "SELECT 1 FROM orders WHERE state='address_pending' LIMIT 1"
+                    ).fetchone() is not None:
+                        raise ValueError("deposit address allocation is already pending")
+                    self._check_deposit_allocation_budget_conn(
+                        conn,
+                        seller_id=actor_id,
+                        now=now,
+                        lifetime_total=max_deposit_allocations_lifetime_total,
+                        lifetime_per_seller=max_deposit_allocations_lifetime_per_seller,
+                        daily_total=max_deposit_allocations_daily_total,
+                        daily_per_seller=max_deposit_allocations_daily_per_seller,
+                    )
+                    cursor = conn.execute(
+                        """
+                        UPDATE orders SET seller_id=?,seller_name=?,deposit_deadline=?,
+                          state='address_pending',matched_at=?,
+                          deposit_allocation_reserved_at=?,updated_at=?
+                        WHERE order_id=? AND side='buy' AND state='open'
+                          AND seller_id IS NULL AND seller_name IS NULL
+                          AND deposit_addr IS NULL AND maker_id!=?
+                        """,
+                        (
+                            actor_id,
+                            actor_name,
+                            deposit_deadline,
+                            now,
+                            now,
+                            now,
+                            order_id,
+                            actor_id,
+                        ),
+                    )
+                else:
+                    if deposit_deadline is None or deposit_deadline <= now:
+                        raise ValueError("allocated WTB requires a future deposit deadline")
+                    cursor = conn.execute(
+                        """
+                        UPDATE orders SET seller_id=?,seller_name=?,deposit_addr=?,
+                          deposit_deadline=?,state='awaiting_deposit',matched_at=?,updated_at=?
+                        WHERE order_id=? AND side='buy' AND state='open'
+                          AND seller_id IS NULL AND seller_name IS NULL
+                          AND deposit_addr IS NULL AND maker_id!=?
+                        """,
+                        (
+                            actor_id,
+                            actor_name,
+                            preallocated_deposit_addr,
+                            deposit_deadline,
+                            now,
+                            now,
+                            order_id,
+                            actor_id,
+                        ),
+                    )
             if cursor.rowcount != 1:
                 conn.execute("ROLLBACK")
                 return None
@@ -1362,6 +1797,17 @@ class Store:
                 detail={"side": order["side"]},
                 created_at=now,
             )
+            if accepted["state"] == "address_pending":
+                self._append_audit_conn(
+                    conn,
+                    order_id=order_id,
+                    actor_id=actor_id,
+                    event_type="deposit_allocation_reserved",
+                    old_state="open",
+                    new_state="address_pending",
+                    detail={"side": "buy"},
+                    created_at=now,
+                )
             conn.execute("COMMIT")
             return dict(accepted)
         except sqlite3.IntegrityError as exc:

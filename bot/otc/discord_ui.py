@@ -10,7 +10,12 @@ from typing import Any
 import discord
 from discord import app_commands
 
-from bot.otc.domain import parse_09c, parse_asset
+from bot.otc.domain import (
+    PUBLIC_SETTLEMENT_METHODS,
+    PUBLIC_SETTLEMENT_NETWORKS,
+    parse_09c,
+    parse_asset,
+)
 from bot.otc.service import (
     AccountStatus,
     AuthorizationError,
@@ -19,6 +24,13 @@ from bot.otc.service import (
     PublicOrderResult,
     TradeService,
     TradeServiceError,
+)
+from bot.otc.translation import (
+    DisabledTranslationProvider,
+    TranslationBusy,
+    TranslationExecutor,
+    TranslationProvider,
+    TranslationUnavailable,
 )
 
 COMMON_ASSETS = (
@@ -43,44 +55,6 @@ MAINTENANCE_NOTICE = (
     "deposit address. Follow #announcements for the verified launch."
 )
 _CUSTOM_ACTION_RE = re.compile(r"[a-z][a-z0-9_]{0,31}\Z", re.ASCII)
-_PUBLIC_METHODS = frozenset(
-    {
-        "PayID",
-        "Bank transfer",
-        "Wise",
-        "PayPal",
-        "Alipay",
-        "WeChat Pay",
-        "Wallet transfer",
-        "External wallet",
-        "Cash",
-        "Revolut",
-        "Venmo",
-        "Zelle",
-        "Interac e-Transfer",
-        "Private settlement method",
-    }
-)
-_PUBLIC_NETWORKS = frozenset(
-    {
-        "TRC20",
-        "ERC20",
-        "BEP20",
-        "Bitcoin",
-        "Lightning",
-        "Ethereum",
-        "Solana",
-        "BNB Smart Chain",
-        "Litecoin",
-        "Dogecoin",
-        "Polygon",
-        "Arbitrum",
-        "Optimism",
-        "Base",
-        "Avalanche",
-        "Private settlement network",
-    }
-)
 _FUND_ACTIONS = frozenset(
     {
         "confirm_sent",
@@ -103,7 +77,7 @@ def _public_label(value: str | None, *, network: bool) -> str:
     if value is None or not value.strip():
         return "Not specified"
     text = " ".join(value.strip().split())
-    allowed = _PUBLIC_NETWORKS if network else _PUBLIC_METHODS
+    allowed = PUBLIC_SETTLEMENT_NETWORKS if network else PUBLIC_SETTLEMENT_METHODS
     if text in allowed:
         return text
     return "Private settlement network" if network else "Private settlement method"
@@ -356,6 +330,8 @@ class DiscordTradeUI:
         admin_fee_destination: str | None = None,
         fee_withdrawal_network_fee_units: int = 0,
         executor: Callable[[Callable[[], object]], Awaitable[object]] | None = None,
+        translation_provider: TranslationProvider | None = None,
+        translation_executor: TranslationExecutor | None = None,
     ) -> None:
         self.service = service
         self.admin_ids = frozenset(int(value) for value in admin_ids)
@@ -363,9 +339,49 @@ class DiscordTradeUI:
         self.admin_fee_destination = admin_fee_destination
         self.fee_withdrawal_network_fee_units = fee_withdrawal_network_fee_units
         self._executor = executor or asyncio.to_thread
+        if translation_executor is not None and translation_provider is not None:
+            raise ValueError("configure one translation boundary")
+        self.translation_executor = translation_executor or TranslationExecutor(
+            translation_provider or DisabledTranslationProvider()
+        )
         self._cache: OrderedDict[tuple[int, str], _CachedResult] = OrderedDict()
         self._pending: dict[tuple[int, str], asyncio.Future[object]] = {}
         self._cache_lock = asyncio.Lock()
+
+    async def translate_message(
+        self, interaction: discord.Interaction, message: discord.Message
+    ) -> None:
+        await self._defer(interaction, ephemeral=True)
+        source = getattr(message, "content", None)
+        if type(source) is not str or not source:
+            await self._respond(
+                interaction,
+                "This message has no text to translate.",
+                ephemeral=True,
+            )
+            return
+        try:
+            translated = await self.translation_executor.translate_to_english(source)
+        except TranslationBusy:
+            await self._respond(
+                interaction,
+                "English translation is busy. Please try again shortly.",
+                ephemeral=True,
+            )
+            return
+        except (TranslationUnavailable, ValueError):
+            await self._respond(
+                interaction,
+                "English translation is unavailable right now.",
+                ephemeral=True,
+            )
+            return
+        if type(translated) is not str:
+            raise RuntimeError("translation provider returned invalid output")
+        await self._respond(interaction, translated, ephemeral=True)
+
+    async def close_translation(self) -> None:
+        await self.translation_executor.aclose()
 
     async def create_sell(
         self,
@@ -1037,6 +1053,12 @@ def register_trade_ui(bot: Any, controller: DiscordTradeUI) -> app_commands.Grou
         await controller.withdraw(interaction, amount, destination)
 
     bot.tree.add_command(group)
+    bot.tree.add_command(
+        app_commands.ContextMenu(
+            name="Translate to English",
+            callback=controller.translate_message,
+        )
+    )
     _register_legacy_wrappers(bot, controller)
     return group
 

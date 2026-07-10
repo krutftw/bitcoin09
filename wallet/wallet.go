@@ -776,6 +776,7 @@ type Snapshot struct {
 	SchemaVersion      int                   `json:"schema_version"`
 	Network            string                `json:"network"`
 	Tip                core.ChainTipSnapshot `json:"-"`
+	PrimaryAddress     string                `json:"primary_address"`
 	Addresses          []string              `json:"addresses"`
 	Outpoints          []SnapshotOutpoint    `json:"outpoints"`
 	SpendableUnits     int64                 `json:"spendable_units"`
@@ -850,6 +851,9 @@ func validateSelectedAnchored(selected []core.OutPoint, allowed map[core.OutPoin
 }
 
 func snapshotWithKeys(c *core.Chain, network string, expected core.ChainTipSnapshot, keys []ed25519.PrivateKey) (Snapshot, error) {
+	if len(keys) == 0 {
+		return Snapshot{}, errors.New("wallet has no primary address")
+	}
 	pkhs := make([][20]byte, len(keys))
 	keyAddresses := make([]string, len(keys))
 	for i, key := range keys {
@@ -863,7 +867,7 @@ func snapshotWithKeys(c *core.Chain, network string, expected core.ChainTipSnaps
 	if !chainSnapshot.Complete || chainSnapshot.Tip != expected || chainSnapshot.Network != network {
 		return Snapshot{}, errors.New("chain tip or network mismatch")
 	}
-	snapshot := Snapshot{SchemaVersion: SchemaVersion, Network: network, Tip: expected, Outpoints: []SnapshotOutpoint{}}
+	snapshot := Snapshot{SchemaVersion: SchemaVersion, Network: network, Tip: expected, PrimaryAddress: keyAddresses[0], Outpoints: []SnapshotOutpoint{}}
 	snapshot.Addresses = append(snapshot.Addresses, keyAddresses...)
 	sort.Strings(snapshot.Addresses)
 	addressIndexes := make(map[string]uint32, len(snapshot.Addresses))
@@ -872,6 +876,12 @@ func snapshotWithKeys(c *core.Chain, network string, expected core.ChainTipSnaps
 			return Snapshot{}, errors.New("duplicate wallet address")
 		}
 		addressIndexes[address] = uint32(i)
+	}
+	if snapshot.PrimaryAddress == "" {
+		return Snapshot{}, errors.New("wallet primary address is empty")
+	}
+	if _, ok := addressIndexes[snapshot.PrimaryAddress]; !ok {
+		return Snapshot{}, errors.New("wallet primary address is missing")
 	}
 	seenOutpoints := make(map[core.OutPoint]struct{}, len(chainSnapshot.Outputs))
 	for _, output := range chainSnapshot.Outputs {
@@ -924,23 +934,32 @@ func hashSnapshot(snapshot Snapshot) (string, error) {
 }
 
 func snapshotHashPreimage(snapshot Snapshot) ([]byte, error) {
-	if snapshot.Tip.Height < 0 || snapshot.Tip.Network != snapshot.Network || (snapshot.Network != core.MainNetMachineID && snapshot.Network != core.RegTestMachineID) || len(snapshot.Network) > int(^uint16(0)) || !isASCII(snapshot.Network) || uint64(len(snapshot.Addresses)) > uint64(^uint32(0)) || uint64(len(snapshot.Outpoints)) > uint64(^uint32(0)) {
+	if snapshot.Tip.Height < 0 || snapshot.Tip.Network != snapshot.Network || (snapshot.Network != core.MainNetMachineID && snapshot.Network != core.RegTestMachineID) || len(snapshot.Network) > int(^uint16(0)) || !isASCII(snapshot.Network) || len(snapshot.PrimaryAddress) == 0 || len(snapshot.PrimaryAddress) > int(^uint16(0)) || !isASCII(snapshot.PrimaryAddress) || uint64(len(snapshot.Addresses)) > uint64(^uint32(0)) || uint64(len(snapshot.Outpoints)) > uint64(^uint32(0)) {
 		return nil, errors.New("wallet snapshot hash field out of range")
 	}
 	buf := new(bytes.Buffer)
-	buf.WriteString("btc09-wallet-snapshot-v1")
+	buf.WriteString("btc09-wallet-snapshot-v2")
 	buf.WriteByte(0)
 	_ = binary.Write(buf, binary.BigEndian, uint16(len(snapshot.Network)))
 	buf.WriteString(snapshot.Network)
 	buf.Write(snapshot.Tip.Hash[:])
 	_ = binary.Write(buf, binary.BigEndian, uint64(snapshot.Tip.Height))
+	_ = binary.Write(buf, binary.BigEndian, uint16(len(snapshot.PrimaryAddress)))
+	buf.WriteString(snapshot.PrimaryAddress)
 	_ = binary.Write(buf, binary.BigEndian, uint32(len(snapshot.Addresses)))
+	primaryCount := 0
 	for i, address := range snapshot.Addresses {
 		if len(address) == 0 || len(address) > int(^uint16(0)) || !isASCII(address) || (i > 0 && snapshot.Addresses[i-1] >= address) {
 			return nil, errors.New("wallet snapshot address is noncanonical")
 		}
 		_ = binary.Write(buf, binary.BigEndian, uint16(len(address)))
 		buf.WriteString(address)
+		if address == snapshot.PrimaryAddress {
+			primaryCount++
+		}
+	}
+	if primaryCount != 1 {
+		return nil, errors.New("wallet snapshot primary address is noncanonical")
 	}
 	_ = binary.Write(buf, binary.BigEndian, uint32(len(snapshot.Outpoints)))
 	var previous core.OutPoint

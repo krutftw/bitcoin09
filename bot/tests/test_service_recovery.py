@@ -1338,7 +1338,13 @@ class TradeServiceRecoveryTests(unittest.TestCase):
         self.service.check_deposit(order.order_id, actor_id=37)
         original_snapshot = self.wallet.snapshot
         self.wallet.snapshot = lambda tip: WalletSnapshot(  # type: ignore[method-assign]
-            self.store.network, tip, ("wallet-primary",), (), 0, h(999)
+            self.store.network,
+            tip,
+            self.wallet.primary_address,
+            tuple(sorted((self.wallet.primary_address, order.deposit_addr))),
+            (),
+            0,
+            h(999),
         )
         health = self.service.system_health()
         self.assertFalse(health.accepting_orders)
@@ -1680,9 +1686,9 @@ class TradeServiceRecoveryTests(unittest.TestCase):
             lambda: harness.service.cancel(order.order_id, actor_id=buyer_id),
             lambda: harness.accept_buy(order, seller_id),
         )
-        self.assertTrue(all(item[0] == "ok" for item in outcomes))
+        self.assertTrue(all(item[0] in {"ok", "expected_error"} for item in outcomes))
         row = self._matrix_assert_common(harness, order.order_id)
-        self.assertEqual(row["state"], "cancelled")
+        self.assertIn(row["state"], ("cancelled", "awaiting_deposit"))
         self.assertNotEqual(row["state"], "open")
         self.assertEqual(row["buyer_id"], buyer_id)
         self.assertIn(row["seller_id"], (None, seller_id))

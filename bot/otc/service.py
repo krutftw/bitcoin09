@@ -7,10 +7,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from bot.otc.domain import (
+    DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_PER_SELLER,
+    DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_TOTAL,
+    DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_PER_SELLER,
+    DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL,
+    DEFAULT_MAX_ACTIVE_ORDERS_PER_MAKER,
+    DEFAULT_MAX_ACTIVE_ORDERS_TOTAL,
+    MAX_CONFIGURABLE_ACTIVE_ORDERS_TOTAL,
     MAX_09C_UNITS,
+    MAX_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL,
     FeeQuote,
     OrderSide,
     OrderState,
+    PUBLIC_SETTLEMENT_METHODS,
+    PUBLIC_SETTLEMENT_NETWORKS,
     parse_asset,
     parse_method,
     parse_total_price,
@@ -32,6 +42,7 @@ from bot.otc.store import (
     Store,
 )
 from bot.otc.wallet import (
+    AllocationLockBusy,
     PreparedTransfer,
     SafeSendFailure,
     UncertainSendFailure,
@@ -40,37 +51,16 @@ from bot.otc.wallet import (
 
 _SETTLEMENT_NETWORK_RE = re.compile(r"[A-Za-z0-9._ -]+\Z", re.ASCII)
 _SETTLEMENT_METHODS = {
-    "payid": "PayID",
-    "bank transfer": "Bank transfer",
-    "wise": "Wise",
-    "paypal": "PayPal",
-    "alipay": "Alipay",
-    "wechat pay": "WeChat Pay",
-    "wallet transfer": "Wallet transfer",
-    "external wallet": "External wallet",
-    "cash": "Cash",
-    "revolut": "Revolut",
-    "venmo": "Venmo",
-    "zelle": "Zelle",
-    "interac e-transfer": "Interac e-Transfer",
+    value.lower(): value
+    for value in PUBLIC_SETTLEMENT_METHODS
+    if not value.startswith("Private ")
 }
 _SETTLEMENT_NETWORKS = {
-    "trc20": "TRC20",
-    "erc20": "ERC20",
-    "bep20": "BEP20",
-    "bitcoin": "Bitcoin",
-    "lightning": "Lightning",
-    "ethereum": "Ethereum",
-    "solana": "Solana",
-    "bnb smart chain": "BNB Smart Chain",
-    "litecoin": "Litecoin",
-    "dogecoin": "Dogecoin",
-    "polygon": "Polygon",
-    "arbitrum": "Arbitrum",
-    "optimism": "Optimism",
-    "base": "Base",
-    "avalanche": "Avalanche",
+    value.lower(): value
+    for value in PUBLIC_SETTLEMENT_NETWORKS
+    if not value.startswith("Private ")
 }
+_ADDRESS_ALLOCATION_LOCK = threading.Lock()
 
 
 class TradeServiceError(RuntimeError):
@@ -136,6 +126,7 @@ class SystemHealth:
     wallet_spendable_units: int | None
     customer_liability_units: int | None
     pending_platform_outflow_units: int | None
+    deposit_allocation: Mapping[str, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +175,13 @@ class TradeService:
         trade_timeout_seconds: int | None = None,
         prepare_child_is_dead: Callable[[Mapping[str, Any]], bool] | None = None,
         transfer_reconciliation_deadline_seconds: int = 600,
+        max_active_orders_total: int = DEFAULT_MAX_ACTIVE_ORDERS_TOTAL,
+        max_active_orders_per_maker: int = DEFAULT_MAX_ACTIVE_ORDERS_PER_MAKER,
+        max_deposit_allocations_lifetime_total: int = DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL,
+        max_deposit_allocations_lifetime_per_seller: int = DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_PER_SELLER,
+        max_deposit_allocations_daily_total: int = DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_TOTAL,
+        max_deposit_allocations_daily_per_seller: int = DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_PER_SELLER,
+        allocation_lock_timeout_seconds: float = 5.0,
     ) -> None:
         if not isinstance(store, Store):
             raise ValueError("store must be a Store")
@@ -194,6 +192,14 @@ class TradeService:
             raise ValueError("wallet network does not match the store")
         if not callable(fresh_address) or not callable(clock):
             raise ValueError("address and clock boundaries must be callable")
+        allocation_lock = getattr(wallet, "allocation_lock", None)
+        if not callable(allocation_lock):
+            raise ValueError("wallet must provide a cross-process allocation lock")
+        if (
+            type(allocation_lock_timeout_seconds) not in {int, float}
+            or not 0.05 <= allocation_lock_timeout_seconds <= 60
+        ):
+            raise ValueError("allocation lock timeout is out of range")
         if type(confirmation_depth) is not int or confirmation_depth < 1:
             raise ValueError("confirmation depth must be positive")
         if type(network_fee_units) is not int or network_fee_units < 0:
@@ -213,6 +219,40 @@ class TradeService:
             or transfer_reconciliation_deadline_seconds < 1
         ):
             raise ValueError("transfer reconciliation deadline must be positive")
+        if (
+            type(max_active_orders_total) is not int
+            or not 1
+            <= max_active_orders_total
+            <= MAX_CONFIGURABLE_ACTIVE_ORDERS_TOTAL
+        ):
+            raise ValueError("total active order capacity is out of range")
+        if (
+            type(max_active_orders_per_maker) is not int
+            or not 1 <= max_active_orders_per_maker <= max_active_orders_total
+        ):
+            raise ValueError("maker active order capacity is out of range")
+        allocation_limits = (
+            max_deposit_allocations_lifetime_total,
+            max_deposit_allocations_lifetime_per_seller,
+            max_deposit_allocations_daily_total,
+            max_deposit_allocations_daily_per_seller,
+        )
+        if any(type(value) is not int or value < 1 for value in allocation_limits):
+            raise ValueError("deposit allocation limits must be positive integers")
+        if (
+            max_deposit_allocations_lifetime_total
+            > MAX_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL
+            or
+            max_deposit_allocations_lifetime_per_seller
+            > max_deposit_allocations_lifetime_total
+            or max_deposit_allocations_daily_total
+            > max_deposit_allocations_lifetime_total
+            or max_deposit_allocations_daily_per_seller
+            > max_deposit_allocations_lifetime_per_seller
+            or max_deposit_allocations_daily_per_seller
+            > max_deposit_allocations_daily_total
+        ):
+            raise ValueError("deposit allocation limits are inconsistent")
         self.store = store
         self.explorer = explorer
         self.wallet = wallet
@@ -227,7 +267,22 @@ class TradeService:
         self._transfer_reconciliation_deadline_seconds = (
             transfer_reconciliation_deadline_seconds
         )
+        self._max_active_orders_total = max_active_orders_total
+        self._max_active_orders_per_maker = max_active_orders_per_maker
+        self._max_deposit_allocations_lifetime_total = (
+            max_deposit_allocations_lifetime_total
+        )
+        self._max_deposit_allocations_lifetime_per_seller = (
+            max_deposit_allocations_lifetime_per_seller
+        )
+        self._max_deposit_allocations_daily_total = max_deposit_allocations_daily_total
+        self._max_deposit_allocations_daily_per_seller = (
+            max_deposit_allocations_daily_per_seller
+        )
         self._mine_lock = threading.Lock()
+        self._address_allocation_lock = _ADDRESS_ALLOCATION_LOCK
+        self._allocation_lock_timeout_seconds = float(allocation_lock_timeout_seconds)
+        self._address_allocation_issue: str | None = None
         self._broadcast_tip_context: Tip | None = None
 
     def create_sell(
@@ -255,7 +310,6 @@ class TradeService:
         network = self._settlement_network(network)
         quote = self._bounded_quote(net_amount)
         now = self._now()
-        deposit_addr = self._new_address()
         order_id = self.store.create_order(
             side=OrderSide.SELL,
             maker_id=seller_id,
@@ -269,12 +323,18 @@ class TradeService:
             settlement_asset=asset,
             settlement_network=network,
             payment_method=method,
-            state=OrderState.AWAITING_DEPOSIT,
-            deposit_addr=deposit_addr,
-            deposit_deadline=now + self._deposit_timeout_seconds,
+            state=OrderState.ADDRESS_PENDING,
+            deposit_deadline=None,
             created_at=now,
             updated_at=now,
+            max_active_orders_total=self._max_active_orders_total,
+            max_active_orders_per_maker=self._max_active_orders_per_maker,
+            max_deposit_allocations_lifetime_total=self._max_deposit_allocations_lifetime_total,
+            max_deposit_allocations_lifetime_per_seller=self._max_deposit_allocations_lifetime_per_seller,
+            max_deposit_allocations_daily_total=self._max_deposit_allocations_daily_total,
+            max_deposit_allocations_daily_per_seller=self._max_deposit_allocations_daily_per_seller,
         )
+        self.reconcile_pending_address()
         return self._load_order(order_id)
 
     def create_buy(
@@ -318,6 +378,8 @@ class TradeService:
             state=OrderState.OPEN,
             created_at=now,
             updated_at=now,
+            max_active_orders_total=self._max_active_orders_total,
+            max_active_orders_per_maker=self._max_active_orders_per_maker,
         )
         return self._load_order(order_id)
 
@@ -348,18 +410,16 @@ class TradeService:
         receive_address = self._optional_receive_address(
             receive_address, "actor receive address", 128
         )
-        preallocated: str | None = None
         deadline: int | None = None
         now = self._now()
         if initial["side"] == OrderSide.BUY.value:
-            preallocated = self._new_address()
-            deadline = now + self._deposit_timeout_seconds
+            deadline = None
         accepted = self.store.reserve_accept(
             order_id=order_id,
             actor_id=actor_id,
             actor_name=actor_name,
             actor_wallet=receive_address,
-            preallocated_deposit_addr=preallocated,
+            preallocated_deposit_addr=None,
             deposit_deadline=deadline,
             trade_deadline=(
                 now + self._trade_timeout_seconds
@@ -367,12 +427,19 @@ class TradeService:
                 else None
             ),
             now=now,
+            max_deposit_allocations_lifetime_total=self._max_deposit_allocations_lifetime_total,
+            max_deposit_allocations_lifetime_per_seller=self._max_deposit_allocations_lifetime_per_seller,
+            max_deposit_allocations_daily_total=self._max_deposit_allocations_daily_total,
+            max_deposit_allocations_daily_per_seller=self._max_deposit_allocations_daily_per_seller,
         )
         if accepted is None:
             current = self.store.get_order(order_id=order_id)
             if current is None:
                 raise ValueError("order does not exist")
             return self._order_result(current, accepted=False)
+        if accepted["state"] == "address_pending":
+            self.reconcile_pending_address()
+            accepted = self.store.get_order(order_id=order_id)
         event = ServiceEvent("order_accepted", order_id, {"side": accepted["side"]})
         return self._order_result(accepted, accepted=True, events=(event,))
 
@@ -585,8 +652,129 @@ class TradeService:
     def reconcile_transfers(self) -> tuple[TransferResult, ...]:
         """Reconcile durable transfer identities; safe at startup or on a timer."""
 
+        self.reconcile_pending_address()
         with self._mine_lock:
             return self._reconcile_transfers_locked()
+
+    def reconcile_pending_address(self) -> Mapping[str, Any] | None:
+        """Recover one durable address reservation without holding a DB writer."""
+
+        with self._address_allocation_lock:
+            try:
+                with self.wallet.allocation_lock(
+                    timeout=self._allocation_lock_timeout_seconds
+                ):
+                    return self._reconcile_pending_address_under_locks()
+            except AllocationLockBusy:
+                self._address_allocation_issue = "address_allocation_busy"
+                raise SafeSendFailure("wallet address allocation is busy") from None
+            except AccountingInvariantError:
+                raise
+            except SafeSendFailure:
+                raise
+            except Exception:
+                self._address_allocation_issue = "address_allocation_failure"
+                raise SafeSendFailure("wallet address allocation failed safely") from None
+
+    def _reconcile_pending_address_under_locks(self) -> Mapping[str, Any] | None:
+        """Run while both process-thread and cross-process locks are held."""
+
+        try:
+            tip = self.explorer.tip()
+            if not isinstance(tip, Tip):
+                raise AccountingInvariantError("address allocation tip is invalid")
+            snapshot = self.wallet.snapshot(tip)
+            self._require_wallet_snapshot(snapshot, tip)
+            pending = self.store.pending_address_order()
+            unassigned = self._unassigned_wallet_addresses(snapshot, pending)
+            if pending is None:
+                self._address_allocation_issue = None
+                return None
+            if unassigned:
+                allocation_now = self._now()
+                attached = self.store.attach_pending_deposit_address(
+                    order_id=pending["order_id"],
+                    address=unassigned[0],
+                    deposit_deadline=allocation_now + self._deposit_timeout_seconds,
+                    now=allocation_now,
+                )
+                self._address_allocation_issue = None
+                return attached
+            try:
+                created = self._new_address()
+            except Exception:
+                retry = self.wallet.snapshot(tip)
+                self._require_wallet_snapshot(retry, tip)
+                recovered = self._unassigned_wallet_addresses(retry, pending)
+                if len(recovered) != 1:
+                    self._address_allocation_issue = "address_allocation_pending"
+                    raise SafeSendFailure(
+                        "wallet address allocation failed safely"
+                    ) from None
+                created = recovered[0]
+            else:
+                persisted = self.wallet.snapshot(tip)
+                self._require_wallet_snapshot(persisted, tip)
+                recovered = self._unassigned_wallet_addresses(persisted, pending)
+                if len(recovered) != 1 or recovered[0] != created:
+                    self._address_allocation_issue = "address_allocation_ambiguous"
+                    raise SafeSendFailure("wallet address allocation failed safely")
+            allocation_now = self._now()
+            attached = self.store.attach_pending_deposit_address(
+                order_id=pending["order_id"],
+                address=created,
+                deposit_deadline=allocation_now + self._deposit_timeout_seconds,
+                now=allocation_now,
+            )
+            self._address_allocation_issue = None
+            return attached
+        except AccountingInvariantError:
+            self._address_allocation_issue = "address_allocation_ambiguous"
+            raise
+        except SafeSendFailure:
+            raise
+        except Exception:
+            self._address_allocation_issue = "address_allocation_failure"
+            raise SafeSendFailure("wallet address allocation failed safely") from None
+
+    def _unassigned_wallet_addresses(
+        self,
+        snapshot: WalletSnapshot,
+        pending: Mapping[str, Any] | None,
+    ) -> tuple[str, ...]:
+        try:
+            primary_address = _canonical_09c_address(snapshot.primary_address)
+        except ExplorerProtocolError:
+            raise AccountingInvariantError(
+                "wallet snapshot primary address is malformed"
+            ) from None
+        if (
+            tuple(sorted(snapshot.addresses)) != snapshot.addresses
+            or len(set(snapshot.addresses)) != len(snapshot.addresses)
+            or snapshot.addresses.count(primary_address) != 1
+        ):
+            raise AccountingInvariantError("wallet snapshot primary address is invalid")
+        secondary: list[str] = []
+        for value in snapshot.addresses:
+            if value == primary_address:
+                continue
+            try:
+                secondary.append(_canonical_09c_address(value))
+            except ExplorerProtocolError:
+                raise AccountingInvariantError(
+                    "wallet snapshot contains a malformed allocation address"
+                ) from None
+        if len(set(secondary)) != len(secondary):
+            raise AccountingInvariantError("wallet snapshot repeats an allocation address")
+        attached = self.store.attached_deposit_addresses()
+        if primary_address in attached:
+            raise AccountingInvariantError("wallet primary address is attached to an order")
+        if not set(attached).issubset(set(secondary)):
+            raise AccountingInvariantError("wallet and durable address mappings disagree")
+        unassigned = tuple(value for value in secondary if value not in set(attached))
+        if len(unassigned) > 1 or (pending is None and unassigned):
+            raise AccountingInvariantError("wallet address allocation is ambiguous")
+        return unassigned
 
     def _reconcile_transfers_locked(self) -> tuple[TransferResult, ...]:
         batch, _ = self._reconcile_all_deposits()
@@ -625,6 +813,7 @@ class TradeService:
         spendable: int | None = None
         liability: int | None = None
         pending: int | None = None
+        allocation: Mapping[str, int] | None = None
         try:
             if self.store.integrity_check().lower() != "ok":
                 issues.add("database_integrity")
@@ -641,6 +830,21 @@ class TradeService:
             issues.update(self.store.health_issues())
             liability = self.store.customer_liability_units()
             pending = self.store.pending_platform_outflow_units()
+            usage = self.store.deposit_allocation_usage(now=now)
+            allocation = {
+                **usage,
+                "lifetime_headroom": max(
+                    0,
+                    self._max_deposit_allocations_lifetime_total
+                    - usage["lifetime_count"],
+                ),
+                "daily_headroom": max(
+                    0,
+                    self._max_deposit_allocations_daily_total - usage["daily_count"],
+                ),
+            }
+            if self._address_allocation_issue is not None:
+                issues.add(self._address_allocation_issue)
         except Exception:
             issues.add("database_failure")
             return SystemHealth(
@@ -685,6 +889,12 @@ class TradeService:
             snapshot = self.wallet.snapshot(batch.tip)
             self._require_wallet_snapshot(snapshot, batch.tip)
             spendable = snapshot.spendable_units
+            try:
+                self._unassigned_wallet_addresses(
+                    snapshot, self.store.pending_address_order()
+                )
+            except AccountingInvariantError:
+                issues.add("address_allocation_ambiguous")
             if not issues:
                 outpoints = {
                     item.outpoint: item.amount_units for item in snapshot.outpoints
@@ -712,6 +922,7 @@ class TradeService:
             spendable,
             liability,
             pending,
+            allocation,
         )
 
     def mine(self) -> TransferResult | None:

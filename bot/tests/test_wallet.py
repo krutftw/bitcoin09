@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+import ctypes
 import hashlib
 import json
+import multiprocessing
 import os
 import shutil
 import socket
@@ -16,6 +18,126 @@ from dataclasses import dataclass, replace
 from unittest import mock
 
 from bot.otc.explorer import BlockStatus, Tip, TransactionStatus
+from bot.otc.wallet import AllocationLockBusy, WalletAllocationLock
+
+
+class FatalLockProbe(BaseException):
+    pass
+
+
+def _process_handle_count() -> int:
+    if os.name == "nt":
+        from ctypes import wintypes
+
+        count = wintypes.DWORD()
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.GetProcessHandleCount.argtypes = (
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        kernel32.GetProcessHandleCount.restype = wintypes.BOOL
+        if not kernel32.GetProcessHandleCount(
+            kernel32.GetCurrentProcess(), ctypes.byref(count)
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return int(count.value)
+    proc_fds = "/proc/self/fd"
+    if os.path.isdir(proc_fds):
+        return len(os.listdir(proc_fds))
+    raise unittest.SkipTest("process handle counting is unavailable")
+
+
+def _allocation_lock_process_worker(path, barrier, queue, timeout, hold):
+    try:
+        barrier.wait(timeout=10)
+        try:
+            with WalletAllocationLock(path, acquire_timeout=timeout):
+                queue.put(("acquired", time.monotonic()))
+                time.sleep(hold)
+        except AllocationLockBusy:
+            queue.put(("busy", time.monotonic()))
+        except BaseException as exc:
+            queue.put(("error", type(exc).__name__))
+    finally:
+        queue.close()
+        queue.join_thread()
+
+
+def _allocation_lock_baseexception_worker(path, connection, attempts):
+    try:
+        # Warm lazy platform imports before taking the isolated baseline.
+        with WalletAllocationLock(path, acquire_timeout=0.1):
+            pass
+        os.remove(path)
+        _process_handle_count()
+        handles_before = _process_handle_count()
+        exception_types = (KeyboardInterrupt, SystemExit, FatalLockProbe)
+        original_try_lock = WalletAllocationLock._try_lock
+        for attempt in range(attempts):
+            expected = exception_types[attempt % len(exception_types)](
+                f"setup interruption {attempt}"
+            )
+
+            def interrupt() -> float:
+                raise expected
+
+            lock = WalletAllocationLock(
+                path,
+                acquire_timeout=0.1,
+                monotonic=interrupt,
+            )
+            try:
+                lock.__enter__()
+            except BaseException as caught:
+                if caught is not expected:
+                    raise AssertionError("setup exception identity changed")
+            else:
+                raise AssertionError("setup interruption was not raised")
+            os.remove(path)
+            with WalletAllocationLock(path, acquire_timeout=0.1):
+                pass
+            os.remove(path)
+
+            expected = exception_types[attempt % len(exception_types)](
+                f"post-lock interruption {attempt}"
+            )
+
+            def lock_then_interrupt(fd: int) -> None:
+                original_try_lock(fd)
+                raise expected
+
+            lock = WalletAllocationLock(path, acquire_timeout=0.1)
+            with mock.patch.object(
+                WalletAllocationLock,
+                "_try_lock",
+                side_effect=lock_then_interrupt,
+            ):
+                try:
+                    lock.__enter__()
+                except BaseException as caught:
+                    if caught is not expected:
+                        raise AssertionError("post-lock exception identity changed")
+                else:
+                    raise AssertionError("post-lock interruption was not raised")
+            os.remove(path)
+            with WalletAllocationLock(path, acquire_timeout=0.1):
+                pass
+            os.remove(path)
+
+        handles_after = _process_handle_count()
+        if handles_after != handles_before:
+            raise AssertionError(
+                f"child handle count changed: {handles_before} -> {handles_after}"
+            )
+        connection.send(("ok", attempts))
+    except BaseException as exc:
+        try:
+            connection.send(("error", type(exc).__name__))
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+    finally:
+        connection.close()
 
 
 def h(number: int) -> str:
@@ -53,15 +175,19 @@ def txid_for(raw_hex: str) -> str:
 def independent_snapshot_hash(
     network: str,
     tip: Tip,
+    primary_address: str,
     addresses: list[str],
     outpoints: list[dict[str, object]],
 ) -> str:
-    encoded = bytearray(b"btc09-wallet-snapshot-v1\0")
+    encoded = bytearray(b"btc09-wallet-snapshot-v2\0")
     network_bytes = network.encode("utf-8")
     encoded.extend(struct.pack(">H", len(network_bytes)))
     encoded.extend(network_bytes)
     encoded.extend(bytes.fromhex(tip.hash))
     encoded.extend(struct.pack(">Q", tip.height))
+    primary_bytes = primary_address.encode("ascii")
+    encoded.extend(struct.pack(">H", len(primary_bytes)))
+    encoded.extend(primary_bytes)
     encoded.extend(struct.pack(">I", len(addresses)))
     indexes = {owner: index for index, owner in enumerate(addresses)}
     for owner in addresses:
@@ -83,10 +209,12 @@ def snapshot_payload(
     network: str = "btc09-regtest",
     tip: Tip | None = None,
     addresses: list[str] | None = None,
+    primary_address: str | None = None,
     outpoints: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     anchored_tip = tip or Tip(h(9), 70)
     owners = addresses or [address(1), address(2)]
+    primary = primary_address or owners[0]
     outputs = outpoints or [
         {"outpoint": f"{h(20)}:0", "amount_units": 100, "address": owners[0]},
         {"outpoint": f"{h(21)}:2", "amount_units": 250, "address": owners[1]},
@@ -97,11 +225,12 @@ def snapshot_payload(
         "network": network,
         "stage": "snapshot",
         "tip": {"hash": anchored_tip.hash, "height": anchored_tip.height},
+        "primary_address": primary,
         "addresses": owners,
         "outpoints": outputs,
         "spendable_units": sum(int(item["amount_units"]) for item in outputs),
         "wallet_snapshot_hash": independent_snapshot_hash(
-            network, anchored_tip, owners, outputs
+            network, anchored_tip, primary, owners, outputs
         ),
     }
 
@@ -227,6 +356,7 @@ class WalletSnapshotTests(WalletTestCase):
         self.assertIsInstance(snapshot, WalletSnapshot)
         self.assertEqual(snapshot.tip, tip)
         self.assertEqual(snapshot.spendable_units, 350)
+        self.assertEqual(snapshot.primary_address, payload["primary_address"])
         self.assertEqual(snapshot.wallet_snapshot_hash, payload["wallet_snapshot_hash"])
         self.assertEqual(len(snapshot.addresses), 2)
         self.assertEqual(len(snapshot.outpoints), 2)
@@ -271,6 +401,18 @@ class WalletSnapshotTests(WalletTestCase):
         unsorted_address = copy.deepcopy(base)
         unsorted_address["addresses"] = list(reversed(base["addresses"]))
         mutations["unsorted addresses"] = unsorted_address
+
+        missing_primary = copy.deepcopy(base)
+        del missing_primary["primary_address"]
+        mutations["missing primary"] = missing_primary
+
+        nonmember_primary = copy.deepcopy(base)
+        nonmember_primary["primary_address"] = address(99)
+        mutations["nonmember primary"] = nonmember_primary
+
+        malformed_primary = copy.deepcopy(base)
+        malformed_primary["primary_address"] = "not-an-address"
+        mutations["malformed primary"] = malformed_primary
 
         duplicate_outpoint = copy.deepcopy(base)
         duplicate_outpoint["outpoints"][1]["outpoint"] = duplicate_outpoint["outpoints"][0]["outpoint"]
@@ -586,6 +728,132 @@ class WalletPrepareAndBroadcastTests(WalletTestCase):
 
 
 class WalletHardeningTests(WalletTestCase):
+    def test_allocation_lock_is_distinct_hardened_and_releases_on_exception(self) -> None:
+        runner = ScriptedRunner()
+        wallet = self.make_wallet(runner)
+        self.assertEqual(
+            wallet.allocation_lock_path, wallet.wallet_path + ".allocation.lock"
+        )
+        self.assertNotEqual(wallet.allocation_lock_path, wallet.wallet_path + ".lock")
+        with self.assertRaisesRegex(RuntimeError, "probe"):
+            with wallet.allocation_lock(timeout=0.2):
+                raise RuntimeError("probe")
+        for _ in range(20):
+            with wallet.allocation_lock(timeout=0.2):
+                pass
+        if os.name != "nt":
+            self.assertEqual(
+                os.stat(wallet.allocation_lock_path).st_mode & 0o777, 0o600
+            )
+
+    def test_allocation_lock_is_cross_process_exclusive_and_times_out_safely(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "wallet.json.allocation.lock")
+            context = multiprocessing.get_context("spawn")
+            barrier = context.Barrier(2)
+            queue = context.Queue()
+            process = context.Process(
+                target=_allocation_lock_process_worker,
+                args=(path, barrier, queue, 0.15, 0.0),
+            )
+            started = False
+            try:
+                with WalletAllocationLock(path, acquire_timeout=1):
+                    process.start()
+                    started = True
+                    barrier.wait(timeout=10)
+                    result = queue.get(timeout=10)
+                    process.join(10)
+                self.assertFalse(process.is_alive(), "lock worker did not exit")
+                self.assertEqual(result[0], "busy")
+                self.assertEqual(process.exitcode, 0)
+            finally:
+                if started:
+                    if process.is_alive():
+                        process.terminate()
+                        process.join(5)
+                    if process.is_alive():
+                        process.kill()
+                        process.join(5)
+                queue.close()
+                queue.join_thread()
+                process.close()
+            with WalletAllocationLock(path, acquire_timeout=0.2):
+                pass
+
+    def test_allocation_lock_baseexception_cleanup_isolated_from_parent_handles(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "wallet.json.allocation.lock")
+            context = multiprocessing.get_context("spawn")
+            parent_connection, child_connection = context.Pipe(duplex=False)
+            process = context.Process(
+                target=_allocation_lock_baseexception_worker,
+                args=(path, child_connection, 60),
+            )
+            started = False
+            try:
+                process.start()
+                started = True
+                child_connection.close()
+                if not parent_connection.poll(45):
+                    self.fail("allocation lock cleanup child timed out")
+                try:
+                    result = parent_connection.recv()
+                except EOFError:
+                    result = ("error", "EOFError")
+                process.join(10)
+                self.assertFalse(process.is_alive(), "cleanup child did not exit")
+                self.assertEqual(process.exitcode, 0)
+                self.assertEqual(result, ("ok", 60))
+            finally:
+                parent_connection.close()
+                child_connection.close()
+                if started:
+                    if process.is_alive():
+                        process.terminate()
+                        process.join(5)
+                    if process.is_alive():
+                        process.kill()
+                        process.join(5)
+                process.close()
+
+    def test_allocation_lock_still_maps_ordinary_setup_exception_safely(self) -> None:
+        from bot.otc.wallet import SafeSendFailure
+
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "wallet.json.allocation.lock")
+            detail = RuntimeError("private setup detail")
+
+            def fail_setup() -> float:
+                raise detail
+
+            lock = WalletAllocationLock(
+                path,
+                acquire_timeout=0.1,
+                monotonic=fail_setup,
+            )
+            with self.assertRaises(SafeSendFailure) as caught:
+                lock.__enter__()
+            self.assertIsNot(caught.exception, detail)
+            self.assertNotIn("private setup detail", str(caught.exception))
+            os.remove(path)
+
+    def test_allocation_lock_rejects_symlink_and_relative_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaises(ValueError):
+                WalletAllocationLock("relative.allocation.lock")
+            target = os.path.join(root, "target")
+            link = os.path.join(root, "wallet.allocation.lock")
+            with open(target, "wb") as handle:
+                handle.write(b"")
+            try:
+                os.symlink(target, link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlink creation is unavailable")
+            with self.assertRaises(Exception):
+                with WalletAllocationLock(link, acquire_timeout=0.1):
+                    pass
+
     success_fixture = WalletPrepareTests.success_fixture
     broadcast_fixture = WalletPrepareAndBroadcastTests.broadcast_fixture
 
@@ -649,6 +917,7 @@ class WalletHardeningTests(WalletTestCase):
             forged = WalletSnapshot(
                 "btc09-regtest",
                 tip,
+                owners[0],
                 owners,
                 outputs,
                 sum(item.amount_units for item in outputs),
@@ -1098,14 +1367,23 @@ func main() {
         preimage = _snapshot_hash_preimage_fields(
             "btc09-regtest",
             tip,
+            "BC",
             ("A", "BC"),
             ((txid, 2, 3, 0), (txid, 10, 4, 1)),
         )
-        self.assertEqual(len(preimage), 191)
+        self.assertEqual(len(preimage), 195)
         self.assertEqual(
             hashlib.sha256(preimage).hexdigest(),
-            "b464cbc650a0f679189b1ba92236f92a8087afb751e3768dedaf8f26342d4026",
+            "2516412c8103507728b482f528c3eeef30d2c2fb1c5623071acfaee583d820bb",
         )
+        swapped = _snapshot_hash_preimage_fields(
+            "btc09-regtest",
+            tip,
+            "A",
+            ("A", "BC"),
+            ((txid, 2, 3, 0), (txid, 10, 4, 1)),
+        )
+        self.assertNotEqual(hashlib.sha256(preimage).digest(), hashlib.sha256(swapped).digest())
 
 
 class WalletRegtestBinaryIntegrationTests(unittest.TestCase):

@@ -5,6 +5,55 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 UNITS_PER_09C = 100_000_000
+DEFAULT_MAX_ACTIVE_ORDERS_TOTAL = 500
+DEFAULT_MAX_ACTIVE_ORDERS_PER_MAKER = 20
+MAX_CONFIGURABLE_ACTIVE_ORDERS_TOTAL = 1_000
+DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL = 5_000
+DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_PER_SELLER = 250
+DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_TOTAL = 100
+DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_PER_SELLER = 10
+MAX_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL = 9_000
+TERMINAL_ORDER_STATES = frozenset(
+    {"completed", "refunded", "cancelled", "deposit_expired"}
+)
+PUBLIC_SETTLEMENT_METHODS = frozenset(
+    {
+        "PayID",
+        "Bank transfer",
+        "Wise",
+        "PayPal",
+        "Alipay",
+        "WeChat Pay",
+        "Wallet transfer",
+        "External wallet",
+        "Cash",
+        "Revolut",
+        "Venmo",
+        "Zelle",
+        "Interac e-Transfer",
+        "Private settlement method",
+    }
+)
+PUBLIC_SETTLEMENT_NETWORKS = frozenset(
+    {
+        "TRC20",
+        "ERC20",
+        "BEP20",
+        "Bitcoin",
+        "Lightning",
+        "Ethereum",
+        "Solana",
+        "BNB Smart Chain",
+        "Litecoin",
+        "Dogecoin",
+        "Polygon",
+        "Arbitrum",
+        "Optimism",
+        "Base",
+        "Avalanche",
+        "Private settlement network",
+    }
+)
 MAX_09C_UNITS = 21_000_000 * UNITS_PER_09C
 AMOUNT_09C_RE = re.compile(r"(?P<whole>[0-9]+)(?:\.(?P<fraction>[0-9]{1,8}))?\Z")
 ASSET_RE = re.compile(r"[A-Z0-9._-]{2,12}\Z")
@@ -21,6 +70,7 @@ class OrderSide(StrEnum):
 
 
 class OrderState(StrEnum):
+    ADDRESS_PENDING = "address_pending"
     AWAITING_DEPOSIT = "awaiting_deposit"
     OPEN = "open"
     MATCHED = "matched"

@@ -3,17 +3,24 @@ from __future__ import annotations
 import asyncio
 import re
 import ast
+import inspect
+import tempfile
+import threading
 import unittest
 import warnings
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import discord
 from discord.ext import commands
 
 from bot.otc.service import AccountStatus, AuthorizationError, OrderResult
-from bot.btc09_otc_bot import Config
+from bot.otc.translation import TranslationBusy, TranslationUnavailable
+from bot.otc import domain as otc_domain
+from bot.btc09_otc_bot import Config, OTCBot, _probe_explorer_anchors, build_runtime
+from bot.otc.explorer import AddressBatch, Tip, TransactionStatus
 from bot.otc.discord_ui import (
     COMMON_ASSETS,
     MAINTENANCE_NOTICE,
@@ -120,6 +127,11 @@ class FakeInteraction:
         self.followup = FakeFollowup()
 
 
+class FakeMessage:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
 class FakeService:
     def __init__(self, result: OrderResult | None = None) -> None:
         self.result = result or order()
@@ -204,6 +216,66 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
     async def _run(call):
         return call()
 
+    async def test_translate_message_is_ephemeral_and_reports_unavailable(self) -> None:
+        class UnavailableProvider:
+            def translate_to_english(self, text: str) -> str:
+                raise TranslationUnavailable("translation unavailable")
+
+        ui = DiscordTradeUI(
+            self.service,
+            admin_ids={9001},
+            accepting_orders=True,
+            executor=self._run,
+            translation_provider=UnavailableProvider(),
+        )
+        interaction = FakeInteraction(91, 1)
+        await ui.translate_message(interaction, FakeMessage("non-English source"))
+        self.assertEqual(interaction.response.deferred, [True])
+        self.assertEqual(
+            interaction.followup.sent,
+            [("English translation is unavailable right now.", True, None)],
+        )
+        await ui.close_translation()
+
+    async def test_translate_message_returns_only_ephemeral_english(self) -> None:
+        class Provider:
+            def translate_to_english(self, text: str) -> str:
+                self.seen = text
+                return "English result"
+
+        provider = Provider()
+        ui = DiscordTradeUI(
+            self.service,
+            admin_ids={9001},
+            accepting_orders=True,
+            executor=self._run,
+            translation_provider=provider,
+        )
+        interaction = FakeInteraction(92, 1)
+        await ui.translate_message(interaction, FakeMessage("source"))
+        self.assertEqual(provider.seen, "source")
+        self.assertEqual(interaction.followup.sent, [("English result", True, None)])
+        await ui.close_translation()
+
+    async def test_translate_flood_reports_busy_ephemerally(self) -> None:
+        class BusyExecutor:
+            async def translate_to_english(self, text: str) -> str:
+                raise TranslationBusy("busy")
+
+        ui = DiscordTradeUI(
+            self.service,
+            admin_ids={9001},
+            accepting_orders=True,
+            executor=self._run,
+            translation_executor=BusyExecutor(),
+        )
+        interaction = FakeInteraction(93, 1)
+        await ui.translate_message(interaction, FakeMessage("source"))
+        self.assertEqual(
+            interaction.followup.sent,
+            [("English translation is busy. Please try again shortly.", True, None)],
+        )
+
     def test_public_summary_is_complete_english_and_private(self) -> None:
         text = render_public_order(self.service.result)
         for expected in ("WTS", "1.25 09C", "250.50 AUD", "TRC20", "PayID", "matched"):
@@ -275,6 +347,131 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("subprocess", composition)
         self.assertNotIn("requests", composition)
         self.assertNotIn("CREATE TABLE", composition)
+
+    def test_startup_and_reconciliation_failures_invalidate_public_feed(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        composition = (root / "btc09_otc_bot.py").read_text(encoding="utf-8")
+        self.assertGreaterEqual(composition.count("invalidate_public_feed"), 3)
+
+    def test_close_orders_feed_and_translation_shutdown_before_invalidation(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        tree = ast.parse((root / "btc09_otc_bot.py").read_text(encoding="utf-8"))
+        close = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "close"
+        )
+        rendered = ast.unparse(close)
+        self.assertIn("_feed_executor.shutdown", rendered)
+        self.assertIn("translation_executor", rendered)
+        self.assertLess(
+            rendered.index("_feed_executor.shutdown"),
+            rendered.index("invalidate_public_feed"),
+        )
+
+    def test_public_settlement_allowlists_have_one_domain_owner(self) -> None:
+        methods = getattr(otc_domain, "PUBLIC_SETTLEMENT_METHODS")
+        networks = getattr(otc_domain, "PUBLIC_SETTLEMENT_NETWORKS")
+        self.assertIn("PayID", methods)
+        self.assertIn("TRC20", networks)
+        root = Path(__file__).resolve().parents[1] / "otc"
+        for module in ("discord_ui.py", "public_feed.py", "service.py"):
+            source = (root / module).read_text(encoding="utf-8")
+            self.assertNotIn("_PUBLIC_METHODS =", source)
+            self.assertNotIn("_PUBLIC_NETWORKS =", source)
+
+    async def test_close_waits_for_inflight_feed_then_invalidates_last(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "feed.json"
+            runtime = SimpleNamespace(
+                service=self.service,
+                controller=self.ui,
+                public_feed_path=str(target),
+            )
+            with patch.dict("os.environ", {"BOT_TOKEN": "test-token"}, clear=True):
+                config = Config.from_environment()
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*asyncio.iscoroutinefunction.*",
+                    category=DeprecationWarning,
+                )
+                bot = OTCBot(config, runtime)
+            started = threading.Event()
+            release = threading.Event()
+
+            def delayed_write() -> None:
+                started.set()
+                if not release.wait(5):
+                    raise RuntimeError("test feed release timed out")
+                target.write_text("late healthy feed", encoding="utf-8")
+
+            pending = asyncio.create_task(bot._run_feed_job(delayed_write))
+            self.assertTrue(await asyncio.to_thread(started.wait, 2))
+            self.ui.accepting_orders = True
+            observed_accepting: list[bool] = []
+            observer = threading.Timer(
+                0.01, lambda: observed_accepting.append(self.ui.accepting_orders)
+            )
+            timer = threading.Timer(0.02, release.set)
+            observer.start()
+            timer.start()
+            try:
+                await bot.close()
+                await pending
+            finally:
+                observer.cancel()
+                timer.cancel()
+            self.assertEqual(observed_accepting, [False])
+            self.assertFalse(target.exists())
+
+    def test_explorer_anchor_probe_rejects_mismatched_transaction_tip(self) -> None:
+        tip = Tip("a" * 64, 10)
+        other = Tip("b" * 64, 10)
+
+        class ExplorerProbe:
+            network = "btc09-mainnet"
+
+            @staticmethod
+            def tip():
+                return tip
+
+            @staticmethod
+            def batch_outputs(read_watched):
+                self.assertEqual(tuple(read_watched()), ())
+                return AddressBatch("btc09-mainnet", tip, ())
+
+            @staticmethod
+            def transaction(txid):
+                return TransactionStatus(txid, "unknown", None, 0, other)
+
+        evidence = _probe_explorer_anchors(ExplorerProbe(), lambda: ())
+        self.assertFalse(evidence["explorer_tx_status_reachable"])
+        self.assertIn("explorer_transaction_tip_mismatch", evidence["issues"])
+
+    def test_explorer_anchor_probe_rejects_mismatched_empty_batch_tip(self) -> None:
+        tip = Tip("a" * 64, 10)
+        other = Tip("b" * 64, 10)
+
+        class ExplorerProbe:
+            network = "btc09-mainnet"
+
+            @staticmethod
+            def tip():
+                return tip
+
+            @staticmethod
+            def batch_outputs(read_watched):
+                self.assertEqual(tuple(read_watched()), ())
+                return AddressBatch("btc09-mainnet", other, ())
+
+            @staticmethod
+            def transaction(txid):
+                return TransactionStatus(txid, "unknown", None, 0, tip)
+
+        evidence = _probe_explorer_anchors(ExplorerProbe(), lambda: ())
+        self.assertFalse(evidence["explorer_snapshot_reachable"])
+        self.assertIn("explorer_snapshot_tip_mismatch", evidence["issues"])
 
     async def test_seller_only_deposit_and_participant_only_actions(self) -> None:
         outsider = FakeInteraction(1, 333)
@@ -482,7 +679,7 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
                     <= {command.name for command in group.commands}
                 )
                 self.assertTrue(
-                    {"sell", "orders", "buy", "deposit", "confirm", "cancel", "dispute", "setaddress", "balance", "withdraw"}
+                    {"sell", "orders", "buy", "deposit", "confirm", "cancel", "dispute", "setaddress", "balance", "withdraw", "Translate to English"}
                     <= {command.name for command in bot.tree.get_commands()}
                 )
                 rendered = " ".join(
@@ -515,6 +712,50 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
         rendered = repr(config)
         self.assertNotIn(sentinel, rendered)
         self.assertNotIn("token=", rendered)
+
+    def test_active_order_capacity_config_defaults_validation_and_propagation(self) -> None:
+        with patch.dict("os.environ", {"BOT_TOKEN": "test-token"}, clear=True):
+            config = Config.from_environment()
+        self.assertEqual(config.max_active_orders_total, 500)
+        self.assertEqual(config.max_active_orders_per_maker, 20)
+        self.assertEqual(config.max_deposit_allocations_lifetime_total, 5_000)
+        self.assertEqual(config.max_deposit_allocations_lifetime_per_seller, 250)
+        self.assertEqual(config.max_deposit_allocations_daily_total, 100)
+        self.assertEqual(config.max_deposit_allocations_daily_per_seller, 10)
+        source = ast.unparse(ast.parse(inspect.getsource(build_runtime)))
+        self.assertIn("max_active_orders_total=config.max_active_orders_total", source)
+        self.assertIn(
+            "max_active_orders_per_maker=config.max_active_orders_per_maker", source
+        )
+
+        invalid_environments = (
+            {"OTC_MAX_ACTIVE_ORDERS_TOTAL": "0"},
+            {"OTC_MAX_ACTIVE_ORDERS_TOTAL": "1001"},
+            {"OTC_MAX_ACTIVE_ORDERS_PER_MAKER": "0"},
+            {
+                "OTC_MAX_ACTIVE_ORDERS_TOTAL": "10",
+                "OTC_MAX_ACTIVE_ORDERS_PER_MAKER": "11",
+            },
+            {"OTC_MAX_ACTIVE_ORDERS_TOTAL": "not-an-integer"},
+            {"OTC_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL": "9001"},
+            {
+                "OTC_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL": "100",
+                "OTC_DEPOSIT_ALLOCATIONS_LIFETIME_PER_SELLER": "101",
+            },
+            {
+                "OTC_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL": "100",
+                "OTC_DEPOSIT_ALLOCATIONS_DAILY_TOTAL": "101",
+            },
+            {
+                "OTC_DEPOSIT_ALLOCATIONS_LIFETIME_PER_SELLER": "5",
+                "OTC_DEPOSIT_ALLOCATIONS_DAILY_PER_SELLER": "6",
+            },
+        )
+        for values in invalid_environments:
+            with self.subTest(values=values), patch.dict(
+                "os.environ", {"BOT_TOKEN": "test-token", **values}, clear=True
+            ), self.assertRaises(ValueError):
+                Config.from_environment()
 
 
 if __name__ == "__main__":

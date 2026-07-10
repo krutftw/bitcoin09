@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import multiprocessing
+import os
+import shutil
 import tempfile
 import threading
+import time
 import unittest
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +24,7 @@ from bot.otc.explorer import (
     Tip,
     TransactionStatus,
 )
-from bot.otc.service import AuthorizationError, TradeService
+from bot.otc.service import AuthorizationError, OrderResult, TradeService
 from bot.otc.store import AccountingInvariantError, Store
 from bot.otc.wallet import (
     BroadcastResult,
@@ -27,6 +32,7 @@ from bot.otc.wallet import (
     SafeSendFailure,
     UncertainSendFailure,
     WalletInvariantError,
+    WalletAllocationLock,
     WalletOutpoint,
     WalletSnapshot,
 )
@@ -155,6 +161,12 @@ class FakeWallet:
     def __init__(self, explorer: FakeExplorer) -> None:
         self.explorer = explorer
         self.address_count = 0
+        self.primary_address = address(9_999)
+        self.addresses = [self.primary_address]
+        self._allocation_tmp = tempfile.mkdtemp()
+        self.allocation_lock_path = str(
+            Path(self._allocation_tmp) / "wallet.json.allocation.lock"
+        )
         self.prepare_calls: list[tuple[object, ...]] = []
         self.broadcast_calls: list[tuple[str, str, Tip]] = []
         self.prepare_error: BaseException | None = None
@@ -164,14 +176,26 @@ class FakeWallet:
         self.broadcast_release: threading.Event | None = None
         self.lock = threading.Lock()
 
+    def allocation_lock(self, *, timeout=5.0):
+        return WalletAllocationLock(self.allocation_lock_path, acquire_timeout=timeout)
+
+    def __del__(self):
+        allocation_tmp = getattr(self, "_allocation_tmp", None)
+        if allocation_tmp is not None:
+            shutil.rmtree(allocation_tmp, ignore_errors=True)
+
     def new_address(self) -> str:
         with self.lock:
             self.address_count += 1
-            return address(10_000 + self.address_count)
+            created = address(10_000 + self.address_count)
+            self.addresses.append(created)
+            return created
 
     def snapshot(self, expected_tip: Tip) -> WalletSnapshot:
         outputs: list[WalletOutpoint] = []
-        owners = tuple(sorted(self.explorer.outputs_by_address)) or ("wallet-primary",)
+        owners = tuple(
+            sorted(set(self.addresses) | set(self.explorer.outputs_by_address))
+        )
         for owner in owners:
             for output in self.explorer.outputs_by_address.get(owner, ()):
                 outputs.append(
@@ -191,14 +215,15 @@ class FakeWallet:
                 txid=reserve_txid,
                 vout=0,
                 amount_units=10_000_000_000,
-                address=owners[0],
-                owner_address_index=0,
+                address=self.primary_address,
+                owner_address_index=owners.index(self.primary_address),
             )
         )
         outputs.sort(key=lambda item: (bytes.fromhex(item.txid), item.vout))
         return WalletSnapshot(
             self.network,
             expected_tip,
+            self.primary_address,
             owners,
             tuple(outputs),
             sum(output.amount_units for output in outputs),
@@ -276,6 +301,83 @@ class FakeWallet:
         )
 
 
+class ProcessFileWallet:
+    network = "btc09-regtest"
+
+    def __init__(self, state_path, allocation_lock_path, *, die_after_new=False):
+        self.state_path = state_path
+        self.allocation_lock_path = allocation_lock_path
+        self.die_after_new = die_after_new
+
+    def allocation_lock(self, *, timeout=5.0):
+        return WalletAllocationLock(self.allocation_lock_path, acquire_timeout=timeout)
+
+    def _addresses(self):
+        with open(self.state_path, encoding="ascii") as handle:
+            return json.load(handle)["addresses"]
+
+    def snapshot(self, expected_tip):
+        addresses = tuple(sorted(self._addresses()))
+        return WalletSnapshot(
+            self.network,
+            expected_tip,
+            address(49_999),
+            addresses,
+            (),
+            0,
+            h(49_999),
+        )
+
+    def new_address(self):
+        addresses = self._addresses()
+        created = address(50_000 + len(addresses))
+        addresses.append(created)
+        temporary = self.state_path + ".tmp"
+        with open(temporary, "w", encoding="ascii") as handle:
+            json.dump({"addresses": addresses}, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, self.state_path)
+        if self.die_after_new:
+            os._exit(17)
+        return created
+
+
+def _multiprocess_allocation_service_worker(
+    db_path,
+    wallet_state_path,
+    allocation_lock_path,
+    barrier,
+    queue,
+    die_after_new=False,
+):
+    try:
+        explorer = FakeExplorer()
+        wallet = ProcessFileWallet(
+            wallet_state_path,
+            allocation_lock_path,
+            die_after_new=die_after_new,
+        )
+        service = TradeService(
+            store=Store(db_path, network="btc09-regtest"),
+            explorer=explorer,
+            wallet=wallet,
+            fresh_address=wallet.new_address,
+            confirmation_depth=6,
+            clock=Clock(60_000),
+            network_fee_units=10,
+        )
+        barrier.wait(timeout=15)
+        try:
+            result = service.reconcile_pending_address()
+            queue.put(("ok", None if result is None else result["order_id"]))
+        except BaseException as exc:
+            queue.put(("error", type(exc).__name__))
+    finally:
+        queue.close()
+        queue.join_thread()
+
+
 class TradeServiceOrderTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -310,6 +412,977 @@ class TradeServiceOrderTests(unittest.TestCase):
             method="PayID",
             network=None,
         )
+
+    def test_wtb_creation_spam_is_stopped_by_durable_maker_capacity(self):
+        capped = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+            fee_bps=0,
+            deposit_timeout_seconds=600,
+            max_active_orders_total=3,
+            max_active_orders_per_maker=2,
+        )
+        for _ in range(2):
+            capped.create_buy(
+                buyer_id=77,
+                buyer_name="Buyer 77",
+                receive_address=address(40_077),
+                net_amount=100,
+                total_price="2",
+                asset="AUD",
+                method="PayID",
+                network=None,
+            )
+        with self.assertRaisesRegex(ValueError, "maker active order capacity"):
+            capped.create_buy(
+                buyer_id=77,
+                buyer_name="Buyer 77",
+                receive_address=address(40_077),
+                net_amount=100,
+                total_price="2",
+                asset="AUD",
+                method="PayID",
+                network=None,
+            )
+        with closing(self.store.connect()) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 2)
+
+    def test_capped_wts_rejection_allocates_no_wallet_address(self):
+        capped = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+            max_active_orders_total=1,
+            max_active_orders_per_maker=1,
+        )
+        capped.create_buy(
+            buyer_id=70,
+            net_amount=100,
+            total_price="2",
+            asset="AUD",
+            method="PayID",
+            network=None,
+        )
+        before = self.wallet.address_count
+        with self.assertRaisesRegex(ValueError, "total active order capacity"):
+            capped.create_sell(
+                seller_id=71,
+                net_amount=100,
+                total_price="2",
+                asset="AUD",
+                method="PayID",
+                network=None,
+            )
+        self.assertEqual(self.wallet.address_count, before)
+
+    def test_simultaneous_wts_last_total_or_maker_slot_allocates_one_address(self):
+        for capacity_kind in ("total", "maker"):
+            with self.subTest(capacity_kind=capacity_kind), tempfile.TemporaryDirectory() as root:
+                store = Store(Path(root) / "capacity.db", network="btc09-regtest")
+                store.initialize()
+                explorer = FakeExplorer()
+                wallet = FakeWallet(explorer)
+                clock = Clock()
+                maximum_total = 2 if capacity_kind == "total" else 3
+                maximum_per_maker = 2
+                service = TradeService(
+                    store=store,
+                    explorer=explorer,
+                    wallet=wallet,
+                    fresh_address=wallet.new_address,
+                    confirmation_depth=6,
+                    clock=clock,
+                    network_fee_units=10,
+                    max_active_orders_total=maximum_total,
+                    max_active_orders_per_maker=maximum_per_maker,
+                )
+                existing_maker = 80
+                service.create_buy(
+                    buyer_id=existing_maker,
+                    net_amount=100,
+                    total_price="2",
+                    asset="AUD",
+                    method="PayID",
+                    network=None,
+                )
+                contenders = (
+                    (81, 82) if capacity_kind == "total" else (existing_maker,) * 2
+                )
+                barrier = threading.Barrier(2)
+                outcomes = []
+                outcome_lock = threading.Lock()
+
+                def create(seller_id):
+                    barrier.wait(timeout=5)
+                    try:
+                        outcome = service.create_sell(
+                            seller_id=seller_id,
+                            net_amount=100,
+                            total_price="2",
+                            asset="AUD",
+                            method="PayID",
+                            network=None,
+                        )
+                    except BaseException as exc:
+                        outcome = exc
+                    with outcome_lock:
+                        outcomes.append(outcome)
+
+                threads = [
+                    threading.Thread(target=create, args=(seller_id,))
+                    for seller_id in contenders
+                ]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(5)
+                    self.assertFalse(thread.is_alive())
+                self.assertEqual(sum(isinstance(item, OrderResult) for item in outcomes), 1)
+                self.assertEqual(sum(isinstance(item, ValueError) for item in outcomes), 1)
+                self.assertEqual(wallet.address_count, 1)
+                with closing(store.connect()) as conn:
+                    self.assertEqual(
+                        conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 2
+                    )
+
+    def test_wts_address_factory_failure_rolls_back_without_raw_wallet_error(self):
+        def fail_address():
+            raise RuntimeError("raw-wallet-secret-must-not-escape")
+
+        service = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=fail_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+        )
+        with self.assertRaises(SafeSendFailure) as raised:
+            service.create_sell(
+                seller_id=91,
+                net_amount=100,
+                total_price="2",
+                asset="AUD",
+                method="PayID",
+                network=None,
+            )
+        self.assertEqual(str(raised.exception), "wallet address allocation failed safely")
+        self.assertNotIn("raw-wallet-secret", str(raised.exception))
+        with closing(self.store.connect()) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0], 1)
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM orders WHERE state='address_pending'"
+                ).fetchone()[0],
+                1,
+            )
+
+        valid = address(12_346)
+        invalid_checksum = valid[:-1] + ("1" if valid[-1] != "1" else "2")
+        for malformed_address in (address(12_346, version=0), invalid_checksum):
+            with self.subTest(malformed_address=malformed_address), tempfile.TemporaryDirectory() as root:
+                store = Store(Path(root) / "malformed.db", network="btc09-regtest")
+                store.initialize()
+                malformed = TradeService(
+                    store=store,
+                    explorer=self.explorer,
+                    wallet=self.wallet,
+                    fresh_address=lambda value=malformed_address: value,
+                    confirmation_depth=6,
+                    clock=self.clock,
+                    network_fee_units=10,
+                )
+                with self.assertRaisesRegex(
+                    SafeSendFailure, "wallet address allocation failed safely"
+                ):
+                    malformed.create_sell(
+                        seller_id=91,
+                        net_amount=100,
+                        total_price="2",
+                        asset="AUD",
+                        method="PayID",
+                        network=None,
+                    )
+                with closing(store.connect()) as conn:
+                    self.assertEqual(
+                        conn.execute("SELECT COUNT(*) FROM users").fetchone()[0], 1
+                    )
+                    self.assertEqual(
+                        conn.execute(
+                            "SELECT COUNT(*) FROM orders WHERE state='address_pending'"
+                        ).fetchone()[0],
+                        1,
+                    )
+
+    def test_valid_wts_factory_address_is_canonical_and_persisted(self):
+        expected = address(12_345)
+
+        def persisted_address():
+            self.wallet.addresses.append(expected)
+            return expected
+
+        service = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=persisted_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+        )
+        created = service.create_sell(
+            seller_id=92,
+            net_amount=100,
+            total_price="2",
+            asset="AUD",
+            method="PayID",
+            network=None,
+        )
+        stored = self.store.get_order(order_id=created.order_id)
+        self.assertEqual(stored["deposit_addr"], expected)
+
+    def test_wtb_ten_way_accept_race_reserves_and_allocates_one_address(self):
+        order = self.service.create_buy(
+            buyer_id=100,
+            net_amount=100,
+            total_price="2",
+            asset="AUD",
+            method="PayID",
+            network=None,
+        )
+        barrier = threading.Barrier(10)
+
+        def accept(seller_id):
+            barrier.wait(timeout=5)
+            return self.service.accept(order.order_id, actor_id=seller_id)
+
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            results = list(pool.map(accept, range(101, 111)))
+        self.assertEqual(sum(result.accepted for result in results), 1)
+        self.assertEqual(self.wallet.address_count, 1)
+        stored = self.store.get_order(order_id=order.order_id)
+        self.assertEqual(stored["state"], "awaiting_deposit")
+        self.assertIsNotNone(stored["deposit_allocation_reserved_at"])
+
+    def test_wallet_allocation_delay_never_holds_sqlite_writer_lane(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def delayed_address():
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError("address test timed out")
+            created = address(20_001)
+            self.wallet.addresses.append(created)
+            return created
+
+        service = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=delayed_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+        )
+        result = []
+        creator = threading.Thread(
+            target=lambda: result.append(
+                service.create_sell(
+                    seller_id=120,
+                    net_amount=100,
+                    total_price="2",
+                    asset="AUD",
+                    method="PayID",
+                    network=None,
+                )
+            )
+        )
+        creator.start()
+        self.assertTrue(entered.wait(2))
+        writer_done = threading.Event()
+        writer = threading.Thread(
+            target=lambda: (
+                self.store.set_user_wallet(
+                    user_id=121,
+                    username="Unrelated",
+                    wallet_addr=address(20_121),
+                    now=2_000,
+                ),
+                writer_done.set(),
+            )
+        )
+        writer.start()
+        try:
+            completed_without_wallet = writer_done.wait(0.5)
+        finally:
+            release.set()
+        creator.join(5)
+        writer.join(5)
+        self.assertTrue(completed_without_wallet)
+        self.assertFalse(creator.is_alive())
+        self.assertFalse(writer.is_alive())
+        self.assertEqual(len(result), 1)
+
+    def test_thirty_create_cancel_allocations_exhaust_budget_without_refund(self):
+        class FixedClock:
+            value = 10_000
+
+            def __call__(self):
+                return self.value
+
+        clock = FixedClock()
+        service = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=clock,
+            network_fee_units=10,
+            max_deposit_allocations_lifetime_total=30,
+            max_deposit_allocations_lifetime_per_seller=30,
+            max_deposit_allocations_daily_total=30,
+            max_deposit_allocations_daily_per_seller=30,
+        )
+        for _ in range(30):
+            created = service.create_sell(
+                seller_id=130,
+                net_amount=100,
+                total_price="2",
+                asset="AUD",
+                method="PayID",
+                network=None,
+            )
+            service.cancel(created.order_id, actor_id=130)
+        with self.assertRaisesRegex(ValueError, "deposit allocation global lifetime"):
+            service.create_sell(
+                seller_id=130,
+                net_amount=100,
+                total_price="2",
+                asset="AUD",
+                method="PayID",
+                network=None,
+            )
+        self.assertEqual(self.wallet.address_count, 30)
+        self.assertEqual(len(self.store.watched_deposit_addresses()), 30)
+        usage = self.store.deposit_allocation_usage(now=clock.value)
+        self.assertEqual(usage["lifetime_count"], 30)
+        self.assertEqual(usage["daily_count"], 30)
+
+    def test_rolling_allocation_window_has_no_midnight_boundary_bypass(self):
+        class FixedClock:
+            value = 86_399
+
+            def __call__(self):
+                return self.value
+
+        clock = FixedClock()
+        service = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=clock,
+            network_fee_units=10,
+            max_deposit_allocations_lifetime_total=3,
+            max_deposit_allocations_lifetime_per_seller=3,
+            max_deposit_allocations_daily_total=1,
+            max_deposit_allocations_daily_per_seller=1,
+        )
+        first = service.create_sell(
+            seller_id=140,
+            net_amount=100,
+            total_price="2",
+            asset="AUD",
+            method="PayID",
+            network=None,
+        )
+        service.cancel(first.order_id, actor_id=140)
+        clock.value = 86_400
+        with self.assertRaisesRegex(ValueError, "daily"):
+            service.create_sell(
+                seller_id=140,
+                net_amount=100,
+                total_price="2",
+                asset="AUD",
+                method="PayID",
+                network=None,
+            )
+        clock.value = 172_798
+        with self.assertRaisesRegex(ValueError, "daily"):
+            service.create_sell(
+                seller_id=140,
+                net_amount=100,
+                total_price="2",
+                asset="AUD",
+                method="PayID",
+                network=None,
+            )
+        clock.value = 172_799
+        second = service.create_sell(
+            seller_id=140,
+            net_amount=100,
+            total_price="2",
+            asset="AUD",
+            method="PayID",
+            network=None,
+        )
+        self.assertEqual(second.state, "awaiting_deposit")
+        self.assertEqual(self.wallet.address_count, 2)
+
+    def test_seller_and_global_allocation_boundaries_consume_on_reservation(self):
+        class FixedClock:
+            def __call__(self):
+                return 50_000
+
+        service = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=FixedClock(),
+            network_fee_units=10,
+            max_deposit_allocations_lifetime_total=3,
+            max_deposit_allocations_lifetime_per_seller=1,
+            max_deposit_allocations_daily_total=2,
+            max_deposit_allocations_daily_per_seller=1,
+        )
+
+        def allocate(seller_id):
+            result = service.create_sell(
+                seller_id=seller_id,
+                net_amount=100,
+                total_price="2",
+                asset="AUD",
+                method="PayID",
+                network=None,
+            )
+            service.cancel(result.order_id, actor_id=seller_id)
+
+        allocate(141)
+        with self.assertRaisesRegex(ValueError, "seller lifetime"):
+            allocate(141)
+        allocate(142)
+        with self.assertRaisesRegex(ValueError, "global daily"):
+            allocate(143)
+        self.assertEqual(self.wallet.address_count, 2)
+
+    def test_wtb_accept_cancel_does_not_refund_seller_allocation_budget(self):
+        service = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+            max_deposit_allocations_lifetime_total=2,
+            max_deposit_allocations_lifetime_per_seller=1,
+            max_deposit_allocations_daily_total=2,
+            max_deposit_allocations_daily_per_seller=1,
+        )
+        first = service.create_buy(
+            buyer_id=180,
+            net_amount=100,
+            total_price="2",
+            asset="AUD",
+            method="PayID",
+            network=None,
+        )
+        accepted = service.accept(first.order_id, actor_id=181)
+        service.cancel(accepted.order_id, actor_id=181)
+        second = service.create_buy(
+            buyer_id=182,
+            net_amount=100,
+            total_price="2",
+            asset="AUD",
+            method="PayID",
+            network=None,
+        )
+        before = self.wallet.address_count
+        with self.assertRaisesRegex(ValueError, "seller lifetime"):
+            service.accept(second.order_id, actor_id=181)
+        self.assertEqual(self.wallet.address_count, before)
+
+    def test_pending_restart_recovers_persisted_address_and_full_deadline(self):
+        now = 200_000
+        order_id = self.store.create_order(
+            side=OrderSide.SELL,
+            maker_id=150,
+            maker_name="Seller 150",
+            net_amount_units=100,
+            network_fee_units=10,
+            service_fee_units=0,
+            deposit_required_units=110,
+            total_price="2",
+            settlement_asset="AUD",
+            settlement_network=None,
+            payment_method="PayID",
+            state=OrderState.ADDRESS_PENDING,
+            created_at=now,
+            updated_at=now,
+        )
+        persisted = self.wallet.new_address()
+
+        class FixedClock:
+            def __call__(self):
+                return now + 10_000
+
+        restarted = TradeService(
+            store=Store(self.store.path, network="btc09-regtest"),
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=FixedClock(),
+            network_fee_units=10,
+            deposit_timeout_seconds=600,
+        )
+        restarted.reconcile_transfers()
+        row = self.store.get_order(order_id=order_id)
+        self.assertEqual(row["deposit_addr"], persisted)
+        self.assertEqual(row["deposit_allocated_at"], now + 10_000)
+        self.assertEqual(row["deposit_deadline"], now + 10_600)
+        self.assertEqual(self.wallet.address_count, 1)
+
+    def test_attach_commit_failure_restart_reuses_one_unassigned_address(self):
+        class FailingStore(Store):
+            fail_once = True
+
+            def _address_allocation_checkpoint(self, phase):
+                if phase == "before_commit" and self.fail_once:
+                    self.fail_once = False
+                    raise RuntimeError("simulated attach commit failure")
+
+        path = Path(self.tmp.name) / "attach-failure.db"
+        store = FailingStore(path, network="btc09-regtest")
+        store.initialize()
+        service = TradeService(
+            store=store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+        )
+        with self.assertRaises(SafeSendFailure):
+            service.create_sell(
+                seller_id=160,
+                net_amount=100,
+                total_price="2",
+                asset="AUD",
+                method="PayID",
+                network=None,
+            )
+        pending = store.pending_address_order()
+        self.assertIsNotNone(pending)
+        self.assertEqual(self.wallet.address_count, 1)
+        restarted = TradeService(
+            store=Store(path, network="btc09-regtest"),
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+        )
+        restarted.reconcile_pending_address()
+        row = restarted.store.get_order(order_id=pending["order_id"])
+        self.assertEqual(row["state"], "awaiting_deposit")
+        self.assertEqual(self.wallet.address_count, 1)
+
+    def test_wallet_persists_address_then_errors_and_resnapshot_recovers_it(self):
+        persisted = address(31_000)
+
+        def persist_then_error():
+            self.wallet.addresses.append(persisted)
+            self.wallet.address_count += 1
+            raise RuntimeError("subprocess ended after durable wallet write")
+
+        service = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=persist_then_error,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+        )
+        created = service.create_sell(
+            seller_id=161,
+            net_amount=100,
+            total_price="2",
+            asset="AUD",
+            method="PayID",
+            network=None,
+        )
+        self.assertEqual(created.deposit_addr, persisted)
+        self.assertEqual(self.wallet.address_count, 1)
+        self.assertIsNone(self.store.pending_address_order())
+
+    def test_returned_address_before_attach_is_recovered_on_restart(self):
+        class PreAttachFailStore(Store):
+            fail_once = True
+
+            def attach_pending_deposit_address(self, **kwargs):
+                if self.fail_once:
+                    self.fail_once = False
+                    raise RuntimeError("simulated crash before address attach")
+                return super().attach_pending_deposit_address(**kwargs)
+
+        path = Path(self.tmp.name) / "pre-attach-failure.db"
+        store = PreAttachFailStore(path, network="btc09-regtest")
+        store.initialize()
+        service = TradeService(
+            store=store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+        )
+        with self.assertRaises(SafeSendFailure):
+            service.create_sell(
+                seller_id=162,
+                net_amount=100,
+                total_price="2",
+                asset="AUD",
+                method="PayID",
+                network=None,
+            )
+        self.assertEqual(self.wallet.address_count, 1)
+        restarted = TradeService(
+            store=Store(path, network="btc09-regtest"),
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+        )
+        restarted.reconcile_pending_address()
+        self.assertEqual(self.wallet.address_count, 1)
+        self.assertIsNone(restarted.store.pending_address_order())
+
+    def test_primary_is_never_allocated_and_multiple_unassigned_fail_closed(self):
+        order_id = self.store.create_order(
+            side=OrderSide.SELL,
+            maker_id=170,
+            maker_name="Seller 170",
+            net_amount_units=100,
+            network_fee_units=10,
+            service_fee_units=0,
+            deposit_required_units=110,
+            total_price="2",
+            settlement_asset="AUD",
+            settlement_network=None,
+            payment_method="PayID",
+            state=OrderState.ADDRESS_PENDING,
+            created_at=1_000,
+            updated_at=1_000,
+        )
+        self.wallet.addresses.extend((address(30_001), address(30_002)))
+        with self.assertRaises(AccountingInvariantError):
+            self.service.reconcile_pending_address()
+        row = self.store.get_order(order_id=order_id)
+        self.assertEqual(row["state"], "address_pending")
+        self.assertIsNone(row["deposit_addr"])
+        self.assertNotIn(
+            self.wallet.primary_address, self.store.watched_deposit_addresses()
+        )
+        self.assertEqual(self.store.list_actionable_orders(), ())
+        self.assertEqual(self.store.public_feed_snapshot()["orders"], ())
+        health = self.service.system_health()
+        self.assertFalse(health.accepting_orders)
+        self.assertIn("address_allocation_pending", health.issues)
+        self.assertEqual(health.deposit_allocation["pending_count"], 1)
+
+    def test_lower_sorting_generated_address_never_replaces_explicit_primary(self):
+        generated = next(
+            address(value)
+            for value in range(1, 20_000)
+            if address(value) < self.wallet.primary_address
+        )
+
+        def new_lower_address():
+            self.wallet.addresses.append(generated)
+            self.wallet.address_count += 1
+            return generated
+
+        service = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=new_lower_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+        )
+        created = service.create_sell(
+            seller_id=171,
+            net_amount=100,
+            total_price="2",
+            asset="AUD",
+            method="PayID",
+            network=None,
+        )
+        snapshot = self.wallet.snapshot(self.explorer.current_tip)
+        self.assertEqual(snapshot.primary_address, self.wallet.primary_address)
+        self.assertNotEqual(snapshot.addresses[0], snapshot.primary_address)
+        self.assertEqual(created.deposit_addr, generated)
+        self.assertNotEqual(created.deposit_addr, snapshot.primary_address)
+
+    def test_allocation_lock_timeout_retains_pending_without_wallet_mutation(self):
+        service = TradeService(
+            store=self.store,
+            explorer=self.explorer,
+            wallet=self.wallet,
+            fresh_address=self.wallet.new_address,
+            confirmation_depth=6,
+            clock=self.clock,
+            network_fee_units=10,
+            allocation_lock_timeout_seconds=0.1,
+        )
+        with WalletAllocationLock(self.wallet.allocation_lock_path, acquire_timeout=1):
+            with self.assertRaisesRegex(SafeSendFailure, "allocation is busy"):
+                service.create_sell(
+                    seller_id=172,
+                    net_amount=100,
+                    total_price="2",
+                    asset="AUD",
+                    method="PayID",
+                    network=None,
+                )
+            writer_done = threading.Event()
+            writer = threading.Thread(
+                target=lambda: (
+                    self.store.set_user_wallet(
+                        user_id=173,
+                        username="Unrelated",
+                        wallet_addr=address(20_173),
+                        now=3_000,
+                    ),
+                    writer_done.set(),
+                )
+            )
+            writer.start()
+            self.assertTrue(writer_done.wait(1))
+            writer.join(2)
+        self.assertEqual(self.wallet.address_count, 0)
+        self.assertIsNotNone(self.store.pending_address_order())
+        service._allocation_lock_timeout_seconds = 1.0
+        waiter_result = []
+        with WalletAllocationLock(self.wallet.allocation_lock_path, acquire_timeout=1):
+            waiter = threading.Thread(
+                target=lambda: waiter_result.append(service.reconcile_pending_address())
+            )
+            waiter.start()
+            time.sleep(0.03)
+            self.assertTrue(waiter.is_alive())
+            self.store.set_user_wallet(
+                user_id=174,
+                username="Writer While Waiting",
+                wallet_addr=address(20_174),
+                now=3_001,
+            )
+        waiter.join(2)
+        self.assertFalse(waiter.is_alive())
+        self.assertEqual(len(waiter_result), 1)
+        self.assertEqual(self.wallet.address_count, 1)
+        self.assertIsNone(self.store.pending_address_order())
+
+    def test_cross_process_services_allocate_one_key_and_attach_once(self):
+        context = multiprocessing.get_context("spawn")
+        for iteration in range(10):
+            with self.subTest(iteration=iteration), tempfile.TemporaryDirectory() as root:
+                db_path = str(Path(root) / "otc.db")
+                wallet_state = str(Path(root) / "wallet-state.json")
+                allocation_lock = str(Path(root) / "wallet.json.allocation.lock")
+                store = Store(db_path, network="btc09-regtest")
+                store.initialize()
+                order_id = store.create_order(
+                    side=OrderSide.SELL,
+                    maker_id=200 + iteration,
+                    maker_name="Seller",
+                    net_amount_units=100,
+                    network_fee_units=10,
+                    service_fee_units=0,
+                    deposit_required_units=110,
+                    total_price="2",
+                    settlement_asset="AUD",
+                    settlement_network=None,
+                    payment_method="PayID",
+                    state=OrderState.ADDRESS_PENDING,
+                    created_at=50_000,
+                    updated_at=50_000,
+                )
+                with open(wallet_state, "w", encoding="ascii") as handle:
+                    json.dump({"addresses": [address(49_999)]}, handle)
+                barrier = context.Barrier(2)
+                queue = context.Queue()
+                workers = [
+                    context.Process(
+                        target=_multiprocess_allocation_service_worker,
+                        args=(
+                            db_path,
+                            wallet_state,
+                            allocation_lock,
+                            barrier,
+                            queue,
+                        ),
+                    )
+                    for _ in range(2)
+                ]
+                started_workers = []
+                try:
+                    for worker in workers:
+                        worker.start()
+                        started_workers.append(worker)
+                    results = [queue.get(timeout=20) for _ in workers]
+                    for worker in workers:
+                        worker.join(20)
+                        self.assertFalse(
+                            worker.is_alive(), "allocation worker did not exit"
+                        )
+                        self.assertEqual(worker.exitcode, 0)
+                    self.assertEqual([item[0] for item in results], ["ok", "ok"])
+                    self.assertEqual(
+                        sum(item[1] == order_id for item in results), 1
+                    )
+                finally:
+                    for worker in started_workers:
+                        if worker.is_alive():
+                            worker.terminate()
+                            worker.join(5)
+                        if worker.is_alive():
+                            worker.kill()
+                            worker.join(5)
+                    queue.close()
+                    queue.join_thread()
+                    for worker in workers:
+                        worker.close()
+                with open(wallet_state, encoding="ascii") as handle:
+                    addresses = json.load(handle)["addresses"]
+                self.assertEqual(len(addresses), 2)
+                row = store.get_order(order_id=order_id)
+                self.assertEqual(row["state"], "awaiting_deposit")
+                self.assertEqual(row["deposit_addr"], addresses[1])
+                self.assertIsNone(store.pending_address_order())
+
+    def test_process_death_releases_lock_and_recovers_durable_unassigned_key(self):
+        context = multiprocessing.get_context("spawn")
+        with tempfile.TemporaryDirectory() as root:
+            db_path = str(Path(root) / "otc.db")
+            wallet_state = str(Path(root) / "wallet-state.json")
+            allocation_lock = str(Path(root) / "wallet.json.allocation.lock")
+            store = Store(db_path, network="btc09-regtest")
+            store.initialize()
+            order_id = store.create_order(
+                side=OrderSide.SELL,
+                maker_id=220,
+                maker_name="Seller",
+                net_amount_units=100,
+                network_fee_units=10,
+                service_fee_units=0,
+                deposit_required_units=110,
+                total_price="2",
+                settlement_asset="AUD",
+                settlement_network=None,
+                payment_method="PayID",
+                state=OrderState.ADDRESS_PENDING,
+                created_at=50_000,
+                updated_at=50_000,
+            )
+            with open(wallet_state, "w", encoding="ascii") as handle:
+                json.dump({"addresses": [address(49_999)]}, handle)
+            owner_barrier = context.Barrier(1)
+            owner_queue = context.Queue()
+            owner = context.Process(
+                target=_multiprocess_allocation_service_worker,
+                args=(
+                    db_path,
+                    wallet_state,
+                    allocation_lock,
+                    owner_barrier,
+                    owner_queue,
+                    True,
+                ),
+            )
+            owner_started = False
+            try:
+                owner.start()
+                owner_started = True
+                owner.join(20)
+                self.assertFalse(owner.is_alive(), "lock owner did not exit")
+                self.assertEqual(owner.exitcode, 17)
+            finally:
+                if owner_started:
+                    if owner.is_alive():
+                        owner.terminate()
+                        owner.join(5)
+                    if owner.is_alive():
+                        owner.kill()
+                        owner.join(5)
+                owner_queue.close()
+                owner_queue.join_thread()
+                owner.close()
+            with open(wallet_state, encoding="ascii") as handle:
+                persisted = json.load(handle)["addresses"]
+            self.assertEqual(len(persisted), 2)
+            self.assertIsNotNone(store.pending_address_order())
+
+            recovery_barrier = context.Barrier(1)
+            recovery_queue = context.Queue()
+            recovery = context.Process(
+                target=_multiprocess_allocation_service_worker,
+                args=(
+                    db_path,
+                    wallet_state,
+                    allocation_lock,
+                    recovery_barrier,
+                    recovery_queue,
+                ),
+            )
+            recovery_started = False
+            try:
+                recovery.start()
+                recovery_started = True
+                result = recovery_queue.get(timeout=20)
+                recovery.join(20)
+                self.assertFalse(recovery.is_alive(), "recovery worker did not exit")
+                self.assertEqual((recovery.exitcode, result), (0, ("ok", order_id)))
+            finally:
+                if recovery_started:
+                    if recovery.is_alive():
+                        recovery.terminate()
+                        recovery.join(5)
+                    if recovery.is_alive():
+                        recovery.kill()
+                        recovery.join(5)
+                recovery_queue.close()
+                recovery_queue.join_thread()
+                recovery.close()
+            with open(wallet_state, encoding="ascii") as handle:
+                recovered = json.load(handle)["addresses"]
+            self.assertEqual(recovered, persisted)
+            row = store.get_order(order_id=order_id)
+            self.assertEqual(row["deposit_addr"], persisted[1])
+            self.assertIsNone(store.pending_address_order())
 
     def test_ui_boundaries_return_public_safe_order_and_noncustodial_status(self):
         unsafe = (
@@ -730,7 +1803,9 @@ class TradeServiceOrderTests(unittest.TestCase):
 
         stored = self.store.get_order(order_id=order.order_id)
         self.assertEqual(accepted.state, "awaiting_deposit")
-        self.assertEqual(stored["deposit_deadline"], stored["matched_at"] + 1)
+        self.assertEqual(
+            stored["deposit_deadline"], stored["deposit_allocated_at"] + 1
+        )
 
     def test_buyer_is_not_told_to_pay_before_full_confirmed_deposit(self) -> None:
         buy = self.service.create_buy(
@@ -949,11 +2024,17 @@ class TradeServiceOrderTests(unittest.TestCase):
             txid=h(55_555),
             vout=0,
             amount_units=50,
-            address="wallet-primary",
+            address=self.wallet.primary_address,
             owner_address_index=0,
         )
         self.wallet.snapshot = lambda tip: WalletSnapshot(  # type: ignore[method-assign]
-            "btc09-regtest", tip, ("wallet-primary",), (reserve,), 50, h(778)
+            "btc09-regtest",
+            tip,
+            self.wallet.primary_address,
+            (self.wallet.primary_address,),
+            (reserve,),
+            50,
+            h(778),
         )
 
         with self.assertRaisesRegex(AccountingInvariantError, "insolvent"):
@@ -1140,7 +2221,7 @@ class TradeServiceOrderTests(unittest.TestCase):
         self.assertEqual(final["attempt_count"], 2)
         self.assertEqual(self.store.count_transfers(order_id=order.order_id), 1)
 
-    def test_address_creation_failure_creates_no_order(self) -> None:
+    def test_address_creation_failure_retains_durable_pending_order(self) -> None:
         failing = TradeService(
             store=self.store,
             explorer=self.explorer,
@@ -1160,9 +2241,10 @@ class TradeServiceOrderTests(unittest.TestCase):
                 network=None,
             )
         with closing(self.store.connect()) as conn:
-            self.assertEqual(
-                conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 0
-            )
+            row = conn.execute("SELECT * FROM orders").fetchone()
+            self.assertEqual(row["state"], "address_pending")
+            self.assertIsNone(row["deposit_addr"])
+            self.assertIsNotNone(row["deposit_allocation_reserved_at"])
 
     def test_invalid_sell_terms_are_rejected_before_address_allocation(self) -> None:
         with self.assertRaises(ValueError):

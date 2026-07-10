@@ -337,7 +337,7 @@ func TestMachineWalletNewAndSnapshotExactJSON(t *testing.T) {
 	if err := json.Unmarshal(snapshot.Bytes(), &snapshotRaw); err != nil {
 		t.Fatal(err)
 	}
-	wantKeys := []string{"addresses", "network", "ok", "outpoints", "schema_version", "spendable_units", "stage", "tip", "wallet_snapshot_hash"}
+	wantKeys := []string{"addresses", "network", "ok", "outpoints", "primary_address", "schema_version", "spendable_units", "stage", "tip", "wallet_snapshot_hash"}
 	gotKeys := make([]string, 0, len(snapshotRaw))
 	for key := range snapshotRaw {
 		gotKeys = append(gotKeys, key)

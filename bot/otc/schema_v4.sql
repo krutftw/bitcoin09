@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS orders (
     payment_method NOT GLOB '*[^ -~]*'
   ),
   state TEXT NOT NULL CHECK(state IN (
-    'awaiting_deposit','open','matched','disputed','release_reserved',
+    'address_pending','awaiting_deposit','open','matched','disputed','release_reserved',
     'refund_reserved','broadcast','completed','refunded','cancelled',
     'deposit_expired','recovery_hold','transfer_failed_safe','transfer_uncertain'
   )),
@@ -102,6 +102,8 @@ CREATE TABLE IF NOT EXISTS orders (
     instr(deposit_addr, char(0)) = 0 AND
     length(CAST(deposit_addr AS BLOB)) BETWEEN 1 AND 128
   )),
+  deposit_allocation_reserved_at INTEGER,
+  deposit_allocated_at INTEGER,
   buyer_confirmed INTEGER NOT NULL DEFAULT 0 CHECK(buyer_confirmed IN (0,1)),
   seller_confirmed INTEGER NOT NULL DEFAULT 0 CHECK(seller_confirmed IN (0,1)),
   deposit_deadline INTEGER,
@@ -124,6 +126,12 @@ CREATE TABLE IF NOT EXISTS orders (
     (side = 'buy' AND buyer_id = maker_id AND buyer_name = maker_name)
   ),
   CHECK(buyer_id IS NULL OR seller_id IS NULL OR buyer_id != seller_id),
+  CHECK(deposit_allocation_reserved_at IS NULL OR
+        deposit_allocation_reserved_at >= 0),
+  CHECK(deposit_allocated_at IS NULL OR (
+    deposit_allocation_reserved_at IS NOT NULL AND
+    deposit_allocated_at >= deposit_allocation_reserved_at
+  )),
   FOREIGN KEY(maker_id) REFERENCES users(user_id),
   FOREIGN KEY(buyer_id) REFERENCES users(user_id),
   FOREIGN KEY(seller_id) REFERENCES users(user_id)
@@ -339,6 +347,8 @@ CREATE TABLE IF NOT EXISTS transfer_credit_allocations (
 CREATE INDEX IF NOT EXISTS orders_by_state ON orders(state, updated_at);
 CREATE UNIQUE INDEX IF NOT EXISTS one_order_per_deposit_address
 ON orders(deposit_addr) WHERE deposit_addr IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS one_address_pending_order
+ON orders((1)) WHERE state = 'address_pending';
 CREATE INDEX IF NOT EXISTS deposit_scans_by_address
 ON deposit_scans(network, address, scan_id DESC);
 CREATE INDEX IF NOT EXISTS deposit_credits_by_order
@@ -361,6 +371,18 @@ ON transfer_credit_allocations(credit_id);
 CREATE TRIGGER IF NOT EXISTS order_insert_invariant
 BEFORE INSERT ON orders
 WHEN NOT (
+  NEW.side = 'sell'
+  AND NEW.state = 'address_pending'
+  AND NEW.seller_id = NEW.maker_id
+  AND NEW.seller_name = NEW.maker_name
+  AND NEW.buyer_id IS NULL
+  AND NEW.buyer_name IS NULL
+  AND NEW.deposit_addr IS NULL
+  AND NEW.deposit_allocation_reserved_at IS NOT NULL
+  AND NEW.deposit_allocated_at IS NULL
+  AND NEW.buyer_confirmed = 0
+  AND NEW.seller_confirmed = 0
+) AND NOT (
   NEW.side = 'sell'
   AND NEW.state = 'awaiting_deposit'
   AND NEW.seller_id = NEW.maker_id
@@ -399,6 +421,10 @@ WHEN NEW.side IS NOT OLD.side
   OR NEW.payment_method IS NOT OLD.payment_method
   OR NEW.created_at IS NOT OLD.created_at
   OR (OLD.deposit_addr IS NOT NULL AND NEW.deposit_addr IS NOT OLD.deposit_addr)
+  OR (OLD.deposit_allocation_reserved_at IS NOT NULL
+      AND NEW.deposit_allocation_reserved_at IS NOT OLD.deposit_allocation_reserved_at)
+  OR (OLD.deposit_allocated_at IS NOT NULL
+      AND NEW.deposit_allocated_at IS NOT OLD.deposit_allocated_at)
 BEGIN
   SELECT RAISE(ABORT, 'order quote and deposit identity are immutable');
 END;
@@ -425,6 +451,13 @@ WHEN (
     (OLD.seller_id IS NULL AND OLD.seller_name IS NULL
       AND NEW.seller_id IS NOT NULL AND NEW.seller_name IS NOT NULL
       AND NEW.seller_id != OLD.maker_id
+      AND OLD.state = 'open' AND NEW.state = 'address_pending'
+      AND OLD.deposit_addr IS NULL AND NEW.deposit_addr IS NULL
+      AND OLD.buyer_confirmed = 0 AND OLD.seller_confirmed = 0
+      AND NEW.buyer_confirmed = 0 AND NEW.seller_confirmed = 0) OR
+    (OLD.seller_id IS NULL AND OLD.seller_name IS NULL
+      AND NEW.seller_id IS NOT NULL AND NEW.seller_name IS NOT NULL
+      AND NEW.seller_id != OLD.maker_id
       AND OLD.state = 'open' AND NEW.state = 'awaiting_deposit'
       AND OLD.deposit_addr IS NULL AND NEW.deposit_addr IS NOT NULL
       AND OLD.buyer_confirmed = 0 AND OLD.seller_confirmed = 0
@@ -437,6 +470,13 @@ END;
 CREATE TRIGGER IF NOT EXISTS order_deposit_assignment_guard
 BEFORE UPDATE OF deposit_addr ON orders
 WHEN NEW.deposit_addr IS NOT OLD.deposit_addr AND NOT (
+  OLD.state = 'address_pending'
+  AND NEW.state = 'awaiting_deposit'
+  AND OLD.deposit_addr IS NULL
+  AND NEW.deposit_addr IS NOT NULL
+  AND OLD.seller_id IS NEW.seller_id
+  AND OLD.seller_name IS NEW.seller_name
+) AND NOT (
   OLD.side = 'buy'
   AND OLD.deposit_addr IS NULL
   AND NEW.deposit_addr IS NOT NULL
@@ -466,9 +506,33 @@ BEGIN
           AND NEW.state != 'release_reserved')
     THEN RAISE(ABORT, 'invalid payment confirmation transition') END;
 END;
+CREATE TRIGGER IF NOT EXISTS order_allocation_transition_guard
+BEFORE UPDATE OF deposit_allocation_reserved_at,deposit_allocated_at ON orders
+WHEN NOT (
+  OLD.state = 'open' AND NEW.state = 'address_pending'
+  AND OLD.deposit_allocation_reserved_at IS NULL
+  AND NEW.deposit_allocation_reserved_at IS NOT NULL
+  AND OLD.deposit_allocated_at IS NULL AND NEW.deposit_allocated_at IS NULL
+) AND NOT (
+  OLD.state = 'address_pending' AND NEW.state = 'awaiting_deposit'
+  AND NEW.deposit_allocation_reserved_at IS OLD.deposit_allocation_reserved_at
+  AND OLD.deposit_allocated_at IS NULL AND NEW.deposit_allocated_at IS NOT NULL
+)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid deposit allocation transition');
+END;
 CREATE TRIGGER IF NOT EXISTS order_state_machine
 BEFORE UPDATE OF state ON orders
 WHEN NEW.state IS NOT OLD.state AND NOT (
+  (OLD.state = 'address_pending' AND NEW.state = 'awaiting_deposit'
+    AND OLD.deposit_addr IS NULL AND NEW.deposit_addr IS NOT NULL
+    AND OLD.deposit_allocation_reserved_at IS NOT NULL
+    AND OLD.deposit_allocated_at IS NULL AND NEW.deposit_allocated_at IS NOT NULL) OR
+  (OLD.side = 'buy' AND OLD.state = 'open' AND NEW.state = 'address_pending'
+    AND OLD.seller_id IS NULL AND NEW.seller_id IS NOT NULL
+    AND OLD.deposit_addr IS NULL AND NEW.deposit_addr IS NULL
+    AND OLD.deposit_allocation_reserved_at IS NULL
+    AND NEW.deposit_allocation_reserved_at IS NOT NULL) OR
   (OLD.side = 'sell' AND OLD.state = 'awaiting_deposit'
     AND (
       (NEW.state = 'open' AND COALESCE((

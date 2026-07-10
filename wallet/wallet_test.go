@@ -798,20 +798,57 @@ func TestWalletSnapshotHashFixedCrossLanguageVectorAndNumericVouts(t *testing.T)
 		txid[i] = 0x11
 	}
 	snapshot := Snapshot{
-		Network:   core.RegTestMachineID,
-		Tip:       core.ChainTipSnapshot{Network: core.RegTestMachineID, Hash: tipHash, Height: 42},
-		Addresses: []string{"A", "BC"},
+		Network:        core.RegTestMachineID,
+		Tip:            core.ChainTipSnapshot{Network: core.RegTestMachineID, Hash: tipHash, Height: 42},
+		PrimaryAddress: "BC",
+		Addresses:      []string{"A", "BC"},
 		Outpoints: []SnapshotOutpoint{
 			{TxID: txid, Vout: 2, AmountUnits: 3, OwnerAddressIndex: 0, Outpoint: fmt.Sprintf("%x:2", txid), OutpointRef: core.OutPoint{TxID: txid, Idx: 2}, Address: "A"},
 			{TxID: txid, Vout: 10, AmountUnits: 4, OwnerAddressIndex: 1, Outpoint: fmt.Sprintf("%x:10", txid), OutpointRef: core.OutPoint{TxID: txid, Idx: 10}, Address: "BC"},
 		},
 	}
-	if preimage, err := snapshotHashPreimage(snapshot); err != nil || len(preimage) != 191 {
+	swapped := snapshot
+	swapped.PrimaryAddress = "A"
+	firstHash, firstErr := hashSnapshot(snapshot)
+	swappedHash, swappedErr := hashSnapshot(swapped)
+	if firstErr != nil || swappedErr != nil || firstHash == swappedHash {
+		t.Fatalf("primary identity did not bind snapshot hash: %s/%v == %s/%v", firstHash, firstErr, swappedHash, swappedErr)
+	}
+	if preimage, err := snapshotHashPreimage(snapshot); err != nil || len(preimage) != 195 {
 		t.Fatalf("fixed wallet snapshot preimage length = %d, %v", len(preimage), err)
 	}
-	if got, err := hashSnapshot(snapshot); err != nil || got != "b464cbc650a0f679189b1ba92236f92a8087afb751e3768dedaf8f26342d4026" {
+	if got, err := hashSnapshot(snapshot); err != nil || got != "2516412c8103507728b482f528c3eeef30d2c2fb1c5623071acfaee583d820bb" {
 		preimage, _ := snapshotHashPreimage(snapshot)
 		t.Fatalf("fixed wallet snapshot hash = %s, %v, preimage_len=%d preimage=%x", got, err, len(preimage), preimage)
+	}
+}
+
+func TestSnapshotPrimaryIdentitySurvivesLexicographicAddressSorting(t *testing.T) {
+	_, chain, _ := fundedWallet(t, 1)
+	tip, err := chain.CanonicalTipSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	primarySeed := bytes.Repeat([]byte{0x42}, ed25519.SeedSize)
+	primary := ed25519.NewKeyFromSeed(primarySeed)
+	primaryAddress := addressForKey(primary)
+	var secondary ed25519.PrivateKey
+	for value := 0; value < 256; value++ {
+		candidate := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{byte(value)}, ed25519.SeedSize))
+		if addressForKey(candidate) < primaryAddress {
+			secondary = candidate
+			break
+		}
+	}
+	if secondary == nil {
+		t.Fatal("could not construct lower-sorting deterministic address")
+	}
+	snapshot, err := snapshotWithKeys(chain, core.RegTestMachineID, tip, []ed25519.PrivateKey{primary, secondary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.PrimaryAddress != primaryAddress || snapshot.Addresses[0] == primaryAddress {
+		t.Fatalf("primary/sorted addresses = %q/%v", snapshot.PrimaryAddress, snapshot.Addresses)
 	}
 }
 
