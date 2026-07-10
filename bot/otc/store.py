@@ -813,6 +813,105 @@ class Store:
         finally:
             conn.close()
 
+    def list_actionable_orders(self) -> tuple[Mapping[str, Any], ...]:
+        conn = self.connect()
+        try:
+            return tuple(
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT * FROM orders
+                    WHERE state IN ('open','awaiting_deposit','matched')
+                    ORDER BY created_at,order_id
+                    """
+                ).fetchall()
+            )
+        finally:
+            conn.close()
+
+    def set_user_wallet(
+        self,
+        *,
+        user_id: int,
+        username: str,
+        wallet_addr: str,
+        now: int,
+    ) -> str:
+        """Atomically save the validated 09C destination used by order payouts."""
+
+        self._require_integer(user_id, "user ID")
+        self._require_integer(now, "wallet update time")
+        if user_id <= 0 or now < 0:
+            raise ValueError("user ID and wallet update time are out of range")
+        username = self._bounded_text(username, "username", 128)
+        wallet_addr = self._bounded_text(wallet_addr, "wallet address", 128)
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                """
+                INSERT INTO users(user_id,username,wallet_addr,created_at,updated_at)
+                VALUES(?,?,?,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                  username=excluded.username,
+                  wallet_addr=excluded.wallet_addr,
+                  updated_at=excluded.updated_at
+                """,
+                (user_id, username, wallet_addr, now, now),
+            )
+            self._append_audit_conn(
+                conn,
+                order_id=None,
+                actor_id=user_id,
+                event_type="receive_address_updated",
+                old_state=None,
+                new_state=None,
+                detail={"address_changed": True},
+                created_at=now,
+            )
+            conn.execute("COMMIT")
+            return wallet_addr
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def user_order_status(self, *, user_id: int) -> Mapping[str, int]:
+        """Return non-custodial order counts without addresses or ledger totals."""
+
+        self._require_integer(user_id, "user ID")
+        if user_id <= 0:
+            raise ValueError("user ID must be positive")
+        conn = self.connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS order_count,
+                  COALESCE(SUM(CASE WHEN state NOT IN (
+                    'completed','refunded','cancelled','deposit_expired'
+                  ) THEN 1 ELSE 0 END),0) AS active_order_count,
+                  COALESCE(SUM(CASE WHEN state='completed' THEN 1 ELSE 0 END),0)
+                    AS completed_order_count,
+                  COALESCE(SUM(CASE WHEN state='disputed' THEN 1 ELSE 0 END),0)
+                    AS disputed_order_count
+                FROM orders
+                WHERE maker_id=? OR buyer_id=? OR seller_id=?
+                """,
+                (user_id, user_id, user_id),
+            ).fetchone()
+            if row is None:
+                raise AccountingInvariantError("user order status was not returned")
+            return {
+                "order_count": int(row["order_count"]),
+                "active_order_count": int(row["active_order_count"]),
+                "completed_order_count": int(row["completed_order_count"]),
+                "disputed_order_count": int(row["disputed_order_count"]),
+            }
+        finally:
+            conn.close()
+
     def watched_deposit_addresses(self) -> tuple[str, ...]:
         conn = self.connect()
         try:

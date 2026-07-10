@@ -39,6 +39,38 @@ from bot.otc.wallet import (
 )
 
 _SETTLEMENT_NETWORK_RE = re.compile(r"[A-Za-z0-9._ -]+\Z", re.ASCII)
+_SETTLEMENT_METHODS = {
+    "payid": "PayID",
+    "bank transfer": "Bank transfer",
+    "wise": "Wise",
+    "paypal": "PayPal",
+    "alipay": "Alipay",
+    "wechat pay": "WeChat Pay",
+    "wallet transfer": "Wallet transfer",
+    "external wallet": "External wallet",
+    "cash": "Cash",
+    "revolut": "Revolut",
+    "venmo": "Venmo",
+    "zelle": "Zelle",
+    "interac e-transfer": "Interac e-Transfer",
+}
+_SETTLEMENT_NETWORKS = {
+    "trc20": "TRC20",
+    "erc20": "ERC20",
+    "bep20": "BEP20",
+    "bitcoin": "Bitcoin",
+    "lightning": "Lightning",
+    "ethereum": "Ethereum",
+    "solana": "Solana",
+    "bnb smart chain": "BNB Smart Chain",
+    "litecoin": "Litecoin",
+    "dogecoin": "Dogecoin",
+    "polygon": "Polygon",
+    "arbitrum": "Arbitrum",
+    "optimism": "Optimism",
+    "base": "Base",
+    "avalanche": "Avalanche",
+}
 
 
 class TradeServiceError(RuntimeError):
@@ -104,6 +136,30 @@ class SystemHealth:
     wallet_spendable_units: int | None
     customer_liability_units: int | None
     pending_platform_outflow_units: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class PublicOrderResult:
+    """A Discord/web-safe projection with no participant or custody coordinates."""
+
+    order_id: int
+    side: str
+    state: str
+    net_amount_units: int
+    total_price: str
+    settlement_asset: str
+    settlement_network: str | None
+    payment_method: str
+
+
+@dataclass(frozen=True, slots=True)
+class AccountStatus:
+    """Non-custodial per-user status; intentionally has no balance or address."""
+
+    order_count: int
+    active_order_count: int
+    completed_order_count: int
+    disputed_order_count: int
 
 
 class TradeService:
@@ -195,7 +251,7 @@ class TradeService:
         )
         total_price = parse_total_price(total_price)
         asset = parse_asset(asset)
-        method = parse_method(method)
+        method = self._settlement_method(parse_method(method))
         network = self._settlement_network(network)
         quote = self._bounded_quote(net_amount)
         now = self._now()
@@ -242,7 +298,7 @@ class TradeService:
         )
         total_price = parse_total_price(total_price)
         asset = parse_asset(asset)
-        method = parse_method(method)
+        method = self._settlement_method(parse_method(method))
         network = self._settlement_network(network)
         quote = self._bounded_quote(net_amount)
         now = self._now()
@@ -384,6 +440,86 @@ class TradeService:
 
     def list_open(self) -> tuple[OrderResult, ...]:
         return tuple(self._order_result(row) for row in self.store.list_open_orders())
+
+    def list_open_public(self) -> tuple[PublicOrderResult, ...]:
+        return tuple(
+            self._public_order_result(row) for row in self.store.list_open_orders()
+        )
+
+    def list_actionable_public(self) -> tuple[PublicOrderResult, ...]:
+        return tuple(
+            self._public_order_result(row)
+            for row in self.store.list_actionable_orders()
+        )
+
+    def view_order(self, order_id: int) -> PublicOrderResult:
+        self._positive_order(order_id)
+        row = self.store.get_order(order_id=order_id)
+        if row is None:
+            raise ValueError("order does not exist")
+        return self._public_order_result(row)
+
+    def set_receive_address(
+        self, *, actor_id: int, actor_name: str, address: str
+    ) -> str:
+        self._positive_actor(actor_id)
+        name = self._bounded_text(actor_name, "actor name", 128)
+        try:
+            canonical = _canonical_09c_address(address)
+        except ExplorerProtocolError:
+            raise ValueError("09C receive address is invalid") from None
+        return self.store.set_user_wallet(
+            user_id=actor_id,
+            username=name,
+            wallet_addr=canonical,
+            now=self._now(),
+        )
+
+    def account_status(self, *, actor_id: int) -> AccountStatus:
+        self._positive_actor(actor_id)
+        status = self.store.user_order_status(user_id=actor_id)
+        return AccountStatus(
+            order_count=status["order_count"],
+            active_order_count=status["active_order_count"],
+            completed_order_count=status["completed_order_count"],
+            disputed_order_count=status["disputed_order_count"],
+        )
+
+    def available_fee_units(self) -> int:
+        """Return actual confirmed, unreserved platform revenue in base units."""
+
+        return self.store.available_fee_units()
+
+    def reserve_fee_withdrawal(
+        self,
+        *,
+        admin_id: int,
+        operation_key: str,
+        amount: int,
+        network_fee: int,
+        destination: str,
+        configured_destination: str,
+    ) -> TransferResult | None:
+        self._positive_actor(admin_id)
+        if type(amount) is not int or amount <= 0:
+            raise ValueError("fee withdrawal amount must be positive integer units")
+        if type(network_fee) is not int or network_fee < 0:
+            raise ValueError("fee withdrawal network fee must be non-negative units")
+        try:
+            canonical_destination = _canonical_09c_address(destination)
+            configured = _canonical_09c_address(configured_destination)
+        except ExplorerProtocolError:
+            raise ValueError("09C fee destination is invalid") from None
+        row = self.store.queue_fee_withdrawal(
+            operation_key=operation_key,
+            amount_units=amount,
+            network_fee_units=network_fee,
+            destination=canonical_destination,
+            configured_admin_destination=configured,
+            now=self._now(),
+            actor_id=admin_id,
+        )
+        return None if row is None else self._transfer_result(row)
 
     def cancel(self, order_id: int, *, actor_id: int) -> OrderResult:
         self._positive_order(order_id)
@@ -1019,6 +1155,42 @@ class TradeService:
         )
 
     @staticmethod
+    def _public_order_result(row: Mapping[str, Any]) -> PublicOrderResult:
+        return PublicOrderResult(
+            order_id=row["order_id"],
+            side=row["side"],
+            state=row["state"],
+            net_amount_units=row["net_amount_units"],
+            total_price=row["total_price"],
+            settlement_asset=row["settlement_asset"],
+            settlement_network=TradeService._public_settlement_label(
+                row["settlement_network"], network=True
+            ),
+            payment_method=TradeService._public_settlement_label(
+                row["payment_method"], network=False
+            ) or "Private settlement method",
+        )
+
+    @staticmethod
+    def _public_settlement_label(value: object, *, network: bool) -> str | None:
+        if value is None:
+            return None
+        allowed = _SETTLEMENT_NETWORKS if network else _SETTLEMENT_METHODS
+        fallback = (
+            "Private settlement network" if network else "Private settlement method"
+        )
+        if not isinstance(value, str):
+            return fallback
+        return allowed.get(value.casefold(), fallback)
+
+    @staticmethod
+    def _settlement_method(value: str) -> str:
+        method = _SETTLEMENT_METHODS.get(value.casefold())
+        if method is None:
+            raise ValueError("payment method must be a supported settlement method")
+        return method
+
+    @staticmethod
     def _transfer_result(row: Mapping[str, Any]) -> TransferResult:
         return TransferResult(
             transfer_id=row["transfer_id"],
@@ -1092,7 +1264,10 @@ class TradeService:
         result = cls._bounded_text(value, "settlement network", 48)
         if _SETTLEMENT_NETWORK_RE.fullmatch(result) is None:
             raise ValueError("settlement network contains invalid characters")
-        return result
+        canonical = _SETTLEMENT_NETWORKS.get(result.casefold())
+        if canonical is None:
+            raise ValueError("settlement network must be a supported network")
+        return canonical
 
     @staticmethod
     def _bounded_text(value: object, label: str, max_bytes: int) -> str:

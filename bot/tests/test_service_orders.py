@@ -311,6 +311,109 @@ class TradeServiceOrderTests(unittest.TestCase):
             network=None,
         )
 
+    def test_ui_boundaries_return_public_safe_order_and_noncustodial_status(self):
+        unsafe = (
+            "BSB 123-456 account 1234 5678",
+            "+61 412 345 678",
+            "GB82 WEST 1234 5698 7654 32",
+            "trader@example.com",
+            "@payment-handle",
+            "0x52908400098527886E0F7030069857D2E4169EE7",
+            "wallet bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080",
+        )
+        for offset, method in enumerate(unsafe):
+            with self.subTest(method=method), self.assertRaises(ValueError):
+                self.service.create_sell(
+                    seller_id=71 + offset,
+                    seller_name="Seller",
+                    receive_address=address(20_071 + offset),
+                    net_amount=100,
+                    total_price="2",
+                    asset="AUD",
+                    method=method,
+                    network=None,
+                )
+        for offset, network in enumerate(
+            ("123-456 12345678", "GB82 WEST 1234 5698", "0x52908400098527886")
+        ):
+            with self.subTest(network=network), self.assertRaises(ValueError):
+                self.service.create_buy(
+                    buyer_id=90 + offset,
+                    buyer_name="Buyer",
+                    receive_address=address(20_090 + offset),
+                    net_amount=100,
+                    total_price="2",
+                    asset="USDT",
+                    method="Wallet transfer",
+                    network=network,
+                )
+        self.assertEqual(self.wallet.address_count, 0)
+        created = self.create_sell(seller_id=71)
+        public = self.service.view_order(created.order_id)
+        self.assertEqual(public.order_id, created.order_id)
+        self.assertEqual(public.side, "sell")
+        self.assertFalse(hasattr(public, "maker_id"))
+        self.assertFalse(hasattr(public, "deposit_addr"))
+        self.assertEqual(public.payment_method, "PayID")
+        legacy_row = dict(self.store.get_order(order_id=created.order_id))
+        legacy_row["payment_method"] = "legacy mixed A1B2C3D4E5F6"
+        legacy_row["settlement_network"] = "123-456 12345678"
+        legacy_public = self.service._public_order_result(legacy_row)
+        self.assertEqual(
+            legacy_public.payment_method,
+            "Private settlement method",
+        )
+        self.assertEqual(
+            legacy_public.settlement_network,
+            "Private settlement network",
+        )
+        self.assertEqual(
+            [item.order_id for item in self.service.list_actionable_public()],
+            [created.order_id],
+        )
+
+        status = self.service.account_status(actor_id=71)
+        self.assertEqual(status.order_count, 1)
+        self.assertEqual(status.active_order_count, 1)
+        self.assertFalse(hasattr(status, "balance_units"))
+
+    def test_receive_address_update_is_validated_and_used_by_later_order(self):
+        configured = address(91_001)
+        saved = self.service.set_receive_address(
+            actor_id=72, actor_name="Trader 72", address=configured
+        )
+        self.assertEqual(saved, configured)
+        with self.assertRaises(ValueError):
+            self.service.set_receive_address(
+                actor_id=72, actor_name="Trader 72", address="not-an-address"
+            )
+        created = self.service.create_buy(
+            buyer_id=72,
+            buyer_name="Trader 72",
+            receive_address=None,
+            net_amount=100,
+            total_price="2",
+            asset="AUD",
+            method="PayID",
+            network=None,
+        )
+        self.assertEqual(self.store.get_order(order_id=created.order_id)["buyer_id"], 72)
+
+    def test_fee_status_and_withdrawal_reservation_are_real_and_idempotent(self):
+        self.assertEqual(self.service.available_fee_units(), 0)
+        destination = address(91_002)
+        self.assertIsNone(
+            self.service.reserve_fee_withdrawal(
+                admin_id=9001,
+                operation_key="discord:123:fee_withdrawal",
+                amount=1,
+                network_fee=0,
+                destination=destination,
+                configured_destination=destination,
+            )
+        )
+        self.assertEqual(self.store.count_transfers(), 0)
+
     def fund(self, order: object, amount: int = 110, *, confirmations: int = 6):
         self.explorer.set_outputs(
             order.deposit_addr,
@@ -471,15 +574,26 @@ class TradeServiceOrderTests(unittest.TestCase):
             block_number=95_001,
         )
         destination = address(40_000)
-        withdrawal = self.store.queue_fee_withdrawal(
+        reserved = fee_service.reserve_fee_withdrawal(
+            admin_id=99,
             operation_key="fee:test:1",
-            amount_units=9,
-            network_fee_units=1,
+            amount=9,
+            network_fee=1,
             destination=destination,
-            configured_admin_destination=destination,
-            now=self.clock(),
-            actor_id=99,
+            configured_destination=destination,
         )
+        duplicate = fee_service.reserve_fee_withdrawal(
+            admin_id=99,
+            operation_key="fee:test:1",
+            amount=9,
+            network_fee=1,
+            destination=destination,
+            configured_destination=destination,
+        )
+        self.assertIsNotNone(reserved)
+        self.assertEqual(duplicate, reserved)
+        withdrawal = self.store.get_transfer(transfer_id=reserved.transfer_id)
+        self.assertEqual(withdrawal["transfer_id"], reserved.transfer_id)
         self.wallet.broadcast_calls.clear()
         return fee_service, withdrawal
 
