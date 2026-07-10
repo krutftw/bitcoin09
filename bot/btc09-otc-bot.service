@@ -7,7 +7,8 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/btc09
 EnvironmentFile=/etc/btc09/discord.env
-Environment=FEE_PERCENT=1.0
+Environment=FEE_PERCENT=0
+Environment=OTC_TRADING_ENABLED=0
 Environment=BTC09_BIN=/opt/btc09/btc09
 Environment=BTC09_DATADIR=/opt/btc09/data
 Environment=EXPLORER_URL=http://localhost:8009
