@@ -7,12 +7,17 @@
 // 10-minute blocks, fair launch, no premine, unspendable genesis reward.
 package core
 
-import "math/big"
+import (
+	"errors"
+	"fmt"
+	"math/big"
+)
 
 const (
-	CoinName     = "Bitcoin 09"
-	Ticker       = "09C"
-	UnitsPerCoin = 100_000_000 // smallest unit, like satoshis
+	CoinName            = "Bitcoin 09"
+	Ticker              = "09C"
+	UnitsPerCoin        = 100_000_000 // smallest unit, like satoshis
+	MaxMoneyUnits int64 = 21_000_000 * UnitsPerCoin
 
 	InitialRewardUnits = 50 * UnitsPerCoin
 	HalvingInterval    = 210_000 // blocks, Bitcoin-classic
@@ -20,6 +25,28 @@ const (
 
 	MaxBlockBytes = 1_000_000 // 1 MB, Bitcoin-classic
 )
+
+// ErrMoneyRange marks consensus rejection caused by a negative, overflowing,
+// or above-maximum monetary value or aggregate.
+var ErrMoneyRange = errors.New("money amount out of range")
+
+// MoneyRange reports whether value is a valid consensus monetary amount.
+func MoneyRange(value int64) bool {
+	return value >= 0 && value <= MaxMoneyUnits
+}
+
+// checkedAddMoney adds two already-denominated monetary amounts without ever
+// overflowing int64 or crossing the consensus money range.
+func checkedAddMoney(left, right int64) (int64, bool) {
+	if !MoneyRange(left) || !MoneyRange(right) || left > MaxMoneyUnits-right {
+		return 0, false
+	}
+	return left + right, true
+}
+
+func moneyRangeError(detail string) error {
+	return fmt.Errorf("%w: %s", ErrMoneyRange, detail)
+}
 
 // Params defines a network (mainnet or regtest for local testing).
 type Params struct {
@@ -42,9 +69,9 @@ type Params struct {
 var MainNet = Params{
 	Name:             "mainnet",
 	NetMagic:         0xB7C09001,
-	TargetBlockTime:  600, // 10 minutes, Bitcoin-classic
+	TargetBlockTime:  600,  // 10 minutes, Bitcoin-classic
 	RetargetInterval: 2016, // Bitcoin-classic, ~2 weeks at target rate
-	CoinbaseMaturity: 100, // Bitcoin-classic
+	CoinbaseMaturity: 100,  // Bitcoin-classic
 	MaxTargetBits:    0x1f00ffff,
 	ArgonMemKiB:      64 * 1024, // 64 MiB per hash attempt
 	ArgonTime:        1,

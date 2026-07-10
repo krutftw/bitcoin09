@@ -1894,8 +1894,18 @@ no liability, transfer, audit, or fee reservation is duplicated.
 ### Task 4: Canonical Credit Snapshot and Structured Wallet Boundaries
 
 **Files:**
+- Modify: `go.mod`
+- Modify: `go.sum`
+- Modify: `core/params.go`
 - Modify: `core/chain.go`
 - Modify: `core/core_test.go`
+- Modify: `core/miner.go`
+- Modify: `core/store.go`
+- Create: `core/store_test.go`
+- Create: `core/filelock_unix.go`
+- Create: `core/filelock_windows.go`
+- Create: `core/durable_replace_unix.go`
+- Create: `core/durable_replace_windows.go`
 - Modify: `wallet/wallet.go`
 - Create: `wallet/wallet_test.go`
 - Create: `wallet/filelock_unix.go`
@@ -1925,11 +1935,241 @@ no liability, transfer, audit, or fee reservation is duplicated.
   `Explorer.block(hash)`, `Explorer.transaction(txid)`,
   `Wallet.new_address()`, `Wallet.snapshot(expected_tip) -> WalletSnapshot`,
   `Wallet.prepare(destination, amount_units, fee_units, expected_tip,
-  restricted_outpoints) -> PreparedTransfer`, and
-  `Wallet.broadcast(signed_tx_hex, expected_txid) -> BroadcastResult` with
+  restricted_outpoints, expected_snapshot) -> PreparedTransfer`, and
+  `Wallet.broadcast(signed_tx_hex, expected_txid, prepared_tip) -> BroadcastResult` with
   `SafeSendFailure` and `UncertainSendFailure`.
 
-- [ ] **Step 1: Write failing canonical address-history tests**
+**Controller addenda (mandatory before Task 4 implementation):**
+
+Task 4 is split into two separately reviewed commits. Task 4A first hardens
+consensus money arithmetic and canonical chain persistence. Task 4B may begin
+only after 4A is green and approved; it implements the explorer, P2P, wallet,
+CLI, and Python trust boundaries. This split is a review boundary, not a
+relaxation of any Task 4 gate.
+
+- Consensus defines `MaxMoneyUnits = 21_000_000 * UnitsPerCoin` and one checked
+  MoneyRange/addition implementation. Every transaction input/output value,
+  aggregate input/output sum, derived fee, aggregate block fee, subsidy-plus-
+  fee sum, and aggregate coinbase output is range checked. Any intermediate
+  overflow, negative value, or total above `MaxMoneyUnits` rejects. The miner
+  uses the same checked helpers. Tests reject a correctly signed transaction
+  with two `math.MaxInt64` outputs in both mempool and block paths, a coinbase
+  with two `math.MaxInt64` outputs, and synthetic aggregate-fee overflow, while
+  accepting the exact legal boundary. Task 4A therefore also modifies
+  `core/params.go`, `core/miner.go`, and their tests. The miner deterministically
+  skips any mempool transaction whose inclusion would make aggregate fees or
+  `SubsidyAt(height)+fees` leave MoneyRange, so it always returns a valid
+  template rather than constructing an invalid coinbase.
+- Context-free transaction/block sanity runs before *any* block is inserted in
+  the index, including an equal/lower-work side branch: required ins/outs,
+  positive MoneyRange outputs, checked per-transaction output aggregates,
+  duplicate inputs, and duplicate transaction IDs. Before *any* non-tip branch
+  candidate is indexed, replay its complete candidate branch on scratch UTXO
+  state and validate UTXO ownership, maturity, signatures, input sums, fees, and
+  coinbase reward without committing. A heavier valid branch commits that
+  already-validated state; an equal/lower-work valid branch is cached only after
+  the same contextual proof. Mined equal-work forks with overflowing outputs,
+  subsidy overpay, invalid inputs, or invalid signatures must return an error
+  and remain absent from `HasBlock`; invalid side branches are never cached as
+  successfully accepted.
+- `core.Store.SaveSnapshot` may not call `Tip` and `BlockAt` separately. A new
+  chain method copies one complete canonical main-chain snapshot under one
+  `Chain.RLock`; serialization occurs after the chain lock is released.
+  `SaveSnapshot` acquires `Store.mu`, then a canonical-path interprocess OS
+  file lock, *before* taking that chain snapshot and holds both locks through
+  validation and durable replace. The immutable snapshot includes a copied
+  cumulative-work value. Under the OS lock, Save validates the current durable
+  snapshot and refuses an older/lower-work candidate or an equal-work candidate
+  with a different tip; the same exact tip is an idempotent no-op. Thus another
+  `*Store`, process, or late callback backed by a stale `*Chain` cannot regress
+  disk. It writes an accepted snapshot to a unique same-directory temp, syncs
+  it, atomically replaces the destination, and syncs the directory (or uses the
+  equivalent hard-fail Windows write-through primitive). `LoadInto` takes the
+  same OS lock while reading. Reorg/save/reload races must yield one complete
+  old or new branch, never a mixture or stale-save regression. If replacement
+  succeeds but the final directory/write-through durability barrier reports an
+  error, an exact-tip retry reruns that final barrier without rewriting the
+  block file; same-tip idempotency may skip create/replace but never skips an
+  unproven final durability completion.
+  Task 4A therefore also modifies `core/store.go` and adds its platform helpers
+  and tests.
+- Human CLI network aliases remain `mainnet|regtest`. Every machine boundary
+  and every JSON response uses exactly `btc09-mainnet|btc09-regtest`; mapping
+  occurs once and a wrong/unknown machine identity fails closed. The dedicated
+  wallet file is stamped with that canonical network.
+- `AcceptTx` remains as the compatibility error-only wrapper. A new atomic
+  result method performs the same single-lock admission and returns exactly
+  `added` or `already_known`; P2P and machine paths use the result method, and
+  only `added` is relayed. This avoids unrelated API churn without weakening
+  duplicate suppression.
+- Explorer V1 response shapes are exact and reject extra/duplicate fields.
+  All use full lowercase hashes, JSON integers, canonical network, and exactly
+  one response tip anchor:
+
+  ```json
+  {"schema_version":1,"network":"btc09-mainnet","tip":{"hash":"<64hex>","height":7000}}
+  {"schema_version":1,"network":"btc09-mainnet","block":{"hash":"<query64hex>","height":6995,"canonical":true},"tip":{"hash":"<64hex>","height":7000}}
+  {"schema_version":1,"network":"btc09-mainnet","txid":"<query64hex>","status":"confirmed","block":{"hash":"<64hex>","height":6999},"confirmations":2,"tip":{"hash":"<64hex>","height":7000}}
+  ```
+
+  Transaction `unknown` and `mempool` are HTTP 200 with `block:null` and
+  `confirmations:0`; confirmed has the exact block and derived confirmations.
+  Unknown block is 404; a known side-chain block is 200 with
+  `canonical:false`. Address-output rows add `transaction_index`, and non-null
+  `spent_by` is exactly `{txid,input_index,block:{hash,height}}`, so canonical
+  `(block height, transaction index, vout)` ordering is independently
+  verifiable. Expected-tip 409 responses contain no output array.
+- Canonical chain/address/wallet snapshots are copied under one chain read
+  lock and encoded only after release. Wallet UTXOs for all keys are collected
+  in one multi-PKH snapshot, never one independently locked read per key.
+- Consensus state never retains or exposes caller-owned mutable pointers.
+  `NewChain` copies Params; transaction/block admission deep-copies all structs
+  and byte slices before storing; `BlockAt`, `MempoolTxs`, and `OnNewTip` return
+  or receive fresh clones. After an admission call returns, mutation of the
+  caller's original or any accessor result cannot change `index`, `mainIDs`,
+  UTXO, mempool, or persisted bytes. The canonical Store snapshot also verifies
+  every copied block ID, parent link, and merkle root against its captured
+  metadata before writing. Sequential and concurrent post-return mutation tests
+  cover blocks, transactions, accessor values, and save/reload. Callers may not
+  mutate an object concurrently *during* its admission call.
+- Wallet snapshot hash V1 is SHA-256 over this exact binary preimage:
+  ASCII `btc09-wallet-snapshot-v1` followed by a NUL byte; a big-endian u16
+  length plus canonical-network UTF-8 bytes; the raw 32 tip-hash bytes; the
+  non-negative tip height as big-endian u64; a big-endian u32 address count;
+  each lexicographically sorted ASCII address as u16 length plus bytes; a
+  big-endian u32 outpoint count; then each `(txid raw32, vout u32, amount u64,
+  owner-address-index u32)` sorted by raw txid then vout. Duplicate addresses,
+  duplicate outpoints, invalid/missing owner indexes, invalid ranges, or count/
+  length overflow reject. Each outpoint has exactly one owner index; the same
+  owner may correctly own multiple distinct outpoints. Go and Python
+  independently construct and compare this preimage and hash.
+- The wallet file V1 schema is exactly
+  `{"schema_version":1,"network":"btc09-mainnet","keys":["<64-lowercase-hex-seed>"]}`
+  (JSON whitespace is insignificant), strict, bounded, and network stamped. It rejects
+  unknown/duplicate JSON fields, trailing values, empty keys, duplicate seeds
+  or derived addresses, malformed seed lengths, excessive keys, and a wrong
+  network. Plain `Load` is read-only and never creates or writes. An explicit
+  locked legacy migration may convert only the exact old `{\"keys\":[...]}`
+  shape to V1 without changing keys; an explicit create/new operation creates
+  one key on a missing file. `wallet new -json` returns that one address only
+  after the V1 file is durable.
+- Wallet path precedence is explicit `-wallet-file`, then
+  `BTC09_WALLET_PATH`, then the legacy network-specific datadir path. Every
+  key-reading or key-writing path, including node/miner, list/new/snapshot,
+  legacy send, and prepare, uses one canonical path and the same interprocess
+  lock. Lock order is wallet OS lock, strict key reload, immutable chain
+  snapshot; the lock is released before mempool submission or networking and
+  is never acquired from a chain callback.
+- Unix durability is a mode-0600 same-directory temp, file fsync, atomic
+  rename, and directory fsync. Windows is temp-handle `FlushFileBuffers` then
+  `MoveFileExW(MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)`; unsupported
+  `REPLACEFILE_WRITE_THROUGH` is not used. Every primitive error hard-fails.
+  `LockFileEx`/`flock` ownership is kernel managed. Kill-owner tests retry with
+  a bounded deadline because Windows lock release after process termination
+  need not be instantaneous.
+- Go prepare reloads every wallet key while holding that lock and rejects the
+  destination PKH if it matches primary, change, used, unused, or a key added
+  after Python's earlier snapshot. It signs only from the one structured
+  snapshot, excludes every restricted outpoint, uses txid+vout deterministic
+  tie-breaking, and has no mempool, P2P, or wallet-file mutation side effect.
+- Machine commands emit exactly one bounded JSON object on stdout, with
+  `schema_version:1`, canonical `network`, `ok`, and an exact `stage`; stderr
+  is empty or one bounded generic secret-free error. Wallet-new, snapshot,
+  prepare, inspect, and broadcast schemas are strict. OTC raw transactions are
+  capped at 10,000 bytes / 20,000 lowercase hex characters to match the Store;
+  JSON/stdin and restricted-input counts are separately bounded. Legacy send
+  also uses the strict ASCII decimal parser.
+
+  ```json
+  {"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"wallet_new","address":"<09C-address>"}
+  {"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"snapshot","tip":{"hash":"<64hex>","height":7000},"addresses":["<sorted-address>"],"outpoints":[{"outpoint":"<64hex>:0","amount_units":100,"address":"<owner-address>"}],"spendable_units":100,"wallet_snapshot_hash":"<64hex>"}
+  {"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"prepared","txid":"<64hex>","signed_tx_hex":"<lowercase-hex>","destination":"<09C-address>","amount_units":90,"fee_units":10,"snapshot_tip":{"hash":"<64hex>","height":7000},"wallet_snapshot_hash":"<64hex>","selected_outpoints":["<64hex>:0"]}
+  {"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"inspected","txid":"<64hex>","inputs":["<64hex>:0"],"outputs":[{"index":0,"address":"<09C-address>","amount_units":90}]}
+  {"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"broadcast","status":"submitted","txid":"<64hex>","peer_writes":1}
+  {"ok":false,"schema_version":1,"network":"btc09-mainnet","stage":"prepared","error_code":"safe_prepare_failure"}
+  ```
+
+  Those are exact key sets for their variants. Arrays are canonically sorted
+  where specified; output order is transaction order. Machine JSON input or
+  output is at most 4 MiB, raw signed-transaction stdin is at most 20,000 ASCII
+  hex characters, restricted-outpoint input is at most 4,096 unique canonical
+  identities, wallet files contain at most 10,000 unique keys, and structured
+  error text/code is at most 128 ASCII bytes. A nonzero machine exit still
+  emits exactly the failure object and never echoes untrusted input.
+- Add side-effect-free `btc09 inspect-tx -json`; it reads bounded signed hex
+  from stdin and reports txid plus canonical inputs/outputs without echoing the
+  hex. `broadcast-tx` also reads signed hex from bounded stdin, never argv or a
+  process listing. Python uses an absolute binary path, `shell=False`, a
+  minimal environment, and exceptions that never contain signed hex, seeds,
+  tokens, argv, subprocess stdout/stderr, or the full environment.
+- The Python explorer accepts only an explicitly configured numeric loopback
+  HTTP base (`127.0.0.1` or `[::1]`, explicit port, no userinfo/path/query/
+  fragment), bypasses proxy environment variables, never follows redirects,
+  requires JSON content type, bounds response bodies, and applies connect/read
+  timeouts. HTTP proxy and redirect forgery tests must fail closed. Transport
+  failure remains distinct from a valid chain status of `unknown`.
+- Python `Wallet.prepare` receives the prior typed `WalletSnapshot` and must
+  match its V1 hash; `Wallet.broadcast` receives the persisted prepared tip and
+  canonical network. Broadcast first proves that tip remains canonical and
+  checks the trusted local tx endpoint. Exact pre-observed mempool/confirmed
+  status skips submission. Chain-unknown requires at least one successful peer
+  write and then exact trusted-local observation. Canonical loss, transport or
+  parse failure, zero-write unknown, timeout, or process crash is uncertain;
+  only the DB-stored bytes/txid may be retried.
+- Task 3 already covers SQLite attach-COMMIT ambiguity. Post-broadcast DB-update
+  crash orchestration belongs to Tasks 5/6, where the service exists; Task 4
+  proves killed prepare is safe and every invoked/ambiguous broadcast is
+  uncertain. Windows runs the complete runtime suite. Linux build-tag paths
+  are cross-compiled locally, then the full/race and durability suite runs on
+  the production-like Linux VPS before release.
+
+- [ ] **Task 4A Step 1: Red-test consensus MoneyRange arithmetic**
+
+Add focused core tests for the signed two-`MaxInt64` output transaction through
+both mempool and block validation, two-`MaxInt64` coinbase outputs, synthetic
+aggregate-fee overflow, negative/out-of-range persisted UTXOs, and exact
+`MaxMoneyUnits` boundary-valid input/output/fee behavior. Invalid-value blocks
+must also fail through `Store.LoadInto`, not only direct in-memory validation.
+Run the focused tests and record the expected failures before implementation.
+
+- [ ] **Task 4A Step 2: Implement shared checked money arithmetic**
+
+Add `MaxMoneyUnits`, shared MoneyRange/checked-add helpers, and use them in
+transaction validation, block fee/coinbase validation, and miner template fee
+construction. No consensus or miner economic sum uses unchecked `int64`
+addition. Rerun focused tests, the full core suite, and `go test ./...`.
+
+- [ ] **Task 4A Step 3: Red-test and implement canonical durable Store snapshots**
+
+Add the one-RLock immutable main-chain snapshot, acquire `Store.mu` before
+capturing it, and hold that mutex plus the canonical-path OS file lock through
+a unique-temp durable replacement. Tests use two Store/Chain instances and a
+late stale callback to prove lower-work and equal-work-different-tip snapshots
+cannot overwrite the newer durable tip, while an exact-tip replay is a no-op.
+They also force competing branch saves and injected failures at temp write,
+file sync, replace, and final directory/write-through completion. Reload must
+always yield the complete prior or complete new branch. A subprocess lock-owner
+death must release the OS lock within a bounded retry deadline.
+Before persistence tests pass, add RED pointer-ownership tests proving an
+accepted block/transaction and values returned by `BlockAt`/`MempoolTxs` can be
+mutated after return without changing the Chain or Store snapshot. The captured
+snapshot must reject any internally inconsistent ID/parent/merkle metadata.
+
+- [ ] **Task 4A Step 4: Verify, review, and commit before Task 4B**
+
+```powershell
+go test ./core -count=1
+1..20 | ForEach-Object { go test ./core -run 'Test.*(Money|Overflow|Store|Snapshot)' -count=1; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+go test ./... -count=1
+go vet ./...
+$env:GOOS='linux'; $env:GOARCH='amd64'; go test ./core -c -o $env:TEMP\btc09-core-linux.test; Remove-Item Env:GOOS; Remove-Item Env:GOARCH
+git add go.mod go.sum core/params.go core/chain.go core/core_test.go core/miner.go core/store.go core/store_test.go core/filelock_unix.go core/filelock_windows.go core/durable_replace_unix.go core/durable_replace_windows.go docs/superpowers/plans/2026-07-10-otc-trade-system.md
+git commit -m "Harden consensus money and chain persistence"
+```
+
+Task 4B remains blocked until a fresh reviewer approves that exact commit.
+
+- [ ] **Task 4B Step 1: Write failing canonical address-history tests**
 
 Build regtest chains and assert:
 
@@ -1957,7 +2197,7 @@ tip hash/height, and all best-chain outputs including spent outputs. Each output
 contains full txid/vout, integer `amount_units`, block anchor, confirmations,
 coinbase/maturity, and an optional confirmed spending tx/input/block identity.
 
-- [ ] **Step 2: Expose and test the explorer JSON contract**
+- [ ] **Task 4B Step 2: Expose and test the explorer JSON contract**
 
 Add:
 
@@ -1974,6 +2214,7 @@ GET /api/v1/address/{base58-address}/outputs?expected_tip_hash={hash}&expected_t
   "tip": {"height": 7000, "hash": "<64 lowercase hex>"},
   "outputs": [{
     "txid": "<64 lowercase hex>",
+    "transaction_index": 1,
     "vout": 0,
     "amount_units": 100000000,
     "block": {"height": 6995, "hash": "<64 lowercase hex>"},
@@ -2011,7 +2252,7 @@ responses use one in-memory chain snapshot, lowercase full hashes,
 The block lookup lets recovery prove that the exact tip used to sign is still a
 canonical ancestor after newer blocks arrive.
 
-- [ ] **Step 3: Write and implement the fail-closed Python explorer adapter**
+- [ ] **Task 4B Step 3: Write and implement the fail-closed Python explorer adapter**
 
 Tests reject timeouts, non-200, malformed JSON, `complete=false`, wrong
 schema/network/address, duplicate `(network,txid,vout)`, negative/non-integer
@@ -2030,7 +2271,7 @@ Batch tests fetch addresses A/B/C at expected tip T and reject all results if B
 returns 409, C returns another tip, the final tip advances, the watched DB set
 changes, or an output/outpoint repeats across address responses.
 
-- [ ] **Step 4: Write failing prepare/persist/broadcast Go tests**
+- [ ] **Task 4B Step 4: Write failing prepare/persist/broadcast Go tests**
 
 Add tests that assert:
 
@@ -2094,8 +2335,9 @@ func (n *Node) BroadcastTx(tx *core.Tx) int {
 }
 ```
 
-Change transaction acceptance to return an atomic result that distinguishes
-`added` from `already_known`. The P2P receive path relays only `added`; an exact
+Add the atomic transaction-acceptance result method that distinguishes `added`
+from `already_known`; keep the existing error-only `AcceptTx` wrapper for human
+and compatibility callers. The P2P receive path relays only `added`; an exact
 replay is successful and idempotent but is never re-gossiped. Add a cyclic
 multi-peer test that would fail if duplicates bounce indefinitely.
 
@@ -2104,12 +2346,15 @@ Change `broadcast` to return successful peer writes. Refactor the wallet so
 `SubmitPayment` validates/submits a previously signed transaction. Every wallet
 load and mutation uses the same cross-process lock. Keep the human `send`
 command compatible while removing its `flag.Float64` path too. The bot uses a
-dedicated wallet and three machine boundaries:
+dedicated wallet and these machine boundaries (machine `NETWORK` is the
+canonical `btc09-mainnet|btc09-regtest` ID):
 
 ```text
+btc09 wallet new -wallet-file WALLET -network NETWORK -json
 btc09 wallet snapshot -wallet-file WALLET -datadir DATA -network NETWORK -expected-tip-hash HASH -expected-tip-height HEIGHT -json
 btc09 prepare-send -to ADDRESS -amount DECIMAL -fee DECIMAL -datadir DATA -network NETWORK -wallet-file WALLET -expected-tip-hash HASH -expected-tip-height HEIGHT -exclude-outpoints-json - -json
-btc09 broadcast-tx -tx-hex SIGNED_HEX -expected-txid TXID -datadir DATA -network NETWORK -seeds HOSTS -json -require-broadcast
+btc09 inspect-tx -tx-hex - -network NETWORK -json
+btc09 broadcast-tx -tx-hex - -expected-txid TXID -datadir DATA -network NETWORK -seeds HOSTS -json -require-broadcast
 ```
 
 `wallet snapshot` takes the same interprocess wallet lock, requires its loaded
@@ -2128,7 +2373,7 @@ stdin and excludes all of them from coin selection. It returns the matched
 snapshot anchor and the selected inputs so both languages can prove exclusion:
 
 ```json
-{"ok":true,"stage":"prepared","txid":"<64 lowercase hex>","signed_tx_hex":"<lowercase hex>","destination":"<09C address>","amount_units":100,"fee_units":10,"snapshot_tip":{"height":7000,"hash":"<64 lowercase hex>"},"wallet_snapshot_hash":"<64 lowercase hex>","selected_outpoints":["<txid>:0"]}
+{"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"prepared","txid":"<64 lowercase hex>","signed_tx_hex":"<lowercase hex>","destination":"<09C address>","amount_units":100,"fee_units":10,"snapshot_tip":{"height":7000,"hash":"<64 lowercase hex>"},"wallet_snapshot_hash":"<64 lowercase hex>","selected_outpoints":["<txid>:0"]}
 ```
 
 The parent reads the live tip again after prepare. It attaches the prepared
@@ -2156,7 +2401,7 @@ transaction to be valid, waits for a peer before initial
 submission, and returns the same txid plus submission/peer-write count:
 
 ```json
-{"ok":true,"stage":"broadcast","status":"submitted","txid":"<same 64 hex>","peer_writes":1}
+{"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"broadcast","status":"submitted","txid":"<same 64 hex>","peer_writes":1}
 ```
 
 The ephemeral broadcaster never reports `mempool` merely because its temporary
@@ -2197,13 +2442,15 @@ best-effort save. Kill a subprocess while it owns the platform lock and prove
 the OS releases the lock so the next process can open the unchanged wallet; do
 not implement ownership with a bare persistent `O_EXCL` sentinel file.
 
-- [ ] **Step 5: Implement and test the Python wallet adapter**
+- [ ] **Task 4B Step 5: Implement and test the Python wallet adapter**
 
 Use integer base-unit decimal formatting without float and invoke the wallet
-creation, snapshot, and two send commands above. `Wallet.new_address` returns only a
+creation, snapshot, prepare, inspect, and broadcast commands above.
+`Wallet.new_address` returns only a
 durably stored address from the dedicated wallet. `Wallet.snapshot` rejects a
 wrong network/tip, duplicate address/outpoint, bad integer sum, malformed hash,
-or noncanonical ordering. `Wallet.prepare` first reads
+or noncanonical ordering. `Wallet.prepare` receives the prior typed
+`expected_snapshot`, then first reads
 the live tip and requires it equal the Store claim's common-ledger tip, then
 passes that anchor and the configured Explorer network to the command,
 passes the Store's sorted provisional/restricted outpoints through bounded JSON
@@ -2217,17 +2464,19 @@ address/key or UTXO-set change is a safe pre-attach retry.
 Because prepare has no submission/network path, a killed/failed prepare is safe
 to retry while the DB remains `reserved` and has no signed bytes.
 
-`Wallet.broadcast` accepts only the DB-stored hex/expected txid and first proves
-the stored prepared tip remains canonical. Reject malformed/multiple JSON
+`Wallet.broadcast` accepts only the DB-stored hex, expected txid, and persisted
+prepared tip (with the adapter's configured canonical network), and first
+proves that exact prepared tip remains canonical. Reject malformed/multiple JSON
 values, identity mismatch, zero peer writes for a transaction the trusted node
 did not already know, stderr-only/unstructured failures, missing trusted-node
 observation, or timeout as `UncertainSendFailure`. A prepared exact tx may be
 retried/rebroadcast; it is never replaced. Never include a token, private key,
 seed, signed transaction, or complete subprocess environment in an exception/log.
 
-Crash tests cover before signing, after signing but before parent receipt, each
-ambiguous FULL SQLite commit boundary, after local submission, after the first
-peer write, and before the broadcast DB update. Race tests cover disk/live tip
+Task 4 crash tests cover before signing, after signing but before parent
+receipt, after local submission, and after the first peer write. Task 3 owns
+the ambiguous FULL SQLite attach boundary; Tasks 5/6 own the post-broadcast DB
+update crash. Race tests cover disk/live tip
 mismatch, reorg during signing, a new block during signing, and reorg after the
 prepared commit. A funded regtest path passes `btc09-regtest`; a mainnet tip or
 output is rejected when any boundary is configured for regtest and vice versa.
@@ -2239,7 +2488,7 @@ wallet keys, restricted outpoints, exact sum overflow, a new address between
 snapshot and prepare, and wrong network/tip. No test parses the human `balance`
 or `wallet list` output.
 
-- [ ] **Step 6: Verify and commit**
+- [ ] **Task 4B Step 6: Verify, review, and commit**
 
 ```powershell
 go test ./... -count=1
@@ -2248,6 +2497,12 @@ python -m unittest discover -s bot/tests -p "test_*.py" -v
 git add core/chain.go core/core_test.go wallet/wallet.go wallet/wallet_test.go wallet/filelock_unix.go wallet/filelock_windows.go wallet/durable_replace_unix.go wallet/durable_replace_windows.go explorer/explorer.go explorer/explorer_test.go p2p/p2p.go p2p/p2p_test.go cmd/btc09/main.go cmd/btc09/main_test.go bot/otc/explorer.py bot/otc/wallet.py bot/tests/test_explorer.py bot/tests/test_wallet.py
 git commit -m "Add canonical OTC wallet boundaries"
 ```
+
+The Task 4B staged set is reviewed against the already-approved Task 4A base;
+it must not rewrite Task 4A money or persistence invariants. If Task 4B needs a
+new direct module dependency, stage the corresponding `go.mod`/`go.sum` change
+explicitly. Generate a separate Task 4B review package and obtain a fresh
+approval before Task 5 begins.
 
 ---
 

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"errors"
 	"fmt"
@@ -43,14 +44,18 @@ type Chain struct {
 
 // NewChain creates a chain initialized with the network's genesis block.
 func NewChain(p *Params) (*Chain, error) {
+	if p == nil {
+		return nil, errors.New("nil chain params")
+	}
+	params := *p
 	c := &Chain{
-		params:  p,
+		params:  &params,
 		index:   make(map[Hash32]*blockIndex),
 		utxo:    make(map[OutPoint]UTXOEntry),
 		mempool: make(map[Hash32]*Tx),
 	}
-	g := GenesisBlock(p)
-	if !g.Header.CheckPow(p) {
+	g := GenesisBlock(c.params)
+	if !g.Header.CheckPow(c.params) {
 		return nil, errors.New("genesis block fails PoW: params/nonce mismatch")
 	}
 	bi := &blockIndex{block: g, height: 0, cumWork: WorkFromTarget(CompactToTarget(g.Header.Bits)), id: g.Header.ID()}
@@ -63,7 +68,10 @@ func NewChain(p *Params) (*Chain, error) {
 
 // ---- accessors ----
 
-func (c *Chain) Params() *Params { return c.params }
+func (c *Chain) Params() *Params {
+	params := *c.params
+	return &params
+}
 
 func (c *Chain) Tip() (Hash32, int64) {
 	c.mu.RLock()
@@ -80,7 +88,7 @@ func (c *Chain) BlockAt(h int64) *Block {
 	if h < 0 || h >= int64(len(c.mainIDs)) {
 		return nil
 	}
-	return c.index[c.mainIDs[h]].block
+	return cloneBlock(c.index[c.mainIDs[h]].block)
 }
 
 // HasBlock reports whether the id is known (any chain).
@@ -115,7 +123,7 @@ func (c *Chain) MempoolTxs() []*Tx {
 	defer c.mu.RUnlock()
 	txs := make([]*Tx, 0, len(c.mempool))
 	for _, t := range c.mempool {
-		txs = append(txs, t)
+		txs = append(txs, cloneTx(t))
 	}
 	sort.Slice(txs, func(i, j int) bool {
 		a, b := txs[i].ID(), txs[j].ID()
@@ -144,6 +152,10 @@ func (c *Chain) nextBitsAtLocked(height int64) uint32 {
 // AcceptTx validates a transaction against the current UTXO set + mempool
 // and admits it to the mempool.
 func (c *Chain) AcceptTx(tx *Tx) error {
+	tx = cloneTx(tx)
+	if tx == nil {
+		return errors.New("nil transaction")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if tx.IsCoinbase() {
@@ -192,6 +204,9 @@ func (c *Chain) checkTxLocked(tx *Tx, height int64) (int64, error) {
 		if !ok {
 			return 0, errors.New("input not found or already spent")
 		}
+		if !MoneyRange(entry.Value) {
+			return 0, moneyRangeError("input value")
+		}
 		if entry.Coinbase && height-entry.Height < c.params.CoinbaseMaturity {
 			return 0, errors.New("coinbase not mature")
 		}
@@ -204,29 +219,51 @@ func (c *Chain) checkTxLocked(tx *Tx, height int64) (int64, error) {
 		if !ed25519.Verify(ed25519.PublicKey(in.PubKey), digest[:], in.Sig) {
 			return 0, errors.New("bad signature")
 		}
-		inSum += entry.Value
+		var sumOK bool
+		inSum, sumOK = checkedAddMoney(inSum, entry.Value)
+		if !sumOK {
+			return 0, moneyRangeError("input total")
+		}
 	}
 	for _, out := range tx.Outs {
-		if out.Value <= 0 {
+		if out.Value < 0 {
+			return 0, moneyRangeError("negative output value")
+		}
+		if out.Value == 0 {
 			return 0, errors.New("non-positive output")
 		}
-		outSum += out.Value
+		if !MoneyRange(out.Value) {
+			return 0, moneyRangeError("output value")
+		}
+		var sumOK bool
+		outSum, sumOK = checkedAddMoney(outSum, out.Value)
+		if !sumOK {
+			return 0, moneyRangeError("output total")
+		}
 	}
 	if outSum > inSum {
 		return 0, fmt.Errorf("outputs %d exceed inputs %d", outSum, inSum)
 	}
-	return inSum - outSum, nil
+	fee := inSum - outSum
+	if !MoneyRange(fee) {
+		return 0, moneyRangeError("transaction fee")
+	}
+	return fee, nil
 }
 
 // AcceptBlock fully validates a block and, if it creates a heavier chain,
 // makes it the new tip (handling reorgs). Non-tip-extending valid blocks
 // are stored for future fork choice.
 func (c *Chain) AcceptBlock(b *Block) error {
+	b = cloneBlock(b)
+	if b == nil {
+		return errors.New("nil block")
+	}
 	c.mu.Lock()
 	newTip, err := c.acceptBlockLocked(b, true)
 	c.mu.Unlock()
 	if err == nil && newTip != nil && c.OnNewTip != nil {
-		c.OnNewTip(newTip.block, newTip.height)
+		c.OnNewTip(cloneBlock(newTip.block), newTip.height)
 	}
 	return err
 }
@@ -236,11 +273,15 @@ func (c *Chain) AcceptBlock(b *Block) error {
 // the expensive Argon2id PoW check while still validating structure, chain
 // links, difficulty bits, merkle root, and transaction economics.
 func (c *Chain) acceptStoredBlock(b *Block) error {
+	b = cloneBlock(b)
+	if b == nil {
+		return errors.New("nil stored block")
+	}
 	c.mu.Lock()
 	newTip, err := c.acceptBlockLocked(b, false)
 	c.mu.Unlock()
 	if err == nil && newTip != nil && c.OnNewTip != nil {
-		c.OnNewTip(newTip.block, newTip.height)
+		c.OnNewTip(cloneBlock(newTip.block), newTip.height)
 	}
 	return err
 }
@@ -253,6 +294,9 @@ func (c *Chain) acceptBlockLocked(b *Block, checkPow bool) (*blockIndex, error) 
 	parent, ok := c.index[b.Header.PrevBlock]
 	if !ok {
 		return nil, errors.New("orphan: unknown parent")
+	}
+	if err := checkBlockSanity(b); err != nil {
+		return nil, err
 	}
 	if len(b.Bytes()) > MaxBlockBytes {
 		return nil, errors.New("block too large")
@@ -276,15 +320,6 @@ func (c *Chain) acceptBlockLocked(b *Block, checkPow bool) (*blockIndex, error) 
 	if MerkleRoot(b.Txs) != b.Header.MerkleRoot {
 		return nil, errors.New("merkle root mismatch")
 	}
-	if len(b.Txs) == 0 || !b.Txs[0].IsCoinbase() {
-		return nil, errors.New("first tx must be coinbase")
-	}
-	for i := 1; i < len(b.Txs); i++ {
-		if b.Txs[i].IsCoinbase() {
-			return nil, errors.New("multiple coinbases")
-		}
-	}
-
 	bi := &blockIndex{
 		block:   b,
 		height:  height,
@@ -293,8 +328,11 @@ func (c *Chain) acceptBlockLocked(b *Block, checkPow bool) (*blockIndex, error) 
 	}
 
 	if bi.cumWork.Cmp(c.tip.cumWork) <= 0 {
-		// side-chain or non-extending: contextually validate txs only when
-		// it becomes the best chain (Bitcoin does the same).
+		// A side-chain block must still be fully valid before it enters the
+		// index. Replay its branch on scratch state without committing it.
+		if _, _, err := c.replayBranch(bi); err != nil {
+			return nil, err
+		}
 		c.index[id] = bi
 		return nil, nil
 	}
@@ -313,6 +351,60 @@ func (c *Chain) acceptBlockLocked(b *Block, checkPow bool) (*blockIndex, error) 
 	}
 	c.index[id] = bi
 	return bi, nil
+}
+
+// checkBlockSanity rejects context-free transaction and money corruption
+// before any block, including an equal/lower-work side branch, enters the
+// block index. UTXO ownership, signatures, maturity, and fees are then checked
+// by scratch branch replay before any side-branch candidate is indexed.
+func checkBlockSanity(b *Block) error {
+	if len(b.Txs) == 0 || b.Txs[0] == nil || !b.Txs[0].IsCoinbase() {
+		return errors.New("first tx must be coinbase")
+	}
+	txIDs := make(map[Hash32]struct{}, len(b.Txs))
+	spent := make(map[OutPoint]struct{})
+	for txIndex, tx := range b.Txs {
+		if tx == nil {
+			return errors.New("nil transaction in block")
+		}
+		if txIndex > 0 && tx.IsCoinbase() {
+			return errors.New("multiple coinbases")
+		}
+		if len(tx.Ins) == 0 || len(tx.Outs) == 0 {
+			return errors.New("empty ins or outs")
+		}
+		id := tx.ID()
+		if _, duplicate := txIDs[id]; duplicate {
+			return errors.New("duplicate transaction in block")
+		}
+		txIDs[id] = struct{}{}
+		if txIndex > 0 {
+			for _, input := range tx.Ins {
+				if _, duplicate := spent[input.Prev]; duplicate {
+					return errors.New("duplicate input in block")
+				}
+				spent[input.Prev] = struct{}{}
+			}
+		}
+		var outputTotal int64
+		for _, output := range tx.Outs {
+			if output.Value < 0 {
+				return moneyRangeError("negative block output")
+			}
+			if output.Value == 0 {
+				return errors.New("non-positive block output")
+			}
+			if !MoneyRange(output.Value) {
+				return moneyRangeError("block output value")
+			}
+			var sumOK bool
+			outputTotal, sumOK = checkedAddMoney(outputTotal, output.Value)
+			if !sumOK {
+				return moneyRangeError("block transaction output total")
+			}
+		}
+	}
+	return nil
 }
 
 // bitsOnBranch computes required bits for a block at `height` whose parent
@@ -362,19 +454,9 @@ func (c *Chain) connectTipLocked(newTip *blockIndex) error {
 // validating every block's transactions contextually. On success the main
 // chain, UTXO set and mempool are updated.
 func (c *Chain) connectBranch(newTip *blockIndex) error {
-	branch := c.branchTo(newTip)
-	utxo := make(map[OutPoint]UTXOEntry)
-	scratch := &Chain{params: c.params, utxo: utxo}
-	newMain := make([]Hash32, newTip.height+1)
-	for h := int64(0); h <= newTip.height; h++ {
-		bi, ok := branch[h]
-		if !ok {
-			return fmt.Errorf("branch missing height %d", h)
-		}
-		if err := scratch.validateAndApplyLocked(bi.block, h); err != nil {
-			return fmt.Errorf("block %d invalid: %w", h, err)
-		}
-		newMain[h] = bi.id
+	utxo, newMain, err := c.replayBranch(newTip)
+	if err != nil {
+		return err
 	}
 	// commit
 	c.utxo = utxo
@@ -382,6 +464,29 @@ func (c *Chain) connectBranch(newTip *blockIndex) error {
 	c.tip = newTip
 	c.evictMempoolLocked()
 	return nil
+}
+
+// replayBranch fully validates the branch ending at newTip on isolated UTXO
+// state and returns the resulting state without mutating the live chain.
+func (c *Chain) replayBranch(newTip *blockIndex) (map[OutPoint]UTXOEntry, []Hash32, error) {
+	branch := c.branchTo(newTip)
+	utxo := make(map[OutPoint]UTXOEntry)
+	scratch := &Chain{params: c.params, utxo: utxo}
+	newMain := make([]Hash32, newTip.height+1)
+	for h := int64(0); h <= newTip.height; h++ {
+		bi, ok := branch[h]
+		if !ok {
+			return nil, nil, fmt.Errorf("branch missing height %d", h)
+		}
+		if err := checkBlockSanity(bi.block); err != nil {
+			return nil, nil, fmt.Errorf("block %d invalid: %w", h, err)
+		}
+		if err := scratch.validateAndApplyLocked(bi.block, h); err != nil {
+			return nil, nil, fmt.Errorf("block %d invalid: %w", h, err)
+		}
+		newMain[h] = bi.id
+	}
+	return utxo, newMain, nil
 }
 
 func (c *Chain) evictMempoolLocked() {
@@ -420,19 +525,42 @@ func (c *Chain) validateAndApplyLocked(b *Block, height int64) error {
 			rollback()
 			return err
 		}
-		fees += fee
+		var sumOK bool
+		fees, sumOK = checkedAddMoney(fees, fee)
+		if !sumOK {
+			rollback()
+			return moneyRangeError("aggregate block fees")
+		}
 		c.spendAndCreateWithUndo(b.Txs[i], height, false, &undo)
 	}
 	cb := b.Txs[0]
 	var cbOut int64
 	for _, o := range cb.Outs {
-		if o.Value <= 0 {
+		if o.Value < 0 {
+			rollback()
+			return moneyRangeError("negative coinbase output")
+		}
+		if o.Value == 0 {
 			rollback()
 			return errors.New("non-positive coinbase output")
 		}
-		cbOut += o.Value
+		if !MoneyRange(o.Value) {
+			rollback()
+			return moneyRangeError("coinbase output")
+		}
+		var sumOK bool
+		cbOut, sumOK = checkedAddMoney(cbOut, o.Value)
+		if !sumOK {
+			rollback()
+			return moneyRangeError("coinbase total")
+		}
 	}
-	if cbOut > SubsidyAt(height)+fees {
+	allowed, sumOK := checkedAddMoney(SubsidyAt(height), fees)
+	if !sumOK {
+		rollback()
+		return moneyRangeError("subsidy plus fees")
+	}
+	if cbOut > allowed {
 		rollback()
 		return fmt.Errorf("coinbase pays %d > subsidy %d + fees %d", cbOut, SubsidyAt(height), fees)
 	}
@@ -481,4 +609,105 @@ func (c *Chain) applyBlockToUTXO(b *Block, height int64) {
 	for i, tx := range b.Txs {
 		c.spendAndCreate(tx, height, i == 0)
 	}
+}
+
+type canonicalMainSnapshot struct {
+	params    Params
+	tipID     Hash32
+	tipHeight int64
+	cumWork   *big.Int
+	blocks    []*Block // canonical heights 1..tipHeight; genesis is derived
+}
+
+// canonicalMainSnapshot returns one internally consistent, deeply detached
+// view of the canonical chain. The chain lock is held only while validating
+// and copying consensus state; callers may serialize the result afterward.
+func (c *Chain) canonicalMainSnapshot() (canonicalMainSnapshot, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.tip == nil || c.tip.cumWork == nil || c.tip.cumWork.Sign() <= 0 {
+		return canonicalMainSnapshot{}, errors.New("canonical tip is incomplete")
+	}
+	if c.tip.height < 0 || int64(len(c.mainIDs)) != c.tip.height+1 {
+		return canonicalMainSnapshot{}, errors.New("canonical height/index mismatch")
+	}
+	if len(c.mainIDs) == 0 || c.mainIDs[len(c.mainIDs)-1] != c.tip.id {
+		return canonicalMainSnapshot{}, errors.New("canonical tip ID mismatch")
+	}
+	indexedTip, ok := c.index[c.tip.id]
+	if !ok || indexedTip != c.tip {
+		return canonicalMainSnapshot{}, errors.New("canonical tip metadata is detached")
+	}
+
+	snapshot := canonicalMainSnapshot{
+		params:    *c.params,
+		tipID:     c.tip.id,
+		tipHeight: c.tip.height,
+		cumWork:   new(big.Int).Set(c.tip.cumWork),
+		blocks:    make([]*Block, 0, c.tip.height),
+	}
+	var previousID Hash32
+	var expectedWork *big.Int
+	expectedGenesis := GenesisBlock(c.params)
+	for height, id := range c.mainIDs {
+		bi, ok := c.index[id]
+		if !ok || bi == nil || bi.block == nil || bi.cumWork == nil {
+			return canonicalMainSnapshot{}, fmt.Errorf("canonical block %d is incomplete", height)
+		}
+		if bi.id != id || bi.height != int64(height) || bi.block.Header.ID() != id {
+			return canonicalMainSnapshot{}, fmt.Errorf("canonical block %d identity mismatch", height)
+		}
+		blockWork := WorkFromTarget(CompactToTarget(bi.block.Header.Bits))
+		if expectedWork == nil {
+			expectedWork = new(big.Int).Set(blockWork)
+		} else {
+			expectedWork = new(big.Int).Add(expectedWork, blockWork)
+		}
+		if bi.cumWork.Sign() <= 0 || bi.cumWork.Cmp(expectedWork) != 0 {
+			return canonicalMainSnapshot{}, fmt.Errorf("canonical block %d work mismatch", height)
+		}
+		if height == 0 && !bytes.Equal(bi.block.Bytes(), expectedGenesis.Bytes()) {
+			return canonicalMainSnapshot{}, errors.New("canonical genesis mismatch")
+		}
+		if height > 0 && bi.block.Header.PrevBlock != previousID {
+			return canonicalMainSnapshot{}, fmt.Errorf("canonical block %d parent mismatch", height)
+		}
+		if MerkleRoot(bi.block.Txs) != bi.block.Header.MerkleRoot {
+			return canonicalMainSnapshot{}, fmt.Errorf("canonical block %d merkle mismatch", height)
+		}
+		if height > 0 {
+			snapshot.blocks = append(snapshot.blocks, cloneBlock(bi.block))
+		}
+		previousID = id
+	}
+	return snapshot, nil
+}
+
+func cloneTx(tx *Tx) *Tx {
+	if tx == nil {
+		return nil
+	}
+	cloned := *tx
+	cloned.Ins = make([]TxIn, len(tx.Ins))
+	for i, input := range tx.Ins {
+		cloned.Ins[i] = input
+		cloned.Ins[i].PubKey = append([]byte(nil), input.PubKey...)
+		cloned.Ins[i].Sig = append([]byte(nil), input.Sig...)
+	}
+	cloned.Outs = append([]TxOut(nil), tx.Outs...)
+	cloned.LockTag = append([]byte(nil), tx.LockTag...)
+	return &cloned
+}
+
+func cloneBlock(block *Block) *Block {
+	if block == nil {
+		return nil
+	}
+	cloned := *block
+	cloned.Txs = make([]*Tx, len(block.Txs))
+	for i, tx := range block.Txs {
+		cloned.Txs[i] = cloneTx(tx)
+	}
+	return &cloned
 }
