@@ -720,6 +720,92 @@ func TestBroadcastClosesPeerAfterTerminalWriteFailure(t *testing.T) {
 	}
 }
 
+func TestBroadcastTxCountsOnlySuccessfulWrites(t *testing.T) {
+	n := NewNode(newBatchTestChain(t), ":0", log.New(io.Discard, "", 0))
+	var written bytes.Buffer
+	goodConn := &bufferConn{w: &written}
+	badConn := newFailingWriteConn()
+	n.peers["good"] = &peer{conn: goodConn, enc: bufio.NewWriter(goodConn), addr: "good"}
+	n.peers["bad"] = &peer{conn: badConn, enc: bufio.NewWriter(badConn), addr: "bad"}
+	tx := core.NewCoinbase(1, 1, [20]byte{1}, "count")
+	if got := n.BroadcastTx(tx); got != 1 {
+		t.Fatalf("BroadcastTx writes = %d, want 1", got)
+	}
+}
+
+func TestWaitForPeersHonorsContext(t *testing.T) {
+	n := NewNode(newBatchTestChain(t), ":0", log.New(io.Discard, "", 0))
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	if n.WaitForPeers(ctx, 1) {
+		t.Fatal("WaitForPeers reported a peer after context timeout")
+	}
+	n.peers["ready"] = &peer{addr: "ready"}
+	if !n.WaitForPeers(context.Background(), 1) {
+		t.Fatal("WaitForPeers did not observe existing peer")
+	}
+}
+
+func TestTransactionReplayDoesNotBounceAroundCyclicPeers(t *testing.T) {
+	chains := []*core.Chain{newBatchTestChain(t), newBatchTestChain(t), newBatchTestChain(t)}
+	key, pkh := batchTestKey(t)
+	for i := 0; i < 3; i++ {
+		mineBatchTestBlock(t, chains[0], pkh)
+		block := chains[0].BlockAt(int64(i + 1))
+		for _, chain := range chains[1:] {
+			if err := chain.AcceptBlock(block); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var outpoint core.OutPoint
+	var entry core.UTXOEntry
+	for outpoint, entry = range chains[0].UTXOsForPKH(pkh) {
+		break
+	}
+	tx := &core.Tx{
+		Version: 1, Ins: []core.TxIn{{Prev: outpoint}},
+		Outs: []core.TxOut{{Value: entry.Value - 1, PubKeyHash: pkh}},
+	}
+	if err := tx.Sign([]ed25519.PrivateKey{key}); err != nil {
+		t.Fatal(err)
+	}
+	nodes := []*Node{
+		NewNode(chains[0], ":0", log.New(io.Discard, "", 0)),
+		NewNode(chains[1], ":0", log.New(io.Discard, "", 0)),
+		NewNode(chains[2], ":0", log.New(io.Discard, "", 0)),
+	}
+	buffers := []*bytes.Buffer{{}, {}, {}}
+	for i, node := range nodes {
+		conn := &bufferConn{w: buffers[i]}
+		peerAddr := []string{"ab", "bc", "ca"}[i]
+		node.peers[peerAddr] = &peer{conn: conn, enc: bufio.NewWriter(conn), addr: peerAddr}
+	}
+	raw := tx.Bytes()
+	if err := nodes[0].handleMsg(&peer{addr: "ca"}, &Msg{Type: "tx", Raw: raw}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		message, err := readMsg(bufio.NewReader(buffers[i]))
+		if err != nil {
+			t.Fatalf("cycle hop %d: %v", i, err)
+		}
+		if err := nodes[i+1].handleMsg(&peer{addr: []string{"ab", "bc"}[i]}, message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	message, err := readMsg(bufio.NewReader(buffers[2]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := nodes[0].handleMsg(&peer{addr: "ca"}, message); err != nil {
+		t.Fatal(err)
+	}
+	if buffers[0].Len() != 0 {
+		t.Fatalf("exact replay was regossiped around cycle (%d bytes)", buffers[0].Len())
+	}
+}
+
 func TestSilentHandshakeTimesOutAndReleasesCapacity(t *testing.T) {
 	n := NewNode(newBatchTestChain(t), ":0", log.New(io.Discard, "", 0))
 	n.handshakeTimeout = 40 * time.Millisecond

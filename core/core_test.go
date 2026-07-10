@@ -10,6 +10,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -23,6 +24,114 @@ func testChain(t *testing.T) *Chain {
 		t.Fatalf("NewChain: %v", err)
 	}
 	return c
+}
+
+func TestAcceptTxWithResultIsAtomicAndIdempotent(t *testing.T) {
+	c := testChain(t)
+	minerKey, minerPKH := keyAndPKH(t)
+	for i := int64(0); i < RegTest.CoinbaseMaturity+1; i++ {
+		mineOne(t, c, minerPKH)
+	}
+	var op OutPoint
+	var entry UTXOEntry
+	for op, entry = range c.UTXOsForPKH(minerPKH) {
+		break
+	}
+	tx := &Tx{
+		Version: 1,
+		Ins:     []TxIn{{Prev: op}},
+		Outs:    []TxOut{{Value: entry.Value - 1, PubKeyHash: minerPKH}},
+	}
+	if err := tx.Sign([]ed25519.PrivateKey{minerKey}); err != nil {
+		t.Fatal(err)
+	}
+
+	const callers = 16
+	results := make(chan TxAcceptanceResult, callers)
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := c.AcceptTxWithResult(tx)
+			results <- result
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("AcceptTxWithResult: %v", err)
+		}
+	}
+	added, known := 0, 0
+	for result := range results {
+		switch result {
+		case TxAcceptanceAdded:
+			added++
+		case TxAcceptanceAlreadyKnown:
+			known++
+		default:
+			t.Fatalf("unexpected result %q", result)
+		}
+	}
+	if added != 1 || known != callers-1 {
+		t.Fatalf("added=%d already_known=%d, want 1/%d", added, known, callers-1)
+	}
+}
+
+func TestSpendableOutputsForPKHsUsesOneCanonicalSnapshotAndNumericVoutOrder(t *testing.T) {
+	c := testChain(t)
+	aliceKey, alicePKH := keyAndPKH(t)
+	_, bobPKH := keyAndPKH(t)
+	for i := int64(0); i < RegTest.CoinbaseMaturity+1; i++ {
+		mineOne(t, c, alicePKH)
+	}
+	var source OutPoint
+	var sourceEntry UTXOEntry
+	for source, sourceEntry = range c.UTXOsForPKH(alicePKH) {
+		break
+	}
+	outputs := make([]TxOut, 11)
+	for i := range outputs {
+		outputs[i] = TxOut{Value: 1, PubKeyHash: bobPKH}
+	}
+	outputs[0].Value = sourceEntry.Value - 10
+	tx := &Tx{Version: 1, Ins: []TxIn{{Prev: source}}, Outs: outputs}
+	if err := tx.Sign([]ed25519.PrivateKey{aliceKey}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AcceptTx(tx); err != nil {
+		t.Fatal(err)
+	}
+	mineOne(t, c, alicePKH)
+
+	snapshot, err := c.SpendableOutputsForPKHs([][20]byte{alicePKH, bobPKH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.Complete || snapshot.Tip.Network != RegTestMachineID || len(snapshot.Outputs) < 11 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	var txVouts []uint32
+	for _, output := range snapshot.Outputs {
+		if output.OutPoint.TxID == tx.ID() {
+			txVouts = append(txVouts, output.OutPoint.Idx)
+			if output.OwnerIndex != 1 || output.OwnerPKH != bobPKH {
+				t.Fatalf("wrong owner metadata: %#v", output)
+			}
+		}
+	}
+	want := []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	if !reflect.DeepEqual(txVouts, want) {
+		t.Fatalf("same-tx vouts = %v, want numeric %v", txVouts, want)
+	}
+	if _, err := c.SpendableOutputsForPKHs([][20]byte{alicePKH, alicePKH}); err == nil {
+		t.Fatal("duplicate owner PKH was accepted")
+	}
 }
 
 func mineOne(t *testing.T, c *Chain, pkh [20]byte) *Block {

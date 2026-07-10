@@ -614,7 +614,7 @@ func (n *Node) handleMsg(p *peer, m *Msg) error {
 		if err != nil {
 			return fmt.Errorf("bad tx: %w", err)
 		}
-		if err := n.chain.AcceptTx(tx); err == nil {
+		if result, err := n.chain.AcceptTxWithResult(tx); err == nil && result == core.TxAcceptanceAdded {
 			n.broadcast(&Msg{Type: "tx", Raw: m.Raw}, p.addr)
 		}
 		return nil
@@ -803,12 +803,16 @@ func (n *Node) announceBlock(b *core.Block, height int64) {
 	n.broadcast(&Msg{Type: "block", Raw: b.Bytes(), Height: height}, "")
 }
 
-// BroadcastTx gossips a locally-submitted transaction.
-func (n *Node) BroadcastTx(tx *core.Tx) {
-	n.broadcast(&Msg{Type: "tx", Raw: tx.Bytes()}, "")
+// BroadcastTx gossips a locally-submitted transaction and returns the number
+// of peers that accepted the complete framed write.
+func (n *Node) BroadcastTx(tx *core.Tx) int {
+	if tx == nil {
+		return 0
+	}
+	return n.broadcast(&Msg{Type: "tx", Raw: tx.Bytes()}, "")
 }
 
-func (n *Node) broadcast(m *Msg, exceptAddr string) {
+func (n *Node) broadcast(m *Msg, exceptAddr string) int {
 	n.mu.RLock()
 	ps := make([]*peer, 0, len(n.peers))
 	for _, p := range n.peers {
@@ -817,11 +821,17 @@ func (n *Node) broadcast(m *Msg, exceptAddr string) {
 		}
 	}
 	n.mu.RUnlock()
+	writes := 0
 	for _, p := range ps {
-		if err := p.send(m); err != nil && p.conn != nil {
-			p.conn.Close()
+		if err := p.send(m); err != nil {
+			if p.conn != nil {
+				p.conn.Close()
+			}
+			continue
 		}
+		writes++
 	}
+	return writes
 }
 
 // PeerCount returns the number of connected peers.
@@ -829,6 +839,32 @@ func (n *Node) PeerCount() int {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return len(n.peers)
+}
+
+// WaitForPeers waits until at least minimum peers are connected or ctx is
+// cancelled. Polling is deliberately bounded and does not retain peer locks.
+func (n *Node) WaitForPeers(ctx context.Context, minimum int) bool {
+	if minimum <= 0 {
+		return true
+	}
+	if ctx == nil {
+		return false
+	}
+	if n.PeerCount() >= minimum {
+		return true
+	}
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			if n.PeerCount() >= minimum {
+				return true
+			}
+		}
+	}
 }
 
 // ---- framing: 4-byte big-endian length + JSON ----
