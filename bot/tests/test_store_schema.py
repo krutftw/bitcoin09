@@ -1,8 +1,16 @@
+import json
+import os
 import re
 import sqlite3
+import subprocess
+import sys
 import tempfile
+import threading
+import types
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from functools import lru_cache
 from inspect import Parameter, signature
 from pathlib import Path
 
@@ -65,6 +73,22 @@ CREATE INDEX idx_orders_deposit_addr ON orders(deposit_addr);
 CREATE INDEX idx_orders_seller ON orders(seller_id);
 CREATE INDEX idx_orders_buyer ON orders(buyer_id);
 """
+
+
+@lru_cache(maxsize=1)
+def committed_v3_store_class():
+    repo_root = Path(__file__).resolve().parents[2]
+    source = subprocess.run(
+        ["git", "show", "735cec0:bot/otc/store.py"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    module = types.ModuleType("committed_otc_store_v3")
+    module.__file__ = "git:735cec0:bot/otc/store.py"
+    exec(compile(source, module.__file__, "exec"), module.__dict__)
+    return module.Store
 
 
 @contextmanager
@@ -272,6 +296,62 @@ class StoreSchemaTests(unittest.TestCase):
             (self.hash(40_003), transfer_id),
         )
 
+    def make_confirmed_release(self):
+        store, order_id = self.create_sell()
+        with managed_connection(store.connect()) as conn:
+            credit_id = self.fund_and_match(conn, order_id)
+            transfer_id = self.queue_release(conn, order_id, credit_id)
+            self.confirm_release(conn, transfer_id)
+        return store, transfer_id
+
+    def queue_fee_withdrawal(self, conn, key, created_at):
+        cursor = conn.execute(
+            """
+            INSERT INTO transfers(
+              operation_key,kind,is_main_outcome,state,amount_units,
+              network_fee_units,destination,created_at,updated_at
+            ) VALUES(?,'fee_withdrawal',0,'queued',1,0,'fee-wallet',?,?)
+            """,
+            (key, created_at, created_at),
+        )
+        return cursor.lastrowid
+
+    @staticmethod
+    def claim_transfer(conn, transfer_id, timestamp):
+        conn.execute(
+            """
+            UPDATE transfers SET state='reserved',attempt_count=attempt_count+1,
+              reserved_at=?,updated_at=? WHERE transfer_id=?
+            """,
+            (timestamp, timestamp, transfer_id),
+        )
+
+    def prepare_transfer(self, conn, transfer_id, timestamp, number):
+        conn.execute(
+            """
+            UPDATE transfers SET state='prepared',txid=?,signed_tx_hex='aa',
+              signed_at=?,prepared_tip_hash=?,prepared_tip_height=10,updated_at=?
+            WHERE transfer_id=?
+            """,
+            (
+                self.hash(60_000 + number),
+                timestamp,
+                self.hash(61_000 + number),
+                timestamp,
+                transfer_id,
+            ),
+        )
+
+    @staticmethod
+    def broadcast_transfer(conn, transfer_id, timestamp):
+        conn.execute(
+            """
+            UPDATE transfers SET state='broadcast',broadcast_at=?,updated_at=?
+            WHERE transfer_id=?
+            """,
+            (timestamp, timestamp, transfer_id),
+        )
+
     def test_new_schema_matches_exact_v4_catalog_and_connection_policy(self):
         store = self.make_store()
         self.assertEqual(SCHEMA_VERSION, 4)
@@ -328,6 +408,7 @@ class StoreSchemaTests(unittest.TestCase):
             )
 
         Store(self.path).initialize()
+        Store(self.path).initialize()
 
         with managed_connection(sqlite3.connect(self.path)) as conn:
             self.assertEqual(conn.execute("PRAGMA journal_mode").fetchone()[0], "wal")
@@ -380,16 +461,19 @@ class StoreSchemaTests(unittest.TestCase):
                 self.assertEqual(self.journal_mode(path), mode)
 
     def test_exact_empty_v3_migrates_with_or_without_v2_archive(self):
+        V3Store = committed_v3_store_class()
         for existing_archive in (False, True):
             with self.subTest(existing_archive=existing_archive):
                 path = Path(self.tmp.name) / f"v3-{existing_archive}.db"
-                with managed_connection(sqlite3.connect(path)) as conn:
-                    conn.executescript(_V3_SCHEMA_SOURCE)
-                    conn.execute("INSERT INTO users VALUES(7, 'Pilot', NULL, 1, 2)")
-                    if existing_archive:
-                        conn.execute(
-                            "CREATE TABLE orders_v2_archive(order_id INTEGER PRIMARY KEY)"
-                        )
+                if existing_archive:
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+                        conn.execute("INSERT INTO users VALUES(7, 'Pilot', NULL, 1, 2)")
+                V3Store(path).initialize()
+                if not existing_archive:
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.execute("INSERT INTO users VALUES(7, 'Pilot', NULL, 1, 2)")
+                Store(path).initialize()
                 Store(path).initialize()
                 with managed_connection(sqlite3.connect(path)) as conn:
                     self.assertEqual(conn.execute("SELECT version FROM schema_meta").fetchone()[0], 4)
@@ -413,6 +497,26 @@ class StoreSchemaTests(unittest.TestCase):
                         )
                     self.assertEqual(conn.execute("SELECT username FROM users").fetchone()[0], "Pilot")
                     self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    def test_exact_v3_with_empty_trusted_withdrawals_migrates_and_revalidates(self):
+        V3Store = committed_v3_store_class()
+        V3Store(self.path).initialize()
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE withdrawals(
+                  withdrawal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  admin_id INTEGER NOT NULL, amount TEXT NOT NULL,
+                  address TEXT NOT NULL, txid TEXT,
+                  status TEXT NOT NULL, created_at INTEGER NOT NULL
+                );
+                """
+            )
+        Store(self.path).initialize()
+        Store(self.path).initialize()
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(conn.execute("SELECT version FROM schema_meta").fetchone()[0], 4)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM withdrawals").fetchone()[0], 0)
 
     def test_v3_nonempty_or_nonexact_financial_catalog_blocks(self):
         cases = ("orders", "transfers", "audit_events", "deposit_credits", "withdrawals")
@@ -467,10 +571,104 @@ class StoreSchemaTests(unittest.TestCase):
                 """
             )
         before = self.database_dump(self.path)
-        with self.assertRaisesRegex(MigrationBlocked, "non-exact v3"):
+        with self.assertRaisesRegex(MigrationBlocked, "unexpected v3"):
             Store(self.path).initialize()
         self.assertEqual(self.database_dump(self.path), before)
         self.assertEqual(self.journal_mode(self.path), "delete")
+
+    def test_v3_populated_shadow_liability_table_blocks_without_mutation(self):
+        V3Store = committed_v3_store_class()
+        V3Store(self.path).initialize()
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.execute(
+                "CREATE TABLE shadow_liabilities(user_id INTEGER, units INTEGER)"
+            )
+            conn.execute("INSERT INTO shadow_liabilities VALUES(7, 117)")
+        before = self.database_dump(self.path)
+        with self.assertRaisesRegex(MigrationBlocked, "unexpected|non-exact"):
+            Store(self.path).initialize()
+        self.assertEqual(self.database_dump(self.path), before)
+        self.assertEqual(self.journal_mode(self.path), "wal")
+
+    def test_v4_rogue_catalog_is_rejected_before_schema_meta_side_effect(self):
+        store = self.make_store()
+        with managed_connection(store.connect()) as conn:
+            conn.execute(
+                "INSERT INTO users VALUES(77,'Safe','safe-wallet',1,1)"
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER rogue_stamp AFTER UPDATE ON schema_meta
+                BEGIN
+                  UPDATE users SET wallet_addr='attacker-wallet' WHERE user_id=77;
+                END
+                """
+            )
+        before = self.database_dump(self.path)
+        with self.assertRaisesRegex(MigrationBlocked, "unexpected|rogue_stamp"):
+            store.initialize()
+        self.assertEqual(self.database_dump(self.path), before)
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(
+                conn.execute("SELECT wallet_addr FROM users WHERE user_id=77").fetchone()[0],
+                "safe-wallet",
+            )
+
+    def test_v4_shadow_table_is_rejected_without_mutation(self):
+        store = self.make_store()
+        with managed_connection(store.connect()) as conn:
+            conn.execute("CREATE TABLE shadow_liabilities(user_id INTEGER, units INTEGER)")
+            conn.execute("INSERT INTO shadow_liabilities VALUES(7,117)")
+        before = self.database_dump(self.path)
+        with self.assertRaisesRegex(MigrationBlocked, "unexpected|shadow_liabilities"):
+            store.initialize()
+        self.assertEqual(self.database_dump(self.path), before)
+
+    def test_v3_and_v4_reject_every_unknown_catalog_object_kind(self):
+        scripts = {
+            "table": "CREATE TABLE rogue_object(value TEXT)",
+            "view": "CREATE VIEW rogue_object AS SELECT user_id FROM users",
+            "index": "CREATE INDEX rogue_object ON users(username)",
+            "trigger": (
+                "CREATE TRIGGER rogue_object AFTER UPDATE ON users "
+                "BEGIN SELECT 1; END"
+            ),
+        }
+        V3Store = committed_v3_store_class()
+        for version, initializer in ((3, V3Store), (4, Store)):
+            for kind, script in scripts.items():
+                with self.subTest(version=version, kind=kind):
+                    path = Path(self.tmp.name) / f"rogue-{version}-{kind}.db"
+                    initializer(path).initialize()
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.execute(script)
+                    before = self.database_dump(path)
+                    with self.assertRaisesRegex(
+                        MigrationBlocked, "unexpected.*rogue_object"
+                    ):
+                        Store(path).initialize()
+                    self.assertEqual(self.database_dump(path), before)
+
+    def test_existing_v4_initialize_is_validation_only(self):
+        class NoVersionWriteStore(Store):
+            def _connect(self, *, apply_wal):
+                conn = super()._connect(apply_wal=apply_wal)
+                if not apply_wal:
+                    def authorizer(action, first, _second, _db, _source):
+                        if (
+                            action == sqlite3.SQLITE_UPDATE
+                            and str(first).lower() == "schema_meta"
+                        ):
+                            return sqlite3.SQLITE_DENY
+                        return sqlite3.SQLITE_OK
+
+                    conn.set_authorizer(authorizer)
+                return conn
+
+        self.make_store()
+        NoVersionWriteStore(self.path).initialize()
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(conn.execute("SELECT version FROM schema_meta").fetchone()[0], 4)
 
     def test_malformed_empty_legacy_withdrawals_table_blocks(self):
         with managed_connection(sqlite3.connect(self.path)) as conn:
@@ -482,6 +680,200 @@ class StoreSchemaTests(unittest.TestCase):
             Store(self.path).initialize()
         self.assertEqual(self.database_dump(self.path), before)
         self.assertEqual(self.journal_mode(self.path), "delete")
+
+    def test_prototype_tombstoned_orders_or_withdrawals_block(self):
+        for table in ("orders", "withdrawals"):
+            with self.subTest(table=table):
+                path = Path(self.tmp.name) / f"prototype-tombstone-{table}.db"
+                with managed_connection(sqlite3.connect(path)) as conn:
+                    conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+                    if table == "orders":
+                        conn.execute(
+                            """
+                            INSERT INTO orders(seller_id,amount,price,currency,created_at,updated_at)
+                            VALUES(7,'1','1','AUD',1,1)
+                            """
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            INSERT INTO withdrawals(admin_id,amount,address,status,created_at)
+                            VALUES(1,'1','address','pending',1)
+                            """
+                        )
+                    conn.execute(f"DELETE FROM {table}")
+                before = self.database_dump(path)
+                with self.assertRaisesRegex(MigrationBlocked, "sequence|previously"):
+                    Store(path).initialize()
+                self.assertEqual(self.database_dump(path), before)
+                self.assertEqual(self.journal_mode(path), "delete")
+
+    def test_v3_tombstoned_financial_sequences_block(self):
+        V3Store = committed_v3_store_class()
+        for table in ("orders", "transfers", "audit_events", "withdrawals"):
+            with self.subTest(table=table):
+                path = Path(self.tmp.name) / f"v3-tombstone-{table}.db"
+                V3Store(path).initialize()
+                with managed_connection(sqlite3.connect(path)) as conn:
+                    if table == "orders":
+                        conn.execute(
+                            """
+                            INSERT INTO orders(
+                              side,maker_id,maker_name,seller_id,seller_name,
+                              net_amount_units,network_fee_units,service_fee_units,
+                              deposit_required_units,total_price,settlement_asset,
+                              payment_method,state,created_at,updated_at
+                            ) VALUES('sell',7,'s',7,'s',1,0,0,1,'1','AUD','cash',
+                                     'awaiting_deposit',1,1)
+                            """
+                        )
+                    elif table == "transfers":
+                        conn.execute(
+                            """
+                            INSERT INTO transfers(kind,state,amount_units,network_fee_units,
+                              destination,created_at,updated_at)
+                            VALUES('fee_withdrawal','reserved',1,0,'x',1,1)
+                            """
+                        )
+                    elif table == "audit_events":
+                        conn.execute("INSERT INTO audit_events(event_type,created_at) VALUES('x',1)")
+                    else:
+                        conn.executescript(
+                            """
+                            CREATE TABLE withdrawals(
+                              withdrawal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                              admin_id INTEGER NOT NULL, amount TEXT NOT NULL,
+                              address TEXT NOT NULL, txid TEXT,
+                              status TEXT NOT NULL, created_at INTEGER NOT NULL
+                            );
+                            INSERT INTO withdrawals(admin_id,amount,address,status,created_at)
+                            VALUES(1,'1','x','pending',1);
+                            """
+                        )
+                    conn.execute(f"DELETE FROM {table}")
+                before = self.database_dump(path)
+                with self.assertRaisesRegex(MigrationBlocked, "sequence|previously"):
+                    Store(path).initialize()
+                self.assertEqual(self.database_dump(path), before)
+
+    def test_v3_tombstoned_orders_v2_archive_blocks(self):
+        V3Store = committed_v3_store_class()
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+        V3Store(self.path).initialize()
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.execute(
+                """
+                INSERT INTO orders_v2_archive(
+                  seller_id,amount,price,currency,created_at,updated_at
+                ) VALUES(7,'1','1','AUD',1,1)
+                """
+            )
+            conn.execute("DELETE FROM orders_v2_archive")
+        before = self.database_dump(self.path)
+        with self.assertRaisesRegex(MigrationBlocked, "sequence|previously"):
+            Store(self.path).initialize()
+        self.assertEqual(self.database_dump(self.path), before)
+
+    def test_v4_migrated_archive_tombstone_is_not_recertified(self):
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+        Store(self.path).initialize()
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.execute(
+                """
+                INSERT INTO orders_v2_archive(
+                  seller_id,amount,price,currency,created_at,updated_at
+                ) VALUES(7,'1','1','AUD',1,1)
+                """
+            )
+            conn.execute("DELETE FROM orders_v2_archive")
+        before = self.database_dump(self.path)
+        with self.assertRaisesRegex(MigrationBlocked, "previously.*sqlite_sequence"):
+            Store(self.path).initialize()
+        self.assertEqual(self.database_dump(self.path), before)
+
+    def test_v4_evidence_tables_must_remain_empty_for_zero_and_negative_ids(self):
+        V3Store = committed_v3_store_class()
+        cases = (
+            (
+                "withdrawals",
+                "prototype",
+                """
+                INSERT INTO withdrawals(
+                  withdrawal_id,admin_id,amount,address,status,created_at
+                ) VALUES(?,1,'1','x','pending',1)
+                """,
+            ),
+            (
+                "orders_v2_archive",
+                "prototype",
+                """
+                INSERT INTO orders_v2_archive(
+                  order_id,seller_id,amount,price,currency,created_at,updated_at
+                ) VALUES(?,7,'1','1','AUD',1,1)
+                """,
+            ),
+            (
+                "orders_v3_archive",
+                "v3",
+                """
+                INSERT INTO orders_v3_archive(
+                  order_id,side,maker_id,maker_name,seller_id,seller_name,
+                  net_amount_units,network_fee_units,service_fee_units,
+                  deposit_required_units,total_price,settlement_asset,
+                  payment_method,state,created_at,updated_at
+                ) VALUES(?,'sell',7,'s',7,'s',1,0,0,1,'1','AUD','cash',
+                         'awaiting_deposit',1,1)
+                """,
+            ),
+            (
+                "transfers_v3_archive",
+                "v3",
+                """
+                INSERT INTO transfers_v3_archive(
+                  transfer_id,kind,state,amount_units,network_fee_units,
+                  destination,created_at,updated_at
+                ) VALUES(?,'fee_withdrawal','reserved',1,0,'x',1,1)
+                """,
+            ),
+            (
+                "audit_events_v3_archive",
+                "v3",
+                """
+                INSERT INTO audit_events_v3_archive(event_id,event_type,created_at)
+                VALUES(?,'x',1)
+                """,
+            ),
+        )
+        for table, origin, insert_sql in cases:
+            for explicit_id in (0, -1):
+                with self.subTest(table=table, explicit_id=explicit_id):
+                    path = Path(self.tmp.name) / f"evidence-{table}-{explicit_id}.db"
+                    if origin == "prototype":
+                        with managed_connection(sqlite3.connect(path)) as conn:
+                            conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+                        Store(path).initialize()
+                    else:
+                        V3Store(path).initialize()
+                        Store(path).initialize()
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.execute(insert_sql, (explicit_id,))
+                    before = self.database_dump(path)
+                    with self.assertRaisesRegex(MigrationBlocked, f"{table}.*empty"):
+                        Store(path).initialize()
+                    self.assertEqual(self.database_dump(path), before)
+
+    def test_v4_schema_meta_v3_archive_must_remain_exact(self):
+        V3Store = committed_v3_store_class()
+        V3Store(self.path).initialize()
+        Store(self.path).initialize()
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.execute("UPDATE schema_meta_v3_archive SET version=2 WHERE id=1")
+        before = self.database_dump(self.path)
+        with self.assertRaisesRegex(MigrationBlocked, "schema_meta_v3_archive.*1.*3"):
+            Store(self.path).initialize()
+        self.assertEqual(self.database_dump(self.path), before)
 
     def test_fault_injected_v3_migration_rolls_back_catalog_data_and_journal(self):
         phases = (
@@ -817,6 +1209,53 @@ class StoreSchemaTests(unittest.TestCase):
                     (wrong_scan, credit_id),
                 )
 
+    def test_every_partial_spent_by_tuple_is_rejected(self):
+        store, order_id = self.create_sell()
+        with managed_connection(store.connect()) as conn:
+            credit_id, _ = self.add_credit(conn, order_id)
+            cursor = conn.execute(
+                """
+                INSERT INTO deposit_scans(network,address,tip_hash,tip_height,observed_at)
+                VALUES('btc09-mainnet','deposit-address-7',?,2,102)
+                """,
+                (self.hash(92),),
+            )
+            scan2 = cursor.lastrowid
+            values = (self.hash(93), 0, self.hash(94), 2)
+            for mask in range(1, 15):
+                selected = [values[index] if mask & (1 << index) else None for index in range(4)]
+                with self.subTest(mask=f"{mask:04b}"), self.assertRaisesRegex(
+                    sqlite3.IntegrityError, "CHECK constraint failed"
+                ):
+                    conn.execute(
+                        """
+                        UPDATE deposit_credits SET
+                          spent_by_txid=?,spent_by_vin=?,spent_by_block_hash=?,
+                          spent_by_block_height=?,last_seen_at=102,
+                          last_seen_scan_id=?,last_checked_scan_id=?
+                        WHERE credit_id=?
+                        """,
+                        (*selected, scan2, scan2, credit_id),
+                    )
+            conn.execute(
+                """
+                UPDATE deposit_credits SET
+                  spent_by_txid=?,spent_by_vin=?,spent_by_block_hash=?,
+                  spent_by_block_height=?,last_seen_at=102,
+                  last_seen_scan_id=?,last_checked_scan_id=?
+                WHERE credit_id=?
+                """,
+                (*values, scan2, scan2, credit_id),
+            )
+            row = conn.execute(
+                """
+                SELECT spent_by_txid,spent_by_vin,spent_by_block_hash,
+                       spent_by_block_height FROM deposit_credits WHERE credit_id=?
+                """,
+                (credit_id,),
+            ).fetchone()
+            self.assertEqual(tuple(row), values)
+
     def test_underpaid_credit_reclassification_is_one_way_and_capacity_safe(self):
         store, order_id = self.create_sell()
         with managed_connection(store.connect()) as conn:
@@ -949,6 +1388,133 @@ class StoreSchemaTests(unittest.TestCase):
                     (cursor.lastrowid,),
                 )
 
+    def test_uncertainty_blocks_reserved_prepare_and_prepared_broadcast(self):
+        store, earning_transfer = self.make_confirmed_release()
+        with managed_connection(store.connect()) as conn:
+            fee_transfer = self.queue_fee_withdrawal(conn, "fee:post-claim", 120)
+            self.claim_transfer(conn, fee_transfer, 121)
+            conn.execute(
+                "UPDATE transfers SET state='uncertain',updated_at=122 WHERE transfer_id=?",
+                (earning_transfer,),
+            )
+            with self.assertRaisesRegex(
+                sqlite3.IntegrityError, "uncertain transfer blocks pre-broadcast"
+            ):
+                self.prepare_transfer(conn, fee_transfer, 123, 1)
+
+            conn.execute(
+                """
+                UPDATE transfers SET state='confirmed',confirmed_at=124,
+                  confirmed_block_hash=?,confirmed_block_height=12,
+                  confirmations=1,updated_at=124 WHERE transfer_id=?
+                """,
+                (self.hash(62_001), earning_transfer),
+            )
+            self.prepare_transfer(conn, fee_transfer, 125, 1)
+            conn.execute(
+                "UPDATE transfers SET state='uncertain',updated_at=126 WHERE transfer_id=?",
+                (earning_transfer,),
+            )
+            with self.assertRaisesRegex(
+                sqlite3.IntegrityError, "uncertain transfer blocks pre-broadcast"
+            ):
+                self.broadcast_transfer(conn, fee_transfer, 127)
+
+            conn.execute(
+                """
+                UPDATE transfers SET state='confirmed',confirmed_at=128,
+                  confirmed_block_hash=?,confirmed_block_height=13,
+                  confirmations=1,updated_at=128 WHERE transfer_id=?
+                """,
+                (self.hash(62_002), earning_transfer),
+            )
+            self.broadcast_transfer(conn, fee_transfer, 129)
+
+    def test_wallet_lane_exact_state_matrix(self):
+        store, _ = self.make_confirmed_release()
+        with managed_connection(store.connect()) as conn:
+            queued = self.queue_fee_withdrawal(conn, "fee:lane:queued", 120)
+            active = self.queue_fee_withdrawal(conn, "fee:lane:active", 121)
+            waiting = self.queue_fee_withdrawal(conn, "fee:lane:waiting", 122)
+
+            # A queued row does not own the wallet lane.
+            self.claim_transfer(conn, active, 123)
+            with self.assertRaisesRegex(
+                sqlite3.IntegrityError,
+                r"UNIQUE constraint failed: transfers.wallet_scope",
+            ):
+                self.claim_transfer(conn, queued, 124)
+
+            conn.execute(
+                """
+                UPDATE transfers SET state='failed_safe',error_text='no network side effect',
+                  updated_at=125 WHERE transfer_id=?
+                """,
+                (active,),
+            )
+            # failed_safe also releases the lane.
+            self.claim_transfer(conn, queued, 126)
+            self.prepare_transfer(conn, queued, 127, 2)
+            with self.assertRaisesRegex(
+                sqlite3.IntegrityError,
+                r"UNIQUE constraint failed: transfers.wallet_scope",
+            ):
+                self.claim_transfer(conn, waiting, 128)
+
+            self.broadcast_transfer(conn, queued, 129)
+            with self.assertRaisesRegex(
+                sqlite3.IntegrityError,
+                r"UNIQUE constraint failed: transfers.wallet_scope",
+            ):
+                self.claim_transfer(conn, waiting, 130)
+
+    def test_concurrent_claims_both_fail_while_uncertain_exists(self):
+        store, earning_transfer = self.make_confirmed_release()
+        with managed_connection(store.connect()) as conn:
+            first = self.queue_fee_withdrawal(conn, "fee:race:first", 120)
+            second = self.queue_fee_withdrawal(conn, "fee:race:second", 121)
+            conn.execute(
+                "UPDATE transfers SET state='uncertain',updated_at=122 WHERE transfer_id=?",
+                (earning_transfer,),
+            )
+
+        barrier = threading.Barrier(2)
+
+        def claim(transfer_id, timestamp):
+            conn = store.connect()
+            try:
+                barrier.wait(timeout=10)
+                try:
+                    self.claim_transfer(conn, transfer_id, timestamp)
+                except sqlite3.IntegrityError as exc:
+                    return str(exc)
+                return "claimed"
+            finally:
+                conn.close()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(claim, (first, second), (123, 124))
+            )
+        self.assertEqual(
+            results,
+            [
+                "uncertain transfer blocks wallet claim",
+                "uncertain transfer blocks wallet claim",
+            ],
+        )
+        with managed_connection(store.connect()) as conn:
+            self.assertEqual(
+                [
+                    tuple(row)
+                    for row in conn.execute(
+                        "SELECT state FROM transfers WHERE transfer_id IN (?,?) ORDER BY transfer_id",
+                        (first, second),
+                    )
+                ],
+                [("queued",), ("queued",)],
+            )
+
     def test_confirmed_transfer_discharges_liability_and_preserves_evidence(self):
         store, order_id = self.create_sell()
         with managed_connection(store.connect()) as conn:
@@ -995,6 +1561,15 @@ class StoreSchemaTests(unittest.TestCase):
         store, order_id = self.create_sell()
         with managed_connection(store.connect()) as conn:
             bad_hash = self.hash(1) + "\x00hidden"
+            for user_id, username, wallet in (
+                (90, "user\x00hidden", "wallet"),
+                (91, "user", "wallet\x00hidden"),
+            ):
+                with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK constraint failed"):
+                    conn.execute(
+                        "INSERT INTO users VALUES(?,?,?,1,1)",
+                        (user_id, username, wallet),
+                    )
             for sql, params in (
                 (
                     "INSERT INTO deposit_scans(network,address,tip_hash,tip_height,observed_at) VALUES('btc09-mainnet','a',?,1,1)",
@@ -1009,8 +1584,56 @@ class StoreSchemaTests(unittest.TestCase):
                     ("event\x00hidden",),
                 ),
             ):
-                with self.assertRaises(sqlite3.IntegrityError):
+                with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK constraint failed"):
                     conn.execute(sql, params)
+
+            cursor = conn.execute(
+                """
+                INSERT INTO deposit_scans(network,address,tip_hash,tip_height,observed_at)
+                VALUES('btc09-mainnet','deposit-address-7',?,1,1)
+                """,
+                (self.hash(2),),
+            )
+            scan_id = cursor.lastrowid
+            credit_cases = (
+                (bad_hash, "deposit-address-7", self.hash(3), None, None),
+                (self.hash(4), "deposit-address-7\x00hidden", self.hash(3), None, None),
+                (self.hash(5), "deposit-address-7", bad_hash, None, None),
+                (self.hash(6), "deposit-address-7", self.hash(3), bad_hash, self.hash(7)),
+                (self.hash(8), "deposit-address-7", self.hash(3), self.hash(7), bad_hash),
+            )
+            for txid, address, block_hash, spent_txid, spent_block_hash in credit_cases:
+                spent_vin = 0 if spent_txid is not None else None
+                spent_height = 1 if spent_txid is not None else None
+                with self.subTest(
+                    txid=txid == bad_hash,
+                    address="\x00" in address,
+                    block=block_hash == bad_hash,
+                    spent_txid=spent_txid == bad_hash,
+                    spent_block=spent_block_hash == bad_hash,
+                ), self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK constraint failed"):
+                    conn.execute(
+                        """
+                        INSERT INTO deposit_credits(
+                          order_id,network,txid,vout,deposit_addr,amount_units,
+                          block_hash,block_height,confirmations,coinbase,mature,
+                          current_best_chain,spent_by_txid,spent_by_vin,
+                          spent_by_block_hash,spent_by_block_height,first_seen_at,
+                          last_seen_at,last_seen_scan_id,last_checked_scan_id
+                        ) VALUES(1,'btc09-mainnet',?,0,?,1,?,1,1,0,1,1,?,?,?, ?,1,1,?,?)
+                        """,
+                        (
+                            txid,
+                            address,
+                            block_hash,
+                            spent_txid,
+                            spent_vin,
+                            spent_block_hash,
+                            spent_height,
+                            scan_id,
+                            scan_id,
+                        ),
+                    )
             # Transfer insert is independently stopped by the machine-string
             # CHECK before it can create a hidden replay identity.
             with self.assertRaises(sqlite3.IntegrityError):
@@ -1022,6 +1645,107 @@ class StoreSchemaTests(unittest.TestCase):
                     VALUES(?,?,'refund',1,'queued',107,10,0,'seller-wallet',1,1)
                     """,
                     ("order:1:main\x00hidden", order_id),
+                )
+            for column, value in (
+                ("old_state", "open\x00hidden"),
+                ("new_state", "open\x00hidden"),
+                ("detail_json", '{"value":"bad\x00hidden"}'),
+            ):
+                with self.subTest(audit_column=column), self.assertRaisesRegex(
+                    sqlite3.IntegrityError, "CHECK constraint failed"
+                ):
+                    conn.execute(
+                        f"INSERT INTO audit_events(event_type,{column},created_at) VALUES('test',?,1)",
+                        (value,),
+                    )
+
+    def test_every_bounded_schema_identity_has_explicit_nul_defense(self):
+        store = self.make_store()
+        protected = {
+            "users": ("username", "wallet_addr"),
+            "orders": (
+                "maker_name",
+                "buyer_name",
+                "seller_name",
+                "total_price",
+                "settlement_asset",
+                "settlement_network",
+                "payment_method",
+                "deposit_addr",
+            ),
+            "deposit_scans": ("address", "tip_hash"),
+            "deposit_credits": (
+                "txid",
+                "deposit_addr",
+                "block_hash",
+                "spent_by_txid",
+                "spent_by_block_hash",
+            ),
+            "transfers": (
+                "operation_key",
+                "destination",
+                "txid",
+                "signed_tx_hex",
+                "prepared_tip_hash",
+                "error_text",
+                "confirmed_block_hash",
+            ),
+            "audit_events": ("event_type", "old_state", "new_state", "detail_json"),
+        }
+        with managed_connection(store.connect()) as conn:
+            for table, columns in protected.items():
+                sql = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()[0]
+                compact = re.sub(r"\s+", "", sql.lower())
+                for column in columns:
+                    with self.subTest(table=table, column=column):
+                        self.assertIn(f"instr({column},char(0))=0", compact)
+
+    def test_prepared_and_confirmed_hash_fields_reject_hidden_nul_suffixes(self):
+        store, _ = self.make_confirmed_release()
+        with managed_connection(store.connect()) as conn:
+            transfer_id = self.queue_fee_withdrawal(conn, "fee:nul:prepared", 120)
+            self.claim_transfer(conn, transfer_id, 121)
+            valid_txid = self.hash(70_001)
+            valid_tip = self.hash(70_002)
+            cases = (
+                (valid_txid + "\x00hidden", "aa", valid_tip),
+                (valid_txid, "aa\x00hidden", valid_tip),
+                (valid_txid, "aa", valid_tip + "\x00hidden"),
+            )
+            for txid, signed_hex, tip_hash in cases:
+                with self.subTest(
+                    txid=txid != valid_txid,
+                    signed=signed_hex != "aa",
+                    tip=tip_hash != valid_tip,
+                ), self.assertRaisesRegex(
+                    sqlite3.IntegrityError, "CHECK constraint failed"
+                ):
+                    conn.execute(
+                        """
+                        UPDATE transfers SET state='prepared',txid=?,signed_tx_hex=?,
+                          signed_at=122,prepared_tip_hash=?,prepared_tip_height=10,
+                          updated_at=122 WHERE transfer_id=?
+                        """,
+                        (txid, signed_hex, tip_hash, transfer_id),
+                    )
+
+            self.prepare_transfer(conn, transfer_id, 123, 3)
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK constraint failed"):
+                conn.execute(
+                    "UPDATE transfers SET error_text=? WHERE transfer_id=?",
+                    ("error\x00hidden", transfer_id),
+                )
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "CHECK constraint failed"):
+                conn.execute(
+                    """
+                    UPDATE transfers SET state='confirmed',confirmed_at=124,
+                      confirmed_block_hash=?,confirmed_block_height=11,
+                      confirmations=1,updated_at=124 WHERE transfer_id=?
+                    """,
+                    (self.hash(70_003) + "\x00hidden", transfer_id),
                 )
 
     def test_public_store_methods_are_keyword_only_and_audit_json_is_stable(self):
@@ -1046,6 +1770,58 @@ class StoreSchemaTests(unittest.TestCase):
                 conn.execute("SELECT detail_json FROM audit_events WHERE event_id=?", (event_id,)).fetchone()[0],
                 '{"a":1,"z":2}',
             )
+
+    def test_store_module_cli_requires_db_path_and_prints_bounded_json(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        env = os.environ.copy()
+        env.pop("DB_PATH", None)
+        missing = subprocess.run(
+            [sys.executable, "-m", "bot.otc.store"],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertLess(len(missing.stderr), 256)
+        self.assertEqual(json.loads(missing.stderr)["error"], "DB_PATH is required")
+
+        cli_path = Path(self.tmp.name) / "cli-proof.db"
+        env["DB_PATH"] = str(cli_path)
+        success = subprocess.run(
+            [sys.executable, "-m", "bot.otc.store"],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(success.returncode, 0, success.stderr)
+        self.assertEqual(success.stderr, "")
+        self.assertLess(len(success.stdout), 256)
+        self.assertEqual(
+            json.loads(success.stdout),
+            {"integrity": "ok", "schema_version": 4},
+        )
+        with managed_connection(sqlite3.connect(cli_path)) as conn:
+            self.assertEqual(conn.execute("SELECT version FROM schema_meta").fetchone()[0], 4)
+
+    def test_importing_store_module_has_no_cli_side_effect(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        env = os.environ.copy()
+        env["DB_PATH"] = str(Path(self.tmp.name) / "must-not-exist.db")
+        result = subprocess.run(
+            [sys.executable, "-c", "import bot.otc.store"],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertFalse(Path(env["DB_PATH"]).exists())
 
     def schema_snapshot(self):
         with managed_connection(sqlite3.connect(self.path)) as conn:

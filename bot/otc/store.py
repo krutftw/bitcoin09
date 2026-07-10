@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,16 +135,40 @@ CREATE TABLE audit_events (
 INSERT INTO schema_meta(id, version) VALUES(1, 3);
 """
 
-_LIVE_PROTOTYPE_INDEXES = {
-    "idx_orders_status": "CREATE INDEX idx_orders_status ON orders(status)",
-    "idx_orders_deposit_addr": (
-        "CREATE INDEX idx_orders_deposit_addr ON orders(deposit_addr)"
-    ),
-    "idx_orders_seller": "CREATE INDEX idx_orders_seller ON orders(seller_id)",
-    "idx_orders_buyer": "CREATE INDEX idx_orders_buyer ON orders(buyer_id)",
-}
-
-_LEGACY_WITHDRAWALS_SQL = """
+_LIVE_PROTOTYPE_SOURCE = """
+CREATE TABLE users (
+  user_id INTEGER PRIMARY KEY,
+  username TEXT,
+  wallet_addr TEXT,
+  created_at INTEGER,
+  updated_at INTEGER
+);
+CREATE TABLE orders (
+  order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  seller_id INTEGER NOT NULL,
+  seller_name TEXT,
+  amount TEXT NOT NULL,
+  price TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending_deposit',
+  escrow_bal_before TEXT,
+  deposit_addr TEXT,
+  deposit_expected TEXT,
+  deposit_confirmed_balance TEXT,
+  buyer_id INTEGER,
+  buyer_name TEXT,
+  seller_confirmed INTEGER DEFAULT 0,
+  buyer_confirmed INTEGER DEFAULT 0,
+  release_txid TEXT,
+  refund_txid TEXT,
+  fee TEXT,
+  cancel_reason TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  matched_at INTEGER,
+  disputed_at INTEGER,
+  completed_at INTEGER
+);
 CREATE TABLE withdrawals (
   withdrawal_id INTEGER PRIMARY KEY AUTOINCREMENT,
   admin_id INTEGER NOT NULL,
@@ -151,8 +177,21 @@ CREATE TABLE withdrawals (
   txid TEXT,
   status TEXT NOT NULL,
   created_at INTEGER NOT NULL
-)
+);
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_deposit_addr ON orders(deposit_addr);
+CREATE INDEX idx_orders_seller ON orders(seller_id);
+CREATE INDEX idx_orders_buyer ON orders(buyer_id);
 """
+
+_LIVE_PROTOTYPE_INDEXES = {
+    "idx_orders_status": "CREATE INDEX idx_orders_status ON orders(status)",
+    "idx_orders_deposit_addr": (
+        "CREATE INDEX idx_orders_deposit_addr ON orders(deposit_addr)"
+    ),
+    "idx_orders_seller": "CREATE INDEX idx_orders_seller ON orders(seller_id)",
+    "idx_orders_buyer": "CREATE INDEX idx_orders_buyer ON orders(buyer_id)",
+}
 
 
 def _canonical_schema_sql(sql: str) -> str:
@@ -166,21 +205,132 @@ def _catalog_from_script(script: str) -> dict[str, tuple[str, str]]:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA recursive_triggers=ON")
         conn.executescript(script)
+        return _catalog_from_connection(conn)
+    finally:
+        conn.close()
+
+
+def _catalog_from_connection(
+    conn: sqlite3.Connection,
+) -> dict[str, tuple[str, str]]:
+    return {
+        row[1]: (row[0], row[2])
+        for row in conn.execute(
+            """
+            SELECT type, name, sql FROM sqlite_master
+            WHERE name NOT LIKE 'sqlite_%'
+            """
+        )
+    }
+
+
+def _prototype_evidence_catalog() -> dict[str, tuple[str, str]]:
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.executescript(_LIVE_PROTOTYPE_SOURCE)
+        conn.execute("ALTER TABLE orders RENAME TO orders_v2_archive")
+        evidence_names = {
+            "orders_v2_archive",
+            "withdrawals",
+            *_LIVE_PROTOTYPE_INDEXES,
+        }
         return {
-            row[1]: (row[0], row[2])
-            for row in conn.execute(
-                """
-                SELECT type, name, sql FROM sqlite_master
-                WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
-                """
-            )
+            name: definition
+            for name, definition in _catalog_from_connection(conn).items()
+            if name in evidence_names
         }
     finally:
         conn.close()
 
 
+def _v3_archive_catalog() -> dict[str, tuple[str, str]]:
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.executescript(_V3_SCHEMA_SOURCE)
+        for index_name in (
+            "orders_by_state",
+            "orders_by_deposit",
+            "one_active_order_transfer",
+        ):
+            conn.execute(f'DROP INDEX "{index_name}"')
+        conn.execute("ALTER TABLE orders RENAME TO orders_v3_archive")
+        conn.execute("ALTER TABLE transfers RENAME TO transfers_v3_archive")
+        conn.execute("ALTER TABLE audit_events RENAME TO audit_events_v3_archive")
+        conn.execute("ALTER TABLE schema_meta RENAME TO schema_meta_v3_archive")
+        archive_names = {
+            "orders_v3_archive",
+            "transfers_v3_archive",
+            "audit_events_v3_archive",
+            "schema_meta_v3_archive",
+        }
+        return {
+            name: definition
+            for name, definition in _catalog_from_connection(conn).items()
+            if name in archive_names
+        }
+    finally:
+        conn.close()
+
+
+def _merged_catalog(
+    *catalogs: Mapping[str, tuple[str, str]],
+) -> dict[str, tuple[str, str]]:
+    merged: dict[str, tuple[str, str]] = {}
+    for catalog in catalogs:
+        overlap = set(merged) & set(catalog)
+        if overlap:
+            raise RuntimeError(f"duplicate expected catalog object: {sorted(overlap)[0]}")
+        merged.update(catalog)
+    return merged
+
+
 _EXPECTED_V4_OBJECTS = _catalog_from_script(_SCHEMA_SOURCE)
 _EXPECTED_V3_OBJECTS = _catalog_from_script(_V3_SCHEMA_SOURCE)
+_EXPECTED_LIVE_PROTOTYPE_OBJECTS = _catalog_from_script(_LIVE_PROTOTYPE_SOURCE)
+_EXPECTED_PROTOTYPE_EVIDENCE = _prototype_evidence_catalog()
+_EXPECTED_V3_ARCHIVES = _v3_archive_catalog()
+_EXPECTED_WITHDRAWALS = {
+    "withdrawals": _EXPECTED_LIVE_PROTOTYPE_OBJECTS["withdrawals"]
+}
+_EXPECTED_V3_CATALOG_VARIANTS = (
+    ("fresh-v3", _EXPECTED_V3_OBJECTS),
+    (
+        "v3-with-withdrawals",
+        _merged_catalog(_EXPECTED_V3_OBJECTS, _EXPECTED_WITHDRAWALS),
+    ),
+    (
+        "v3-from-live-prototype",
+        _merged_catalog(_EXPECTED_V3_OBJECTS, _EXPECTED_PROTOTYPE_EVIDENCE),
+    ),
+)
+_EXPECTED_V4_CATALOG_VARIANTS = (
+    ("fresh-v4", _EXPECTED_V4_OBJECTS),
+    (
+        "v4-from-live-prototype",
+        _merged_catalog(_EXPECTED_V4_OBJECTS, _EXPECTED_PROTOTYPE_EVIDENCE),
+    ),
+    (
+        "v4-from-fresh-v3",
+        _merged_catalog(_EXPECTED_V4_OBJECTS, _EXPECTED_V3_ARCHIVES),
+    ),
+    (
+        "v4-from-v3-with-withdrawals",
+        _merged_catalog(
+            _EXPECTED_V4_OBJECTS,
+            _EXPECTED_V3_ARCHIVES,
+            _EXPECTED_WITHDRAWALS,
+        ),
+    ),
+    (
+        "v4-from-live-prototype-via-v3",
+        _merged_catalog(
+            _EXPECTED_V4_OBJECTS,
+            _EXPECTED_V3_ARCHIVES,
+            _EXPECTED_PROTOTYPE_EVIDENCE,
+        ),
+    ),
+)
 _V3_INDEX_NAMES = (
     "orders_by_state",
     "orders_by_deposit",
@@ -240,13 +390,27 @@ class Store:
             conn.execute("BEGIN IMMEDIATE")
             plan = self._preflight_initialization(conn)
             self._migration_checkpoint("writer_preflight")
+            if plan.kind == "v4":
+                foreign_key_failures = conn.execute(
+                    "PRAGMA foreign_key_check"
+                ).fetchall()
+                if foreign_key_failures:
+                    raise MigrationBlocked(
+                        "existing v4 database failed foreign-key validation"
+                    )
+                conn.execute("COMMIT")
+                return
+
             self._apply_migration(conn, plan)
             self._migration_checkpoint("archives")
 
             for statement in _V4_SCHEMA_STATEMENTS:
                 conn.execute(statement)
             self._migration_checkpoint("schema")
-            self._validate_catalog(conn, _EXPECTED_V4_OBJECTS, "v4")
+            self._validate_catalog_variants(
+                conn, _EXPECTED_V4_CATALOG_VARIANTS, "v4"
+            )
+            self._validate_v4_evidence_rows(conn)
 
             foreign_key_failures = conn.execute("PRAGMA foreign_key_check").fetchall()
             if foreign_key_failures:
@@ -561,7 +725,20 @@ class Store:
                     f"version {SCHEMA_VERSION}"
                 )
             if version == SCHEMA_VERSION:
-                cls._validate_catalog(conn, _EXPECTED_V4_OBJECTS, "v4")
+                cls._validate_catalog_variants(
+                    conn, _EXPECTED_V4_CATALOG_VARIANTS, "v4"
+                )
+                cls._validate_v4_evidence_rows(conn)
+                cls._require_zero_sequences(
+                    conn,
+                    (
+                        "orders_v2_archive",
+                        "withdrawals",
+                        "orders_v3_archive",
+                        "transfers_v3_archive",
+                        "audit_events_v3_archive",
+                    ),
+                )
                 return _MigrationPlan("v4")
             if version == 3:
                 cls._validate_v3_migration(conn)
@@ -573,128 +750,42 @@ class Store:
 
     @classmethod
     def _preflight_unversioned(cls, conn: sqlite3.Connection) -> _MigrationPlan:
-        objects = {
-            row["name"]: row
-            for row in conn.execute(
-                """
-                SELECT type, name, sql FROM sqlite_master
-                WHERE name NOT LIKE 'sqlite_%'
-                """
-            )
-        }
-        allowed = {
-            "users",
-            "orders",
-            "withdrawals",
-            *_LIVE_PROTOTYPE_INDEXES,
-        }
-        unexpected = sorted(set(objects) - allowed)
-        if unexpected:
-            raise MigrationBlocked(
-                "unversioned database has an unsupported catalog object: "
-                + unexpected[0]
-            )
+        actual = cls._read_catalog(conn)
+        if not actual:
+            cls._require_zero_sequences(conn, None)
+            return _MigrationPlan("fresh")
 
-        migrate_orders = "orders" in objects
-        if migrate_orders:
-            if objects["orders"]["type"] != "table":
-                raise MigrationBlocked("prototype orders object is not a table")
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(orders)")}
-            if "side" in columns:
+        cls._validate_exact_catalog(
+            actual,
+            _EXPECTED_LIVE_PROTOTYPE_OBJECTS,
+            "live prototype",
+        )
+        cls._validate_compatible_users(conn)
+        for table in ("orders", "withdrawals"):
+            if conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] != 0:
                 raise MigrationBlocked(
-                    "unversioned side-aware orders table cannot be certified as v4"
+                    f"cannot migrate live prototype because {table} contains "
+                    "financial records"
                 )
-            if conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] != 0:
-                raise MigrationBlocked(
-                    "cannot migrate the prototype database because it contains "
-                    "existing orders"
-                )
-            if cls._schema_object(conn, "orders_v2_archive") is not None:
-                raise MigrationBlocked("prototype order archive already exists")
-
-        for name, expected_sql in _LIVE_PROTOTYPE_INDEXES.items():
-            row = objects.get(name)
-            if row is not None and (
-                row["type"] != "index"
-                or type(row["sql"]) is not str
-                or _canonical_schema_sql(row["sql"])
-                != _canonical_schema_sql(expected_sql)
-            ):
-                raise MigrationBlocked(f"prototype index {name} is malformed")
-
-        migrate_users = "users" in objects
-        if migrate_users:
-            cls._validate_compatible_users(conn)
-        if "withdrawals" in objects:
-            if objects["withdrawals"]["type"] != "table":
-                raise MigrationBlocked("prototype withdrawals object is not a table")
-            if (
-                type(objects["withdrawals"]["sql"]) is not str
-                or _canonical_schema_sql(objects["withdrawals"]["sql"])
-                != _canonical_schema_sql(_LEGACY_WITHDRAWALS_SQL)
-            ):
-                raise MigrationBlocked(
-                    "legacy withdrawals table does not match the trusted definition"
-                )
-            if conn.execute("SELECT COUNT(*) FROM withdrawals").fetchone()[0] != 0:
-                raise MigrationBlocked(
-                    "legacy withdrawals have no trustworthy opening revenue provenance"
-                )
+        cls._require_zero_sequences(conn, ("orders", "withdrawals"))
         return _MigrationPlan(
-            "prototype" if objects else "fresh",
-            migrate_users=migrate_users,
-            migrate_orders=migrate_orders,
+            "prototype",
+            migrate_users=True,
+            migrate_orders=True,
         )
 
     @classmethod
     def _validate_v3_migration(cls, conn: sqlite3.Connection) -> None:
-        cls._validate_catalog(conn, _EXPECTED_V3_OBJECTS, "v3")
-        unexpected_financial_objects = conn.execute(
-            """
-            SELECT name FROM sqlite_master
-            WHERE name NOT LIKE 'sqlite_%'
-              AND type IN ('index','trigger')
-              AND tbl_name IN ('users','orders','transfers','audit_events')
-              AND name NOT IN (
-                'orders_by_state','orders_by_deposit','one_active_order_transfer'
-              )
-            LIMIT 1
-            """
-        ).fetchone()
-        if unexpected_financial_objects is not None:
-            raise MigrationBlocked(
-                "non-exact v3 financial catalog contains "
-                f"{unexpected_financial_objects['name']}"
-            )
-        for archive_name in (
-            "orders_v3_archive",
-            "transfers_v3_archive",
-            "audit_events_v3_archive",
-            "schema_meta_v3_archive",
-        ):
-            if cls._schema_object(conn, archive_name) is not None:
-                raise MigrationBlocked(f"v3 migration archive {archive_name} exists")
+        cls._validate_catalog_variants(
+            conn, _EXPECTED_V3_CATALOG_VARIANTS, "v3"
+        )
         for table in ("orders", "transfers", "audit_events"):
             if conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] != 0:
                 raise MigrationBlocked(
                     f"cannot migrate v3 because {table} contains financial records"
                 )
-        for table in ("deposit_scans", "deposit_credits", "transfer_credit_allocations"):
-            if cls._schema_object(conn, table) is not None:
-                raise MigrationBlocked(
-                    f"non-exact v3 financial catalog contains {table}"
-                )
         withdrawals = cls._schema_object(conn, "withdrawals")
         if withdrawals is not None:
-            if (
-                withdrawals["type"] != "table"
-                or type(withdrawals["sql"]) is not str
-                or _canonical_schema_sql(withdrawals["sql"])
-                != _canonical_schema_sql(_LEGACY_WITHDRAWALS_SQL)
-            ):
-                raise MigrationBlocked(
-                    "legacy withdrawals table does not match the trusted definition"
-                )
             if conn.execute("SELECT COUNT(*) FROM withdrawals").fetchone()[0] != 0:
                 raise MigrationBlocked(
                     "legacy withdrawals have no trustworthy opening revenue provenance"
@@ -706,29 +797,180 @@ class Store:
             != 0
         ):
             raise MigrationBlocked("v3 prototype archive must remain empty")
+        cls._require_zero_sequences(
+            conn,
+            (
+                "orders",
+                "transfers",
+                "audit_events",
+                "withdrawals",
+                "orders_v2_archive",
+            ),
+        )
         cls._validate_compatible_users(conn)
 
+    @staticmethod
+    def _read_catalog(
+        conn: sqlite3.Connection,
+    ) -> dict[str, tuple[str, str]]:
+        return {
+            row["name"]: (row["type"], row["sql"])
+            for row in conn.execute(
+                """
+                SELECT type, name, sql FROM sqlite_master
+                WHERE name NOT LIKE 'sqlite_%'
+                """
+            )
+        }
+
     @classmethod
-    def _validate_catalog(
+    def _validate_catalog_variants(
         cls,
         conn: sqlite3.Connection,
+        variants: tuple[tuple[str, Mapping[str, tuple[str, str]]], ...],
+        label: str,
+    ) -> str:
+        actual = cls._read_catalog(conn)
+        for variant_name, expected in variants:
+            if cls._catalogs_match(actual, expected):
+                return variant_name
+
+        allowed_names = set().union(*(set(expected) for _, expected in variants))
+        unexpected = sorted(set(actual) - allowed_names)
+        if unexpected:
+            raise MigrationBlocked(
+                f"unexpected {label} catalog object {unexpected[0]}"
+            )
+
+        required_names = set.intersection(
+            *(set(expected) for _, expected in variants)
+        )
+        missing = sorted(required_names - set(actual))
+        if missing:
+            expected_type = variants[0][1][missing[0]][0]
+            raise MigrationBlocked(
+                f"required {label} {expected_type} {missing[0]} is missing"
+            )
+
+        for name, actual_definition in actual.items():
+            allowed_definitions = {
+                (object_type, _canonical_schema_sql(sql))
+                for _, expected in variants
+                if name in expected
+                for object_type, sql in (expected[name],)
+            }
+            if type(actual_definition[1]) is not str:
+                raise MigrationBlocked(
+                    f"{name} does not match a recognized {label} definition"
+                )
+            normalized_actual = (
+                actual_definition[0],
+                _canonical_schema_sql(actual_definition[1]),
+            )
+            if allowed_definitions and normalized_actual not in allowed_definitions:
+                raise MigrationBlocked(
+                    f"{name} does not match a recognized {label} definition"
+                )
+
+        raise MigrationBlocked(
+            f"{label} catalog does not match recognized migration evidence"
+        )
+
+    @classmethod
+    def _validate_exact_catalog(
+        cls,
+        actual: Mapping[str, tuple[str, str]],
         expected: Mapping[str, tuple[str, str]],
         label: str,
     ) -> None:
-        for name, (expected_type, expected_sql) in expected.items():
-            row = cls._schema_object(conn, name)
-            if row is None:
+        unexpected = sorted(set(actual) - set(expected))
+        if unexpected:
+            raise MigrationBlocked(
+                f"unexpected {label} catalog object {unexpected[0]}"
+            )
+        missing = sorted(set(expected) - set(actual))
+        if missing:
+            raise MigrationBlocked(
+                f"required {label} {expected[missing[0]][0]} {missing[0]} is missing"
+            )
+        for name, expected_definition in expected.items():
+            if not cls._definitions_match(actual[name], expected_definition):
                 raise MigrationBlocked(
-                    f"required {label} {expected_type} {name} is missing"
+                    f"{name} does not match the trusted {label} definition"
                 )
+
+    @classmethod
+    def _catalogs_match(
+        cls,
+        actual: Mapping[str, tuple[str, str]],
+        expected: Mapping[str, tuple[str, str]],
+    ) -> bool:
+        return set(actual) == set(expected) and all(
+            cls._definitions_match(actual[name], expected_definition)
+            for name, expected_definition in expected.items()
+        )
+
+    @staticmethod
+    def _definitions_match(
+        actual: tuple[str, str], expected: tuple[str, str]
+    ) -> bool:
+        return (
+            actual[0] == expected[0]
+            and type(actual[1]) is str
+            and _canonical_schema_sql(actual[1])
+            == _canonical_schema_sql(expected[1])
+        )
+
+    @classmethod
+    def _require_zero_sequences(
+        cls, conn: sqlite3.Connection, table_names: tuple[str, ...] | None
+    ) -> None:
+        if cls._schema_object(conn, "sqlite_sequence") is None:
+            return
+        if table_names is None:
+            row = conn.execute(
+                "SELECT name, seq FROM sqlite_sequence WHERE seq > 0 LIMIT 1"
+            ).fetchone()
+        else:
+            placeholders = ",".join("?" for _ in table_names)
+            row = conn.execute(
+                f"""
+                SELECT name, seq FROM sqlite_sequence
+                WHERE seq > 0 AND name IN ({placeholders})
+                LIMIT 1
+                """,
+                table_names,
+            ).fetchone()
+        if row is not None:
+            raise MigrationBlocked(
+                f"{row['name']} was previously used according to sqlite_sequence"
+            )
+
+    @classmethod
+    def _validate_v4_evidence_rows(cls, conn: sqlite3.Connection) -> None:
+        for table in (
+            "withdrawals",
+            "orders_v2_archive",
+            "orders_v3_archive",
+            "transfers_v3_archive",
+            "audit_events_v3_archive",
+        ):
             if (
-                row["type"] != expected_type
-                or type(row["sql"]) is not str
-                or _canonical_schema_sql(row["sql"])
-                != _canonical_schema_sql(expected_sql)
+                cls._schema_object(conn, table) is not None
+                and conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+                != 0
             ):
                 raise MigrationBlocked(
-                    f"{name} does not match the required {label} definition"
+                    f"v4 migration evidence table {table} must remain empty"
+                )
+
+        if cls._schema_object(conn, "schema_meta_v3_archive") is not None:
+            rows = conn.execute(
+                "SELECT id, version FROM schema_meta_v3_archive"
+            ).fetchall()
+            if len(rows) != 1 or tuple(rows[0]) != (1, 3):
+                raise MigrationBlocked(
+                    "schema_meta_v3_archive must retain exactly the (1, 3) evidence row"
                 )
 
     @staticmethod
@@ -860,3 +1102,37 @@ class Store:
         if type(value) is not OrderState:
             raise ValueError("audit state must be a valid order state")
         return value.value
+
+
+def _run_module_cli() -> int:
+    db_path = os.environ.get("DB_PATH")
+    if db_path is None or not db_path.strip() or "\x00" in db_path:
+        print(
+            json.dumps({"error": "DB_PATH is required"}, separators=(",", ":")),
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        store = Store(db_path)
+        store.initialize()
+        integrity = store.integrity_check()
+        if integrity != "ok":
+            raise RuntimeError("database integrity check failed")
+    except Exception:
+        print(
+            json.dumps({"error": type(exc).__name__}, separators=(",", ":")),
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        json.dumps(
+            {"integrity": integrity, "schema_version": SCHEMA_VERSION},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_run_module_cli())
