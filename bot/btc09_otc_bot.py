@@ -51,6 +51,7 @@ TRADING_ENABLED = os.environ.get("OTC_TRADING_ENABLED", "0").strip().lower() in 
     "yes",
     "on",
 }
+COMMAND_PAUSE_PREFIX = "" if TRADING_ENABLED else "PAUSED: "
 TX_FEE = os.environ.get("BTC09_TX_FEE", "0.0001")
 ORDER_TIMEOUT_SECONDS = int(os.environ.get("ORDER_TIMEOUT_SECONDS", "86400"))
 PUBLIC_FEED_PATH = os.environ.get("PUBLIC_FEED_PATH", "/opt/btc09/public/otc-bot-feed.json")
@@ -657,7 +658,7 @@ async def on_ready() -> None:
         print(f"[ERROR] command sync failed: {exc}")
 
 
-@bot.tree.command(name="sell", description="Create a 09C sell order")
+@bot.tree.command(name="sell", description=f"{COMMAND_PAUSE_PREFIX}Create a 09C sell order")
 @app_commands.describe(amount="Amount of 09C to sell", price="Total price", currency="Payment currency, e.g. USDT")
 async def sell(interaction: discord.Interaction, amount: str, price: str, currency: str) -> None:
     if not await require_trading_enabled(interaction):
@@ -729,7 +730,7 @@ async def sell(interaction: discord.Interaction, amount: str, price: str, curren
     await interaction.followup.send(embed=embed)
 
 
-@bot.tree.command(name="deposit", description="Verify a seller deposit")
+@bot.tree.command(name="deposit", description=f"{COMMAND_PAUSE_PREFIX}Verify a seller deposit")
 @app_commands.describe(order_id="Order ID")
 async def deposit(interaction: discord.Interaction, order_id: int) -> None:
     if not await require_trading_enabled(interaction):
@@ -790,7 +791,14 @@ async def deposit(interaction: discord.Interaction, order_id: int) -> None:
     )
 
 
-@bot.tree.command(name="orders", description="Show open 09C sell orders")
+@bot.tree.command(
+    name="orders",
+    description=(
+        "Show open 09C sell orders"
+        if TRADING_ENABLED
+        else "Show legacy orders (new escrow paused)"
+    ),
+)
 async def orders(interaction: discord.Interaction) -> None:
     ensure_user(interaction.user)
     with db() as conn:
@@ -798,7 +806,10 @@ async def orders(interaction: discord.Interaction) -> None:
             "SELECT * FROM orders WHERE status = 'open' ORDER BY order_id DESC LIMIT 20"
         ).fetchall()
     if not rows:
-        await interaction.response.send_message("No open orders right now.")
+        message = "No open orders right now."
+        if not TRADING_ENABLED:
+            message += " New escrow actions are paused during safety testing."
+        await interaction.response.send_message(message)
         return
 
     lines = []
@@ -807,11 +818,14 @@ async def orders(interaction: discord.Interaction) -> None:
             f"#{row['order_id']} | `{row['amount']} {COIN_TICKER}` for `{row['price']} {row['currency']}` | seller `{row['seller_name']}`"
         )
     lines.append("")
-    lines.append("Accept with `/buy <order_id>`.")
+    if TRADING_ENABLED:
+        lines.append("Accept with `/buy <order_id>`.")
+    else:
+        lines.append("New escrow actions are paused during safety testing.")
     await interaction.response.send_message(embed=escrow_embed("Open OTC orders", "\n".join(lines)))
 
 
-@bot.tree.command(name="buy", description="Accept an open sell order")
+@bot.tree.command(name="buy", description=f"{COMMAND_PAUSE_PREFIX}Accept an open sell order")
 @app_commands.describe(order_id="Order ID")
 async def buy(interaction: discord.Interaction, order_id: int) -> None:
     if not await require_trading_enabled(interaction):
@@ -877,7 +891,7 @@ async def buy(interaction: discord.Interaction, order_id: int) -> None:
     )
 
 
-@bot.tree.command(name="confirm", description="Confirm your side of a trade")
+@bot.tree.command(name="confirm", description=f"{COMMAND_PAUSE_PREFIX}Confirm your side of a trade")
 @app_commands.describe(order_id="Order ID")
 async def confirm(interaction: discord.Interaction, order_id: int) -> None:
     if not await require_trading_enabled(interaction):
@@ -966,7 +980,7 @@ async def confirm(interaction: discord.Interaction, order_id: int) -> None:
     await dm_user(row["buyer_id"], done)
 
 
-@bot.tree.command(name="cancel", description="Cancel an order")
+@bot.tree.command(name="cancel", description=f"{COMMAND_PAUSE_PREFIX}Cancel an escrow order")
 @app_commands.describe(order_id="Order ID")
 async def cancel(interaction: discord.Interaction, order_id: int) -> None:
     if not await require_trading_enabled(interaction):
@@ -1104,7 +1118,7 @@ async def stats(interaction: discord.Interaction) -> None:
     await interaction.followup.send(text, allowed_mentions=discord.AllowedMentions.none())
 
 
-@bot.tree.command(name="dispute", description="Open a dispute on a trade")
+@bot.tree.command(name="dispute", description=f"{COMMAND_PAUSE_PREFIX}Open an escrow dispute")
 @app_commands.describe(order_id="Order ID")
 async def dispute(interaction: discord.Interaction, order_id: int) -> None:
     if not await require_trading_enabled(interaction):
@@ -1232,7 +1246,9 @@ async def admin_cmd(interaction: discord.Interaction, action: str, order_id: int
     await dm_user(target_id, escrow_embed(f"Order #{order_id} resolved", f"Sent `{fmt_amt(payout)} {COIN_TICKER}` to your address."))
 
 
-@bot.tree.command(name="withdraw", description="Admin: withdraw recorded escrow fees")
+@bot.tree.command(
+    name="withdraw", description=f"{COMMAND_PAUSE_PREFIX}Admin escrow fee withdrawal"
+)
 @app_commands.describe(amount="Amount of 09C fees to withdraw", address="Destination 09C address")
 async def withdraw(interaction: discord.Interaction, amount: str, address: str) -> None:
     if not await require_trading_enabled(interaction):
