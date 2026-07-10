@@ -326,9 +326,20 @@ the resulting catalog, stamp v4, and commit last. A denied WAL activation,
 newer schema, malformed required object, or blocked migration must not stamp or
 partially rewrite the database. An already-v4 database is validation-only and
 does not upsert its version row. Validate the complete catalog, not only required
-object presence: allow exactly the 50 active v4 objects plus exact recognized
+object presence: allow exactly the 53 active v4 objects plus exact recognized
 empty archive/withdrawal/index evidence for its migration origin, and reject
-every other table, view, index, or trigger. If the exact live-prototype `orders`
+every other table, view, index, or trigger. Stamp the durable semantic origin
+in `schema_meta.origin`: `fresh`, `live_prototype`, `v3_fresh`,
+`v3_with_withdrawals`, or `v3_live_prototype`. Three schema-meta triggers make
+the one version/origin row insert-once and reject update, delete, or replacement.
+Every later v4 initialization
+uses that marker to select exactly one permitted catalog; deleting a complete
+coherent evidence set must not make a migrated database look fresh. Catalog
+cardinality is keyed by object type and name, duplicate names across object
+types are rejected, and only verified SQL-NULL autoindexes plus the exact
+internal `sqlite_sequence` object are excluded. Executable `sqlite_*` objects
+remain part of validation. Canonical SQL comparison preserves every byte inside
+quoted literals and identifiers. If the exact live-prototype `orders`
 table lacks `side`, require it to contain zero rows and no sequence history,
 rename it to `orders_v2_archive`, and create
 the v4 table. A non-empty prototype table must raise `MigrationBlocked` instead
@@ -347,6 +358,12 @@ transaction rename them to `orders_v3_archive`, `transfers_v3_archive`,
 index names can be created. Preserve `users`, `withdrawals`, any prior empty
 `orders_v2_archive`, and all archive tables as evidence. Any nonempty or
 non-exact v3 financial catalog is blocked without mutation.
+The presence of any matching `sqlite_sequence` row is prior-use evidence even
+when `seq` is `0` or negative; absence/zero-row table checks cannot override it.
+The unversioned empty-catalog path is stricter: a truly fresh database has no
+`sqlite_sequence` object, so even an empty internal sequence table blocks fresh
+certification. Prototype and v3 origins may legitimately retain that object and
+are instead subject to their exact catalog and named-sequence checks.
 
 The ordered migration algorithm is: (1) raw read-only version/catalog/row-count
 preflight; (2) WAL plus `synchronous=FULL`; (3) `BEGIN IMMEDIATE`; (4) repeat
@@ -364,8 +381,28 @@ PRAGMA foreign_keys = ON;
 PRAGMA recursive_triggers = ON;
 CREATE TABLE IF NOT EXISTS schema_meta (
   id INTEGER PRIMARY KEY CHECK(id = 1),
-  version INTEGER NOT NULL
+  version INTEGER NOT NULL,
+  origin TEXT NOT NULL CHECK(origin IN (
+    'fresh','live_prototype','v3_fresh','v3_with_withdrawals',
+    'v3_live_prototype'
+  ))
 ) STRICT;
+CREATE TRIGGER IF NOT EXISTS schema_meta_insert_once
+BEFORE INSERT ON schema_meta
+WHEN EXISTS (SELECT 1 FROM schema_meta)
+BEGIN
+  SELECT RAISE(ABORT, 'schema metadata row already exists');
+END;
+CREATE TRIGGER IF NOT EXISTS schema_meta_update_block
+BEFORE UPDATE ON schema_meta
+BEGIN
+  SELECT RAISE(ABORT, 'schema metadata is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS schema_meta_delete_block
+BEFORE DELETE ON schema_meta
+BEGIN
+  SELECT RAISE(ABORT, 'schema metadata is immutable');
+END;
 CREATE TABLE IF NOT EXISTS users (
   user_id INTEGER PRIMARY KEY,
   username TEXT NOT NULL CHECK(
@@ -1410,8 +1447,7 @@ BEFORE DELETE ON audit_events
 BEGIN
   SELECT RAISE(ABORT, 'audit events are append-only');
 END;
-INSERT INTO schema_meta(id, version) VALUES(1, 4)
-ON CONFLICT(id) DO UPDATE SET version=excluded.version;
+INSERT INTO schema_meta(id, version, origin) VALUES(1, 4, 'fresh');
 ```
 
 The archive table is read-only migration evidence and is dropped only in a

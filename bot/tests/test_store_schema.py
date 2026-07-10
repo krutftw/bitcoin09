@@ -398,6 +398,47 @@ class StoreSchemaTests(unittest.TestCase):
         store.initialize()
         self.assertEqual(self.schema_snapshot(), first)
 
+    def test_unversioned_empty_sqlite_sequence_blocks_fresh_certification(self):
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.execute(
+                "CREATE TABLE shadow_financial(id INTEGER PRIMARY KEY AUTOINCREMENT)"
+            )
+            conn.execute("INSERT INTO shadow_financial(id) VALUES(117)")
+            conn.execute("DROP TABLE shadow_financial")
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM sqlite_master "
+                    "WHERE type='table' AND name='sqlite_sequence'"
+                ).fetchone()[0],
+                1,
+            )
+            self.assertEqual(conn.execute("SELECT * FROM sqlite_sequence").fetchall(), [])
+            before = conn.execute(
+                "SELECT type,name,tbl_name,rootpage,sql FROM sqlite_master "
+                "ORDER BY type,name,tbl_name,rootpage"
+            ).fetchall()
+            before_journal = conn.execute("PRAGMA journal_mode").fetchone()[0]
+
+        with self.assertRaisesRegex(MigrationBlocked, "sqlite_sequence|previously"):
+            Store(self.path).initialize()
+
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT type,name,tbl_name,rootpage,sql FROM sqlite_master "
+                    "ORDER BY type,name,tbl_name,rootpage"
+                ).fetchall(),
+                before,
+            )
+            self.assertEqual(
+                conn.execute("PRAGMA journal_mode").fetchone()[0], before_journal
+            )
+            self.assertIsNone(
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='schema_meta'"
+                ).fetchone()
+            )
+
     def test_live_empty_prototype_migrates_and_preserves_user_and_archive(self):
         with managed_connection(sqlite3.connect(self.path)) as conn:
             conn.executescript(LIVE_PROTOTYPE_SCHEMA)
@@ -649,6 +690,214 @@ class StoreSchemaTests(unittest.TestCase):
                         Store(path).initialize()
                     self.assertEqual(self.database_dump(path), before)
 
+    def test_v4_rejects_trigger_hidden_behind_same_table_name(self):
+        store = self.make_store()
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("DROP TABLE users")
+            conn.execute(
+                """
+                CREATE TRIGGER users AFTER UPDATE ON orders
+                BEGIN
+                  SELECT 1;
+                END
+                """
+            )
+            conn.execute(_EXPECTED_V4_OBJECTS["users"][1])
+        before = self.database_dump(self.path)
+        with self.assertRaisesRegex(MigrationBlocked, "duplicate.*users"):
+            store.initialize()
+        self.assertEqual(self.database_dump(self.path), before)
+
+    def test_catalog_comparison_preserves_whitespace_inside_quoted_literals(self):
+        store = self.make_store()
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            schema_version = conn.execute("PRAGMA schema_version").fetchone()[0]
+            original = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'"
+            ).fetchone()[0]
+            mutated = original.replace("*[^ -~]*", "*[^\t-~]*")
+            self.assertNotEqual(mutated, original)
+            conn.execute("PRAGMA writable_schema=ON")
+            conn.execute(
+                "UPDATE sqlite_master SET sql=? WHERE type='table' AND name='orders'",
+                (mutated,),
+            )
+            conn.execute("PRAGMA writable_schema=OFF")
+            conn.execute(f"PRAGMA schema_version={schema_version + 1}")
+        before = self.database_dump(self.path)
+        with self.assertRaisesRegex(MigrationBlocked, "orders.*definition"):
+            store.initialize()
+        self.assertEqual(self.database_dump(self.path), before)
+
+    def test_v3_and_v4_reject_reserved_name_executable_catalog_rows(self):
+        V3Store = committed_v3_store_class()
+        for version, initializer in ((3, V3Store), (4, Store)):
+            with self.subTest(version=version):
+                path = Path(self.tmp.name) / f"sqlite-rogue-{version}.db"
+                initializer(path).initialize()
+                with managed_connection(sqlite3.connect(path)) as conn:
+                    schema_version = conn.execute("PRAGMA schema_version").fetchone()[0]
+                    conn.execute("PRAGMA writable_schema=ON")
+                    conn.execute(
+                        """
+                        INSERT INTO sqlite_master(type,name,tbl_name,rootpage,sql)
+                        VALUES('trigger','sqlite_rogue','users',0,?)
+                        """,
+                        (
+                            "CREATE TRIGGER sqlite_rogue AFTER UPDATE ON users "
+                            "BEGIN SELECT 1; END",
+                        ),
+                    )
+                    conn.execute("PRAGMA writable_schema=OFF")
+                    conn.execute(f"PRAGMA schema_version={schema_version + 1}")
+                before = self.database_dump(path)
+                with self.assertRaisesRegex(
+                    MigrationBlocked, "unexpected.*sqlite_rogue"
+                ):
+                    Store(path).initialize()
+                self.assertEqual(self.database_dump(path), before)
+
+    def test_v4_origin_marker_prevents_complete_evidence_set_deletion(self):
+        V3Store = committed_v3_store_class()
+        cases = ("prototype", "v3")
+        for origin in cases:
+            with self.subTest(origin=origin):
+                path = Path(self.tmp.name) / f"lost-evidence-{origin}.db"
+                if origin == "prototype":
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+                    Store(path).initialize()
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.execute("DROP TABLE orders_v2_archive")
+                        conn.execute("DROP TABLE withdrawals")
+                else:
+                    V3Store(path).initialize()
+                    Store(path).initialize()
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        for table in (
+                            "transfers_v3_archive",
+                            "orders_v3_archive",
+                            "audit_events_v3_archive",
+                            "schema_meta_v3_archive",
+                        ):
+                            conn.execute(f'DROP TABLE "{table}"')
+                before = self.database_dump(path)
+                with self.assertRaisesRegex(MigrationBlocked, "origin|missing"):
+                    Store(path).initialize()
+                self.assertEqual(self.database_dump(path), before)
+
+    def test_schema_meta_records_exact_migration_origin(self):
+        V3Store = committed_v3_store_class()
+        for expected_origin in (
+            "fresh",
+            "live_prototype",
+            "v3_fresh",
+            "v3_with_withdrawals",
+            "v3_live_prototype",
+        ):
+            with self.subTest(origin=expected_origin):
+                path = Path(self.tmp.name) / f"origin-{expected_origin}.db"
+                if expected_origin == "live_prototype":
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+                elif expected_origin == "v3_fresh":
+                    V3Store(path).initialize()
+                elif expected_origin == "v3_with_withdrawals":
+                    V3Store(path).initialize()
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.executescript(
+                            """
+                            CREATE TABLE withdrawals(
+                              withdrawal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                              admin_id INTEGER NOT NULL, amount TEXT NOT NULL,
+                              address TEXT NOT NULL, txid TEXT,
+                              status TEXT NOT NULL, created_at INTEGER NOT NULL
+                            );
+                            """
+                        )
+                elif expected_origin == "v3_live_prototype":
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+                    V3Store(path).initialize()
+                Store(path).initialize()
+                with managed_connection(sqlite3.connect(path)) as conn:
+                    self.assertEqual(
+                        conn.execute("SELECT origin FROM schema_meta WHERE id=1").fetchone()[0],
+                        expected_origin,
+                    )
+
+    def test_schema_meta_version_and_origin_row_is_insert_once_and_immutable(self):
+        store = self.make_store()
+        with managed_connection(store.connect()) as conn:
+            statements = (
+                "UPDATE schema_meta SET origin='live_prototype' WHERE id=1",
+                "UPDATE schema_meta SET version=3 WHERE id=1",
+                "DELETE FROM schema_meta WHERE id=1",
+                "INSERT INTO schema_meta(id,version,origin) VALUES(1,4,'fresh')",
+                "INSERT OR REPLACE INTO schema_meta(id,version,origin) VALUES(1,4,'live_prototype')",
+            )
+            for statement in statements:
+                with self.subTest(statement=statement), self.assertRaisesRegex(
+                    sqlite3.IntegrityError, "schema metadata"
+                ):
+                    conn.execute(statement)
+            self.assertEqual(
+                tuple(
+                    conn.execute(
+                        "SELECT id,version,origin FROM schema_meta"
+                    ).fetchone()
+                ),
+                (1, 4, "fresh"),
+            )
+
+    def test_each_wrong_origin_is_rejected_against_its_evidence_catalog(self):
+        V3Store = committed_v3_store_class()
+        wrong_origins = {
+            "fresh": "live_prototype",
+            "live_prototype": "fresh",
+            "v3_fresh": "fresh",
+            "v3_with_withdrawals": "v3_fresh",
+            "v3_live_prototype": "v3_fresh",
+        }
+        for correct_origin, wrong_origin in wrong_origins.items():
+            with self.subTest(correct=correct_origin, wrong=wrong_origin):
+                path = Path(self.tmp.name) / f"wrong-origin-{correct_origin}.db"
+                if correct_origin == "live_prototype":
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+                elif correct_origin == "v3_fresh":
+                    V3Store(path).initialize()
+                elif correct_origin == "v3_with_withdrawals":
+                    V3Store(path).initialize()
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.executescript(
+                            """
+                            CREATE TABLE withdrawals(
+                              withdrawal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                              admin_id INTEGER NOT NULL, amount TEXT NOT NULL,
+                              address TEXT NOT NULL, txid TEXT,
+                              status TEXT NOT NULL, created_at INTEGER NOT NULL
+                            );
+                            """
+                        )
+                elif correct_origin == "v3_live_prototype":
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+                    V3Store(path).initialize()
+                Store(path).initialize()
+
+                with managed_connection(sqlite3.connect(path)) as conn:
+                    conn.execute("DROP TRIGGER schema_meta_update_block")
+                    conn.execute("UPDATE schema_meta SET origin=?", (wrong_origin,))
+                    conn.execute(
+                        _EXPECTED_V4_OBJECTS["schema_meta_update_block"][1]
+                    )
+                before = self.database_dump(path)
+                with self.assertRaisesRegex(MigrationBlocked, "origin|unexpected|required"):
+                    Store(path).initialize()
+                self.assertEqual(self.database_dump(path), before)
+
     def test_existing_v4_initialize_is_validation_only(self):
         class NoVersionWriteStore(Store):
             def _connect(self, *, apply_wal):
@@ -708,6 +957,36 @@ class StoreSchemaTests(unittest.TestCase):
                 self.assertEqual(self.database_dump(path), before)
                 self.assertEqual(self.journal_mode(path), "delete")
 
+    def test_prototype_zero_and_negative_sequence_rows_block(self):
+        cases = {
+            "orders": """
+                INSERT INTO orders(
+                  order_id,seller_id,amount,price,currency,created_at,updated_at
+                ) VALUES(?,7,'1','1','AUD',1,1)
+            """,
+            "withdrawals": """
+                INSERT INTO withdrawals(
+                  withdrawal_id,admin_id,amount,address,status,created_at
+                ) VALUES(?,1,'1','x','pending',1)
+            """,
+        }
+        for table, insert_sql in cases.items():
+            for explicit_id in (0, -1):
+                with self.subTest(table=table, explicit_id=explicit_id):
+                    path = Path(self.tmp.name) / f"prototype-seq-{table}-{explicit_id}.db"
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+                        conn.execute(insert_sql, (explicit_id,))
+                        conn.execute(f'DELETE FROM "{table}"')
+                        sequence = conn.execute(
+                            "SELECT seq FROM sqlite_sequence WHERE name=?", (table,)
+                        ).fetchone()
+                        self.assertIsNotNone(sequence)
+                before = self.database_dump(path)
+                with self.assertRaisesRegex(MigrationBlocked, "sqlite_sequence"):
+                    Store(path).initialize()
+                self.assertEqual(self.database_dump(path), before)
+
     def test_v3_tombstoned_financial_sequences_block(self):
         V3Store = committed_v3_store_class()
         for table in ("orders", "transfers", "audit_events", "withdrawals"):
@@ -756,6 +1035,63 @@ class StoreSchemaTests(unittest.TestCase):
                     Store(path).initialize()
                 self.assertEqual(self.database_dump(path), before)
 
+    def test_v3_zero_and_negative_sequence_rows_block(self):
+        V3Store = committed_v3_store_class()
+        cases = {
+            "orders": """
+                INSERT INTO orders(
+                  order_id,side,maker_id,maker_name,seller_id,seller_name,
+                  net_amount_units,network_fee_units,service_fee_units,
+                  deposit_required_units,total_price,settlement_asset,
+                  payment_method,state,created_at,updated_at
+                ) VALUES(?,'sell',7,'s',7,'s',1,0,0,1,'1','AUD','cash',
+                         'awaiting_deposit',1,1)
+            """,
+            "transfers": """
+                INSERT INTO transfers(
+                  transfer_id,kind,state,amount_units,network_fee_units,
+                  destination,created_at,updated_at
+                ) VALUES(?,'fee_withdrawal','reserved',1,0,'x',1,1)
+            """,
+            "audit_events": """
+                INSERT INTO audit_events(event_id,event_type,created_at)
+                VALUES(?,'x',1)
+            """,
+            "withdrawals": """
+                INSERT INTO withdrawals(
+                  withdrawal_id,admin_id,amount,address,status,created_at
+                ) VALUES(?,1,'1','x','pending',1)
+            """,
+        }
+        for table, insert_sql in cases.items():
+            for explicit_id in (0, -1):
+                with self.subTest(table=table, explicit_id=explicit_id):
+                    path = Path(self.tmp.name) / f"v3-seq-{table}-{explicit_id}.db"
+                    V3Store(path).initialize()
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        if table == "withdrawals":
+                            conn.executescript(
+                                """
+                                CREATE TABLE withdrawals(
+                                  withdrawal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                  admin_id INTEGER NOT NULL, amount TEXT NOT NULL,
+                                  address TEXT NOT NULL, txid TEXT,
+                                  status TEXT NOT NULL, created_at INTEGER NOT NULL
+                                );
+                                """
+                            )
+                        conn.execute(insert_sql, (explicit_id,))
+                        conn.execute(f'DELETE FROM "{table}"')
+                        self.assertIsNotNone(
+                            conn.execute(
+                                "SELECT seq FROM sqlite_sequence WHERE name=?", (table,)
+                            ).fetchone()
+                        )
+                    before = self.database_dump(path)
+                    with self.assertRaisesRegex(MigrationBlocked, "sqlite_sequence"):
+                        Store(path).initialize()
+                    self.assertEqual(self.database_dump(path), before)
+
     def test_v3_tombstoned_orders_v2_archive_blocks(self):
         V3Store = committed_v3_store_class()
         with managed_connection(sqlite3.connect(self.path)) as conn:
@@ -774,6 +1110,34 @@ class StoreSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(MigrationBlocked, "sequence|previously"):
             Store(self.path).initialize()
         self.assertEqual(self.database_dump(self.path), before)
+
+    def test_v3_orders_v2_archive_zero_and_negative_sequence_rows_block(self):
+        V3Store = committed_v3_store_class()
+        for explicit_id in (0, -1):
+            with self.subTest(explicit_id=explicit_id):
+                path = Path(self.tmp.name) / f"v3-v2-seq-{explicit_id}.db"
+                with managed_connection(sqlite3.connect(path)) as conn:
+                    conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+                V3Store(path).initialize()
+                with managed_connection(sqlite3.connect(path)) as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO orders_v2_archive(
+                          order_id,seller_id,amount,price,currency,created_at,updated_at
+                        ) VALUES(?,7,'1','1','AUD',1,1)
+                        """,
+                        (explicit_id,),
+                    )
+                    conn.execute("DELETE FROM orders_v2_archive")
+                    self.assertIsNotNone(
+                        conn.execute(
+                            "SELECT seq FROM sqlite_sequence WHERE name='orders_v2_archive'"
+                        ).fetchone()
+                    )
+                before = self.database_dump(path)
+                with self.assertRaisesRegex(MigrationBlocked, "sqlite_sequence"):
+                    Store(path).initialize()
+                self.assertEqual(self.database_dump(path), before)
 
     def test_v4_migrated_archive_tombstone_is_not_recertified(self):
         with managed_connection(sqlite3.connect(self.path)) as conn:
@@ -861,6 +1225,83 @@ class StoreSchemaTests(unittest.TestCase):
                         conn.execute(insert_sql, (explicit_id,))
                     before = self.database_dump(path)
                     with self.assertRaisesRegex(MigrationBlocked, f"{table}.*empty"):
+                        Store(path).initialize()
+                    self.assertEqual(self.database_dump(path), before)
+
+    def test_migrated_v4_zero_and_negative_evidence_sequences_block(self):
+        V3Store = committed_v3_store_class()
+        cases = (
+            (
+                "withdrawals",
+                "prototype",
+                """
+                INSERT INTO withdrawals(
+                  withdrawal_id,admin_id,amount,address,status,created_at
+                ) VALUES(?,1,'1','x','pending',1)
+                """,
+            ),
+            (
+                "orders_v2_archive",
+                "prototype",
+                """
+                INSERT INTO orders_v2_archive(
+                  order_id,seller_id,amount,price,currency,created_at,updated_at
+                ) VALUES(?,7,'1','1','AUD',1,1)
+                """,
+            ),
+            (
+                "orders_v3_archive",
+                "v3",
+                """
+                INSERT INTO orders_v3_archive(
+                  order_id,side,maker_id,maker_name,seller_id,seller_name,
+                  net_amount_units,network_fee_units,service_fee_units,
+                  deposit_required_units,total_price,settlement_asset,
+                  payment_method,state,created_at,updated_at
+                ) VALUES(?,'sell',7,'s',7,'s',1,0,0,1,'1','AUD','cash',
+                         'awaiting_deposit',1,1)
+                """,
+            ),
+            (
+                "transfers_v3_archive",
+                "v3",
+                """
+                INSERT INTO transfers_v3_archive(
+                  transfer_id,kind,state,amount_units,network_fee_units,
+                  destination,created_at,updated_at
+                ) VALUES(?,'fee_withdrawal','reserved',1,0,'x',1,1)
+                """,
+            ),
+            (
+                "audit_events_v3_archive",
+                "v3",
+                """
+                INSERT INTO audit_events_v3_archive(event_id,event_type,created_at)
+                VALUES(?,'x',1)
+                """,
+            ),
+        )
+        for table, origin, insert_sql in cases:
+            for explicit_id in (0, -1):
+                with self.subTest(table=table, explicit_id=explicit_id):
+                    path = Path(self.tmp.name) / f"v4-seq-{table}-{explicit_id}.db"
+                    if origin == "prototype":
+                        with managed_connection(sqlite3.connect(path)) as conn:
+                            conn.executescript(LIVE_PROTOTYPE_SCHEMA)
+                        Store(path).initialize()
+                    else:
+                        V3Store(path).initialize()
+                        Store(path).initialize()
+                    with managed_connection(sqlite3.connect(path)) as conn:
+                        conn.execute(insert_sql, (explicit_id,))
+                        conn.execute(f'DELETE FROM "{table}"')
+                        self.assertIsNotNone(
+                            conn.execute(
+                                "SELECT seq FROM sqlite_sequence WHERE name=?", (table,)
+                            ).fetchone()
+                        )
+                    before = self.database_dump(path)
+                    with self.assertRaisesRegex(MigrationBlocked, "sqlite_sequence"):
                         Store(path).initialize()
                     self.assertEqual(self.database_dump(path), before)
 
@@ -1806,6 +2247,34 @@ class StoreSchemaTests(unittest.TestCase):
         )
         with managed_connection(sqlite3.connect(cli_path)) as conn:
             self.assertEqual(conn.execute("SELECT version FROM schema_meta").fetchone()[0], 4)
+
+        blocked_path = Path(self.tmp.name) / "cli-blocked.db"
+        with managed_connection(sqlite3.connect(blocked_path)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE schema_meta (
+                    id INTEGER PRIMARY KEY,
+                    version INTEGER NOT NULL
+                );
+                INSERT INTO schema_meta(id, version) VALUES(1, 99);
+                """
+            )
+        env["DB_PATH"] = str(blocked_path)
+        blocked = subprocess.run(
+            [sys.executable, "-m", "bot.otc.store"],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(blocked.returncode, 1)
+        self.assertEqual(blocked.stdout, "")
+        self.assertLess(len(blocked.stderr), 256)
+        self.assertEqual(
+            json.loads(blocked.stderr),
+            {"error": "UnsupportedSchemaVersion"},
+        )
 
     def test_importing_store_module_has_no_cli_side_effect(self):
         repo_root = Path(__file__).resolve().parents[2]

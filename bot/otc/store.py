@@ -195,8 +195,77 @@ _LIVE_PROTOTYPE_INDEXES = {
 
 
 def _canonical_schema_sql(sql: str) -> str:
-    normalized = re.sub(r"\s+", " ", sql.strip().removesuffix(";").strip())
-    return re.sub(r"\s*([(),])\s*", r"\1", normalized)
+    source = sql.strip()
+    if source.endswith(";"):
+        source = source[:-1].rstrip()
+    output: list[str] = []
+    pending_space = False
+    quote: str | None = None
+    index = 0
+    while index < len(source):
+        char = source[index]
+        if quote is not None:
+            output.append(char)
+            if quote == "[":
+                if char == "]":
+                    quote = None
+            elif char == quote:
+                if index + 1 < len(source) and source[index + 1] == quote:
+                    index += 1
+                    output.append(source[index])
+                else:
+                    quote = None
+            index += 1
+            continue
+
+        if char.isspace():
+            pending_space = True
+            index += 1
+            continue
+        if char in ("'", '"', "`", "["):
+            if pending_space and output and output[-1] not in "(),":
+                output.append(" ")
+            output.append(char)
+            quote = char
+            pending_space = False
+            index += 1
+            continue
+        if char in "(),":
+            while output and output[-1] == " ":
+                output.pop()
+            output.append(char)
+            pending_space = False
+            index += 1
+            continue
+        if pending_space and output and output[-1] not in "(),":
+            output.append(" ")
+        output.append(char)
+        pending_space = False
+        index += 1
+    if quote is not None:
+        raise RuntimeError("schema SQL contains an unterminated quoted region")
+    return "".join(output)
+
+
+def _is_verified_sqlite_internal(
+    object_type: str, name: str, table_name: str, sql: str | None
+) -> bool:
+    if (
+        object_type == "table"
+        and name == "sqlite_sequence"
+        and table_name == "sqlite_sequence"
+        and type(sql) is str
+        and _canonical_schema_sql(sql)
+        == _canonical_schema_sql("CREATE TABLE sqlite_sequence(name,seq)")
+    ):
+        return True
+    return (
+        object_type == "index"
+        and sql is None
+        and re.fullmatch(r"sqlite_autoindex_[A-Za-z0-9_]+_[1-9][0-9]*", name)
+        is not None
+        and bool(table_name)
+    )
 
 
 def _catalog_from_script(script: str) -> dict[str, tuple[str, str]]:
@@ -213,15 +282,16 @@ def _catalog_from_script(script: str) -> dict[str, tuple[str, str]]:
 def _catalog_from_connection(
     conn: sqlite3.Connection,
 ) -> dict[str, tuple[str, str]]:
-    return {
-        row[1]: (row[0], row[2])
-        for row in conn.execute(
-            """
-            SELECT type, name, sql FROM sqlite_master
-            WHERE name NOT LIKE 'sqlite_%'
-            """
-        )
-    }
+    catalog: dict[str, tuple[str, str]] = {}
+    for object_type, name, table_name, sql in conn.execute(
+        "SELECT type, name, tbl_name, sql FROM sqlite_master"
+    ):
+        if _is_verified_sqlite_internal(object_type, name, table_name, sql):
+            continue
+        if name in catalog:
+            raise RuntimeError(f"duplicate schema-source catalog name {name}")
+        catalog[name] = (object_type, sql)
+    return catalog
 
 
 def _prototype_evidence_catalog() -> dict[str, tuple[str, str]]:
@@ -304,33 +374,28 @@ _EXPECTED_V3_CATALOG_VARIANTS = (
         _merged_catalog(_EXPECTED_V3_OBJECTS, _EXPECTED_PROTOTYPE_EVIDENCE),
     ),
 )
-_EXPECTED_V4_CATALOG_VARIANTS = (
-    ("fresh-v4", _EXPECTED_V4_OBJECTS),
-    (
-        "v4-from-live-prototype",
-        _merged_catalog(_EXPECTED_V4_OBJECTS, _EXPECTED_PROTOTYPE_EVIDENCE),
+_V3_VARIANT_ORIGINS = {
+    "fresh-v3": "v3_fresh",
+    "v3-with-withdrawals": "v3_with_withdrawals",
+    "v3-from-live-prototype": "v3_live_prototype",
+}
+_EXPECTED_V4_CATALOG_BY_ORIGIN = {
+    "fresh": _EXPECTED_V4_OBJECTS,
+    "live_prototype": _merged_catalog(
+        _EXPECTED_V4_OBJECTS, _EXPECTED_PROTOTYPE_EVIDENCE
     ),
-    (
-        "v4-from-fresh-v3",
-        _merged_catalog(_EXPECTED_V4_OBJECTS, _EXPECTED_V3_ARCHIVES),
+    "v3_fresh": _merged_catalog(_EXPECTED_V4_OBJECTS, _EXPECTED_V3_ARCHIVES),
+    "v3_with_withdrawals": _merged_catalog(
+        _EXPECTED_V4_OBJECTS,
+        _EXPECTED_V3_ARCHIVES,
+        _EXPECTED_WITHDRAWALS,
     ),
-    (
-        "v4-from-v3-with-withdrawals",
-        _merged_catalog(
-            _EXPECTED_V4_OBJECTS,
-            _EXPECTED_V3_ARCHIVES,
-            _EXPECTED_WITHDRAWALS,
-        ),
+    "v3_live_prototype": _merged_catalog(
+        _EXPECTED_V4_OBJECTS,
+        _EXPECTED_V3_ARCHIVES,
+        _EXPECTED_PROTOTYPE_EVIDENCE,
     ),
-    (
-        "v4-from-live-prototype-via-v3",
-        _merged_catalog(
-            _EXPECTED_V4_OBJECTS,
-            _EXPECTED_V3_ARCHIVES,
-            _EXPECTED_PROTOTYPE_EVIDENCE,
-        ),
-    ),
-)
+}
 _V3_INDEX_NAMES = (
     "orders_by_state",
     "orders_by_deposit",
@@ -341,6 +406,7 @@ _V3_INDEX_NAMES = (
 @dataclass(frozen=True)
 class _MigrationPlan:
     kind: str
+    origin: str
     migrate_users: bool = False
     migrate_orders: bool = False
 
@@ -407,8 +473,10 @@ class Store:
             for statement in _V4_SCHEMA_STATEMENTS:
                 conn.execute(statement)
             self._migration_checkpoint("schema")
-            self._validate_catalog_variants(
-                conn, _EXPECTED_V4_CATALOG_VARIANTS, "v4"
+            self._validate_exact_catalog(
+                self._read_catalog(conn),
+                _EXPECTED_V4_CATALOG_BY_ORIGIN[plan.origin],
+                f"v4 origin {plan.origin}",
             )
             self._validate_v4_evidence_rows(conn)
 
@@ -419,10 +487,9 @@ class Store:
 
             conn.execute(
                 """
-                INSERT INTO schema_meta(id, version) VALUES(1, ?)
-                ON CONFLICT(id) DO UPDATE SET version=excluded.version
+                INSERT INTO schema_meta(id, version, origin) VALUES(1, ?, ?)
                 """,
-                (SCHEMA_VERSION,),
+                (SCHEMA_VERSION, plan.origin),
             )
             self._migration_checkpoint("stamp")
             conn.execute("COMMIT")
@@ -725,8 +792,16 @@ class Store:
                     f"version {SCHEMA_VERSION}"
                 )
             if version == SCHEMA_VERSION:
-                cls._validate_catalog_variants(
-                    conn, _EXPECTED_V4_CATALOG_VARIANTS, "v4"
+                origin = cls._read_schema_origin(conn)
+                expected = _EXPECTED_V4_CATALOG_BY_ORIGIN.get(origin)
+                if expected is None:
+                    raise MigrationBlocked(
+                        f"schema_meta contains unsupported migration origin {origin!r}"
+                    )
+                cls._validate_exact_catalog(
+                    cls._read_catalog(conn),
+                    expected,
+                    f"v4 origin {origin}",
                 )
                 cls._validate_v4_evidence_rows(conn)
                 cls._require_zero_sequences(
@@ -739,10 +814,10 @@ class Store:
                         "audit_events_v3_archive",
                     ),
                 )
-                return _MigrationPlan("v4")
+                return _MigrationPlan("v4", origin)
             if version == 3:
-                cls._validate_v3_migration(conn)
-                return _MigrationPlan("v3", migrate_users=True)
+                origin = cls._validate_v3_migration(conn)
+                return _MigrationPlan("v3", origin, migrate_users=True)
             raise MigrationBlocked(
                 f"database schema version {version} has no safe automatic migration"
             )
@@ -752,8 +827,12 @@ class Store:
     def _preflight_unversioned(cls, conn: sqlite3.Connection) -> _MigrationPlan:
         actual = cls._read_catalog(conn)
         if not actual:
+            if cls._schema_object(conn, "sqlite_sequence") is not None:
+                raise MigrationBlocked(
+                    "unversioned database retains sqlite_sequence prior-use evidence"
+                )
             cls._require_zero_sequences(conn, None)
-            return _MigrationPlan("fresh")
+            return _MigrationPlan("fresh", "fresh")
 
         cls._validate_exact_catalog(
             actual,
@@ -770,13 +849,14 @@ class Store:
         cls._require_zero_sequences(conn, ("orders", "withdrawals"))
         return _MigrationPlan(
             "prototype",
+            "live_prototype",
             migrate_users=True,
             migrate_orders=True,
         )
 
     @classmethod
-    def _validate_v3_migration(cls, conn: sqlite3.Connection) -> None:
-        cls._validate_catalog_variants(
+    def _validate_v3_migration(cls, conn: sqlite3.Connection) -> str:
+        variant = cls._validate_catalog_variants(
             conn, _EXPECTED_V3_CATALOG_VARIANTS, "v3"
         )
         for table in ("orders", "transfers", "audit_events"):
@@ -808,20 +888,26 @@ class Store:
             ),
         )
         cls._validate_compatible_users(conn)
+        return _V3_VARIANT_ORIGINS[variant]
 
     @staticmethod
     def _read_catalog(
         conn: sqlite3.Connection,
     ) -> dict[str, tuple[str, str]]:
-        return {
-            row["name"]: (row["type"], row["sql"])
-            for row in conn.execute(
-                """
-                SELECT type, name, sql FROM sqlite_master
-                WHERE name NOT LIKE 'sqlite_%'
-                """
-            )
-        }
+        catalog: dict[str, tuple[str, str]] = {}
+        for row in conn.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master"
+        ):
+            if _is_verified_sqlite_internal(
+                row["type"], row["name"], row["tbl_name"], row["sql"]
+            ):
+                continue
+            if row["name"] in catalog:
+                raise MigrationBlocked(
+                    f"duplicate catalog name {row['name']} across object types"
+                )
+            catalog[row["name"]] = (row["type"], row["sql"])
+        return catalog
 
     @classmethod
     def _validate_catalog_variants(
@@ -929,14 +1015,14 @@ class Store:
             return
         if table_names is None:
             row = conn.execute(
-                "SELECT name, seq FROM sqlite_sequence WHERE seq > 0 LIMIT 1"
+                "SELECT name, seq FROM sqlite_sequence LIMIT 1"
             ).fetchone()
         else:
             placeholders = ",".join("?" for _ in table_names)
             row = conn.execute(
                 f"""
                 SELECT name, seq FROM sqlite_sequence
-                WHERE seq > 0 AND name IN ({placeholders})
+                WHERE name IN ({placeholders})
                 LIMIT 1
                 """,
                 table_names,
@@ -988,6 +1074,22 @@ class Store:
         if len(rows) != 1 or rows[0]["id"] != 1 or type(rows[0]["version"]) is not int:
             raise MigrationBlocked("schema_meta must contain one integer version row")
         return rows[0]["version"]
+
+    @staticmethod
+    def _read_schema_origin(conn: sqlite3.Connection) -> str:
+        try:
+            rows = conn.execute("SELECT id, origin FROM schema_meta").fetchall()
+        except sqlite3.DatabaseError as exc:
+            raise MigrationBlocked("schema_meta origin cannot be read safely") from exc
+        if (
+            len(rows) != 1
+            or rows[0]["id"] != 1
+            or type(rows[0]["origin"]) is not str
+        ):
+            raise MigrationBlocked(
+                "schema_meta must contain one text migration-origin row"
+            )
+        return rows[0]["origin"]
 
     @classmethod
     def _validate_compatible_users(cls, conn: sqlite3.Connection) -> None:
@@ -1118,7 +1220,7 @@ def _run_module_cli() -> int:
         integrity = store.integrity_check()
         if integrity != "ok":
             raise RuntimeError("database integrity check failed")
-    except Exception:
+    except Exception as exc:
         print(
             json.dumps({"error": type(exc).__name__}, separators=(",", ":")),
             file=sys.stderr,

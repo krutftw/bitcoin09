@@ -2,8 +2,28 @@ PRAGMA foreign_keys = ON;
 PRAGMA recursive_triggers = ON;
 CREATE TABLE IF NOT EXISTS schema_meta (
   id INTEGER PRIMARY KEY CHECK(id = 1),
-  version INTEGER NOT NULL
+  version INTEGER NOT NULL,
+  origin TEXT NOT NULL CHECK(origin IN (
+    'fresh','live_prototype','v3_fresh','v3_with_withdrawals',
+    'v3_live_prototype'
+  ))
 ) STRICT;
+CREATE TRIGGER IF NOT EXISTS schema_meta_insert_once
+BEFORE INSERT ON schema_meta
+WHEN EXISTS (SELECT 1 FROM schema_meta)
+BEGIN
+  SELECT RAISE(ABORT, 'schema metadata row already exists');
+END;
+CREATE TRIGGER IF NOT EXISTS schema_meta_update_block
+BEFORE UPDATE ON schema_meta
+BEGIN
+  SELECT RAISE(ABORT, 'schema metadata is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS schema_meta_delete_block
+BEFORE DELETE ON schema_meta
+BEGIN
+  SELECT RAISE(ABORT, 'schema metadata is immutable');
+END;
 CREATE TABLE IF NOT EXISTS users (
   user_id INTEGER PRIMARY KEY,
   username TEXT NOT NULL CHECK(
@@ -1048,5 +1068,4 @@ BEFORE DELETE ON audit_events
 BEGIN
   SELECT RAISE(ABORT, 'audit events are append-only');
 END;
-INSERT INTO schema_meta(id, version) VALUES(1, 4)
-ON CONFLICT(id) DO UPDATE SET version=excluded.version;
+INSERT INTO schema_meta(id, version, origin) VALUES(1, 4, 'fresh');
