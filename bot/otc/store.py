@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import sqlite3
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,57 @@ class MigrationBlocked(RuntimeError):
 
 class UnsupportedSchemaVersion(RuntimeError):
     """Raised when a database was created by a newer application version."""
+
+
+class AccountingInvariantError(RuntimeError):
+    """Raised when durable fund evidence cannot be interpreted safely."""
+
+
+@dataclass(frozen=True)
+class ReconciliationResult:
+    healthy: bool
+    health_issues: tuple[str, ...]
+    recovery_order_ids: tuple[int, ...]
+    restricted_outpoints: tuple[tuple[str, int, int], ...]
+    scan_ids: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
+class WalletSolvencySnapshot:
+    expected_tip_hash: str
+    expected_tip_height: int
+    wallet_spendable_units: int
+    provisional_restricted_units: int
+    customer_liability_units: int
+    pending_platform_outflow_units: int
+    usable_wallet_units: int
+    required_wallet_units: int
+    restricted_outpoints: tuple[tuple[str, int, int], ...]
+    wallet_snapshot_hash: str
+
+
+@dataclass(frozen=True)
+class ClaimedTransfer:
+    transfer_id: int
+    operation_key: str
+    order_id: int | None
+    kind: str
+    amount_units: int
+    network_fee_units: int
+    earned_fee_units: int
+    destination: str
+    attempt_count: int
+    reserved_at: int
+    expected_tip_hash: str
+    expected_tip_height: int
+    provisional_restricted_units: int
+    restricted_outpoints: tuple[tuple[str, int, int], ...]
+
+
+@dataclass(frozen=True)
+class AttachRecoveryResult:
+    classification: str
+    transfer: Mapping[str, Any]
 
 
 def _split_sql_script(script: str) -> tuple[str, ...]:
@@ -412,8 +464,17 @@ class _MigrationPlan:
 
 
 class Store:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        network: str = "btc09-mainnet",
+        attach_commit_boundary: Callable[[sqlite3.Connection], None] | None = None,
+    ) -> None:
         self.path = Path(path)
+        self.network = self._network(network)
+        self._attach_commit_boundary = attach_commit_boundary
+        self._health_failure: str | None = None
 
     def connect(self) -> sqlite3.Connection:
         return self._connect(apply_wal=True)
@@ -620,6 +681,7 @@ class Store:
         conn = self.connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            self._raise_if_unhealthy_conn(conn)
             conn.execute(
                 """
                 INSERT INTO users(user_id, username, wallet_addr, created_at, updated_at)
@@ -738,6 +800,7 @@ class Store:
 
         conn = self.connect()
         try:
+            conn.execute("BEGIN IMMEDIATE")
             cursor = conn.execute(
                 """
                 INSERT INTO audit_events (
@@ -757,9 +820,2687 @@ class Store:
             )
             if cursor.lastrowid is None:
                 raise RuntimeError("database did not return the new audit event ID")
-            return int(cursor.lastrowid)
+            event_id = int(cursor.lastrowid)
+            conn.execute("COMMIT")
+            return event_id
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
         finally:
             conn.close()
+
+    def reserve_accept(
+        self,
+        *,
+        order_id: int,
+        actor_id: int,
+        actor_name: str,
+        preallocated_deposit_addr: str | None,
+        deposit_deadline: int | None,
+        now: int,
+    ) -> Mapping[str, Any] | None:
+        self._require_integer(order_id, "order ID")
+        self._require_integer(actor_id, "actor ID")
+        self._require_integer(now, "acceptance time")
+        if order_id <= 0 or actor_id <= 0:
+            raise ValueError("order and actor IDs must be positive")
+        actor_name = self._bounded_text(actor_name, "actor name", 128)
+        self._require_optional_integer(deposit_deadline, "deposit deadline")
+        if preallocated_deposit_addr is not None:
+            preallocated_deposit_addr = self._bounded_text(
+                preallocated_deposit_addr, "preallocated deposit address", 128
+            )
+
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            self._raise_if_unhealthy_conn(conn)
+            order = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            if order is None or order["state"] != "open" or actor_id == order["maker_id"]:
+                conn.execute("COMMIT")
+                return None
+            conn.execute(
+                """
+                INSERT INTO users(user_id,username,wallet_addr,created_at,updated_at)
+                VALUES(?,?,NULL,?,?) ON CONFLICT(user_id) DO NOTHING
+                """,
+                (actor_id, actor_name, now, now),
+            )
+            if order["side"] == "sell":
+                if preallocated_deposit_addr is not None or deposit_deadline is not None:
+                    raise ValueError("WTS acceptance does not assign a deposit address")
+                cursor = conn.execute(
+                    """
+                    UPDATE orders SET buyer_id=?,buyer_name=?,state='matched',
+                      matched_at=?,updated_at=?
+                    WHERE order_id=? AND side='sell' AND state='open'
+                      AND buyer_id IS NULL AND buyer_name IS NULL AND maker_id!=?
+                    """,
+                    (actor_id, actor_name, now, now, order_id, actor_id),
+                )
+            else:
+                if preallocated_deposit_addr is None or deposit_deadline is None:
+                    raise ValueError(
+                        "WTB acceptance requires a fresh address and deposit deadline"
+                    )
+                if deposit_deadline <= now:
+                    raise ValueError("deposit deadline must be in the future")
+                cursor = conn.execute(
+                    """
+                    UPDATE orders SET seller_id=?,seller_name=?,deposit_addr=?,
+                      deposit_deadline=?,state='awaiting_deposit',matched_at=?,updated_at=?
+                    WHERE order_id=? AND side='buy' AND state='open'
+                      AND seller_id IS NULL AND seller_name IS NULL
+                      AND deposit_addr IS NULL AND maker_id!=?
+                    """,
+                    (
+                        actor_id,
+                        actor_name,
+                        preallocated_deposit_addr,
+                        deposit_deadline,
+                        now,
+                        now,
+                        order_id,
+                        actor_id,
+                    ),
+                )
+            if cursor.rowcount != 1:
+                conn.execute("ROLLBACK")
+                return None
+            accepted = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            self._append_audit_conn(
+                conn,
+                order_id=order_id,
+                actor_id=actor_id,
+                event_type="order_accepted",
+                old_state="open",
+                new_state=accepted["state"],
+                detail={"side": order["side"]},
+                created_at=now,
+            )
+            conn.execute("COMMIT")
+            return dict(accepted)
+        except sqlite3.IntegrityError as exc:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise AccountingInvariantError("order acceptance violated durable identity") from exc
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def record_confirmation(
+        self, *, order_id: int, actor_id: int, now: int
+    ) -> Mapping[str, Any] | None:
+        self._require_integer(order_id, "order ID")
+        self._require_integer(actor_id, "actor ID")
+        self._require_integer(now, "confirmation time")
+        if order_id <= 0 or actor_id <= 0:
+            raise ValueError("order and actor IDs must be positive")
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            self._raise_if_unhealthy_conn(conn)
+            order = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            if order is None or order["state"] != "matched":
+                # A replay after the second confirmation returns the already
+                # committed release state to the same party without a new audit.
+                if order is not None and order["state"] == "release_reserved" and actor_id in (
+                    order["buyer_id"],
+                    order["seller_id"],
+                ):
+                    conn.execute("COMMIT")
+                    return dict(order)
+                conn.execute("COMMIT")
+                return None
+            if actor_id == order["buyer_id"]:
+                field = "buyer_confirmed"
+            elif actor_id == order["seller_id"]:
+                field = "seller_confirmed"
+            else:
+                conn.execute("COMMIT")
+                return None
+            if order[field] == 1:
+                conn.execute("COMMIT")
+                return dict(order)
+
+            second = order["buyer_confirmed"] + order["seller_confirmed"] == 1
+            if second:
+                self._queue_order_transfer_conn(
+                    conn,
+                    order=order,
+                    kind="release",
+                    now=now,
+                    actor_id=actor_id,
+                    allow_release=True,
+                    transition_order=False,
+                )
+                new_state = "release_reserved"
+            else:
+                new_state = "matched"
+            conn.execute(
+                f"""
+                UPDATE orders SET {field}=1,state=?,updated_at=?
+                WHERE order_id=? AND state='matched' AND {field}=0
+                """,
+                (new_state, now, order_id),
+            )
+            updated = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            self._append_audit_conn(
+                conn,
+                order_id=order_id,
+                actor_id=actor_id,
+                event_type="payment_confirmed",
+                old_state="matched",
+                new_state=new_state,
+                detail={"role": "buyer" if field == "buyer_confirmed" else "seller"},
+                created_at=now,
+            )
+            conn.execute("COMMIT")
+            return dict(updated)
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def queue_order_transfer(
+        self,
+        *,
+        order_id: int,
+        kind: str,
+        now: int,
+        actor_id: int | None = None,
+    ) -> Mapping[str, Any] | None:
+        self._require_integer(order_id, "order ID")
+        self._require_integer(now, "queue time")
+        self._require_optional_integer(actor_id, "actor ID")
+        kind = self._machine_text(
+            kind,
+            "transfer kind",
+            32,
+            re.compile(r"(?:refund|resolve_buyer|resolve_seller|recovery_refund)\Z"),
+        )
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            self._raise_if_unhealthy_conn(conn)
+            order = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            if order is None:
+                raise ValueError("order does not exist")
+            result = self._queue_order_transfer_conn(
+                conn,
+                order=order,
+                kind=kind,
+                now=now,
+                actor_id=actor_id,
+                allow_release=False,
+                transition_order=True,
+            )
+            conn.execute("COMMIT")
+            return result
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def claim_next_transfer(
+        self,
+        *,
+        expected_tip_hash: str,
+        expected_tip_height: int,
+        wallet_spendable_units: int,
+        now: int,
+    ) -> ClaimedTransfer | None:
+        expected_tip_hash = self._hash_text(expected_tip_hash, "expected tip hash")
+        self._require_integer(expected_tip_height, "expected tip height")
+        self._require_integer(wallet_spendable_units, "wallet spendable units")
+        self._require_integer(now, "claim time")
+        if (
+            expected_tip_height < 0
+            or wallet_spendable_units < 0
+            or wallet_spendable_units > MAX_09C_UNITS
+        ):
+            raise ValueError("claim tip or spendable units are out of range")
+
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            if self._health_failure is not None or self._health_issues_conn(
+                conn, network=self.network
+            ):
+                conn.execute("COMMIT")
+                return None
+            try:
+                self._require_common_tip_conn(
+                    conn,
+                    network=self.network,
+                    expected_tip_hash=expected_tip_hash,
+                    expected_tip_height=expected_tip_height,
+                )
+            except AccountingInvariantError:
+                conn.execute("COMMIT")
+                return None
+            if conn.execute(
+                "SELECT 1 FROM transfers WHERE state='uncertain' LIMIT 1"
+            ).fetchone() is not None:
+                conn.execute("COMMIT")
+                return None
+            if conn.execute(
+                """
+                SELECT 1 FROM transfers
+                WHERE state IN ('reserved','prepared','broadcast') LIMIT 1
+                """
+            ).fetchone() is not None:
+                conn.execute("COMMIT")
+                return None
+            restricted = self._restricted_outpoints_conn(conn, network=self.network)
+            provisional = sum(item[2] for item in restricted)
+            liability = self._customer_liability_conn(conn, network=self.network)
+            pending = self._pending_platform_outflow_conn(conn)
+            usable = wallet_spendable_units - provisional
+            if usable < 0 or usable < liability + pending:
+                conn.execute("COMMIT")
+                return None
+            queued = conn.execute(
+                """
+                SELECT * FROM transfers WHERE state='queued'
+                ORDER BY created_at,transfer_id LIMIT 1
+                """
+            ).fetchone()
+            if queued is None:
+                conn.execute("COMMIT")
+                return None
+            try:
+                cursor = conn.execute(
+                    """
+                    UPDATE transfers SET state='reserved',
+                      attempt_count=attempt_count+1,reserved_at=?,updated_at=?
+                    WHERE transfer_id=? AND state='queued'
+                    """,
+                    (now, now, queued["transfer_id"]),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise AccountingInvariantError(
+                    "queued transfer is not claimable under its order evidence"
+                ) from exc
+            if cursor.rowcount != 1:
+                conn.execute("ROLLBACK")
+                return None
+            claimed = conn.execute(
+                "SELECT * FROM transfers WHERE transfer_id=?",
+                (queued["transfer_id"],),
+            ).fetchone()
+            self._append_audit_conn(
+                conn,
+                order_id=claimed["order_id"],
+                actor_id=None,
+                event_type="transfer_claimed",
+                old_state="queued",
+                new_state="reserved",
+                detail={"attempt_count": claimed["attempt_count"]},
+                created_at=now,
+            )
+            conn.execute("COMMIT")
+            return ClaimedTransfer(
+                transfer_id=claimed["transfer_id"],
+                operation_key=claimed["operation_key"],
+                order_id=claimed["order_id"],
+                kind=claimed["kind"],
+                amount_units=claimed["amount_units"],
+                network_fee_units=claimed["network_fee_units"],
+                earned_fee_units=claimed["earned_fee_units"],
+                destination=claimed["destination"],
+                attempt_count=claimed["attempt_count"],
+                reserved_at=claimed["reserved_at"],
+                expected_tip_hash=expected_tip_hash,
+                expected_tip_height=expected_tip_height,
+                provisional_restricted_units=provisional,
+                restricted_outpoints=restricted,
+            )
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def attach_signed_transfer(
+        self,
+        *,
+        transfer_id: int,
+        expected_attempt_count: int,
+        expected_reserved_at: int,
+        txid: str,
+        signed_tx_hex: str,
+        destination: str,
+        amount_units: int,
+        network_fee_units: int,
+        prepared_tip_hash: str,
+        prepared_tip_height: int,
+        live_tip_hash: str,
+        live_tip_height: int,
+        wallet_snapshot_hash: str,
+        expected_wallet_snapshot_hash: str,
+        now: int,
+    ) -> AttachRecoveryResult:
+        values = self._validate_attachment_values(
+            transfer_id=transfer_id,
+            expected_attempt_count=expected_attempt_count,
+            expected_reserved_at=expected_reserved_at,
+            txid=txid,
+            signed_tx_hex=signed_tx_hex,
+            destination=destination,
+            amount_units=amount_units,
+            network_fee_units=network_fee_units,
+            prepared_tip_hash=prepared_tip_hash,
+            prepared_tip_height=prepared_tip_height,
+            live_tip_hash=live_tip_hash,
+            live_tip_height=live_tip_height,
+            wallet_snapshot_hash=wallet_snapshot_hash,
+            expected_wallet_snapshot_hash=expected_wallet_snapshot_hash,
+            now=now,
+        )
+        conn = self.connect()
+        closed = False
+        commit_attempted = False
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            self._raise_if_unhealthy_conn(conn)
+            if conn.execute(
+                "SELECT 1 FROM transfers WHERE state='uncertain' LIMIT 1"
+            ).fetchone() is not None:
+                raise AccountingInvariantError(
+                    "uncertain transfer blocks signed attachment"
+                )
+            self._require_common_tip_conn(
+                conn,
+                network=self.network,
+                expected_tip_hash=values["prepared_tip_hash"],
+                expected_tip_height=values["prepared_tip_height"],
+            )
+            row = conn.execute(
+                "SELECT * FROM transfers WHERE transfer_id=?", (transfer_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("transfer does not exist")
+            if (
+                row["state"] != "reserved"
+                or row["attempt_count"] != expected_attempt_count
+                or row["reserved_at"] != expected_reserved_at
+            ):
+                raise AccountingInvariantError("reservation attempt is stale or not reserved")
+            if any(
+                row[field] is not None
+                for field in (
+                    "txid",
+                    "signed_tx_hex",
+                    "signed_at",
+                    "prepared_tip_hash",
+                    "prepared_tip_height",
+                )
+            ):
+                raise AccountingInvariantError("reserved transfer has partial signed evidence")
+            if (
+                row["destination"] != values["destination"]
+                or row["amount_units"] != values["amount_units"]
+                or row["network_fee_units"] != values["network_fee_units"]
+            ):
+                raise AccountingInvariantError(
+                    "prepared transaction metadata differs from immutable transfer"
+                )
+            conn.execute(
+                """
+                UPDATE transfers SET state='prepared',txid=?,signed_tx_hex=?,
+                  signed_at=?,prepared_tip_hash=?,prepared_tip_height=?,updated_at=?
+                WHERE transfer_id=? AND state='reserved' AND attempt_count=?
+                  AND reserved_at=?
+                """,
+                (
+                    values["txid"],
+                    values["signed_tx_hex"],
+                    now,
+                    values["prepared_tip_hash"],
+                    values["prepared_tip_height"],
+                    now,
+                    transfer_id,
+                    expected_attempt_count,
+                    expected_reserved_at,
+                ),
+            )
+            self._append_audit_conn(
+                conn,
+                order_id=row["order_id"],
+                actor_id=None,
+                event_type="transfer_prepared",
+                old_state="reserved",
+                new_state="prepared",
+                detail={
+                    "attempt_count": expected_attempt_count,
+                    "txid": values["txid"],
+                },
+                created_at=now,
+            )
+            commit_attempted = True
+            self._commit_attach(conn)
+            prepared = conn.execute(
+                "SELECT * FROM transfers WHERE transfer_id=?", (transfer_id,)
+            ).fetchone()
+            return AttachRecoveryResult("prepared", dict(prepared))
+        except BaseException:
+            if commit_attempted:
+                conn.close()
+                closed = True
+                return self.recover_ambiguous_attach(
+                    transfer_id=transfer_id,
+                    expected_attempt_count=expected_attempt_count,
+                    expected_reserved_at=expected_reserved_at,
+                    txid=values["txid"],
+                    signed_tx_hex=values["signed_tx_hex"],
+                    prepared_tip_hash=values["prepared_tip_hash"],
+                    prepared_tip_height=values["prepared_tip_height"],
+                )
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            if not closed:
+                conn.close()
+
+    def recover_ambiguous_attach(
+        self,
+        *,
+        transfer_id: int,
+        expected_attempt_count: int,
+        expected_reserved_at: int,
+        txid: str,
+        signed_tx_hex: str,
+        prepared_tip_hash: str,
+        prepared_tip_height: int,
+    ) -> AttachRecoveryResult:
+        self._require_integer(transfer_id, "transfer ID")
+        self._require_integer(expected_attempt_count, "expected attempt count")
+        self._require_integer(expected_reserved_at, "expected reservation time")
+        self._require_integer(prepared_tip_height, "prepared tip height")
+        if (
+            transfer_id <= 0
+            or expected_attempt_count <= 0
+            or expected_reserved_at <= 0
+            or prepared_tip_height < 0
+        ):
+            raise ValueError("ambiguous attachment token is out of range")
+        txid = self._hash_text(txid, "transaction ID")
+        signed_tx_hex = self._signed_hex(signed_tx_hex)
+        calculated = hashlib.sha256(
+            hashlib.sha256(bytes.fromhex(signed_tx_hex)).digest()
+        ).digest().hex()
+        if calculated != txid:
+            raise AccountingInvariantError("signed bytes do not match the transaction ID")
+        prepared_tip_hash = self._hash_text(prepared_tip_hash, "prepared tip hash")
+        try:
+            conn = self.connect()
+        except BaseException as exc:
+            self._health_failure = "ambiguous attachment database reopen failed"
+            raise AccountingInvariantError(self._health_failure) from exc
+        try:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                "SELECT * FROM transfers WHERE transfer_id=?", (transfer_id,)
+            ).fetchone()
+            if row is None:
+                self._health_failure = "ambiguous attachment transfer is missing"
+                raise AccountingInvariantError(self._health_failure)
+            if (
+                row["attempt_count"] != expected_attempt_count
+                or row["reserved_at"] != expected_reserved_at
+            ):
+                raise AccountingInvariantError("ambiguous recovery token is stale")
+            if row["state"] == "prepared" and (
+                row["txid"],
+                row["signed_tx_hex"],
+                row["prepared_tip_hash"],
+                row["prepared_tip_height"],
+            ) == (txid, signed_tx_hex, prepared_tip_hash, prepared_tip_height):
+                conn.execute("COMMIT")
+                return AttachRecoveryResult("prepared", dict(row))
+            signed_fields = (
+                row["txid"],
+                row["signed_tx_hex"],
+                row["signed_at"],
+                row["prepared_tip_hash"],
+                row["prepared_tip_height"],
+            )
+            if row["state"] == "reserved" and all(value is None for value in signed_fields):
+                conn.execute("COMMIT")
+                return AttachRecoveryResult("retry_reserved", dict(row))
+            self._health_failure = "ambiguous attachment evidence is partial or mismatched"
+            raise AccountingInvariantError(self._health_failure)
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def mark_transfer_broadcast(
+        self,
+        *,
+        transfer_id: int,
+        observed_txid: str,
+        observed_status: str,
+        now: int,
+    ) -> Mapping[str, Any]:
+        self._require_integer(transfer_id, "transfer ID")
+        self._require_integer(now, "broadcast observation time")
+        observed_txid = self._hash_text(observed_txid, "observed transaction ID")
+        if observed_status not in ("mempool", "confirmed"):
+            raise ValueError("trusted observation must be mempool or confirmed")
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            if row["txid"] != observed_txid:
+                raise AccountingInvariantError("trusted node observed a different transaction")
+            if row["state"] == "broadcast":
+                conn.execute("COMMIT")
+                return dict(row)
+            if row["state"] not in ("prepared", "uncertain"):
+                raise AccountingInvariantError("transfer is not ready for broadcast observation")
+            if row["state"] == "uncertain" and conn.execute(
+                """
+                SELECT 1 FROM transfers
+                WHERE state='uncertain' AND transfer_id!=? LIMIT 1
+                """,
+                (transfer_id,),
+            ).fetchone() is not None:
+                raise AccountingInvariantError(
+                    "another uncertain transfer must be reconciled first"
+                )
+            conn.execute(
+                """
+                UPDATE transfers SET state='broadcast',
+                  broadcast_at=COALESCE(broadcast_at,?),result_class='broadcast',
+                  error_text=NULL,updated_at=? WHERE transfer_id=?
+                """,
+                (now, now, transfer_id),
+            )
+            self._set_order_transfer_state_conn(
+                conn, transfer=row, new_transfer_state="broadcast", now=now
+            )
+            self._append_transfer_audit_conn(
+                conn,
+                transfer=row,
+                event_type="transfer_broadcast",
+                old_state=row["state"],
+                new_state="broadcast",
+                now=now,
+            )
+            updated = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            conn.execute("COMMIT")
+            return dict(updated)
+        except sqlite3.IntegrityError as exc:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise AccountingInvariantError("broadcast transition violated the wallet lane") from exc
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def mark_transfer_failed_safe(
+        self,
+        *,
+        transfer_id: int,
+        expected_attempt_count: int,
+        expected_reserved_at: int,
+        error_text: str,
+        now: int,
+    ) -> Mapping[str, Any]:
+        self._require_integer(transfer_id, "transfer ID")
+        self._require_integer(expected_attempt_count, "expected attempt count")
+        self._require_integer(expected_reserved_at, "expected reservation time")
+        self._require_integer(now, "failure time")
+        if expected_attempt_count <= 0 or expected_reserved_at <= 0:
+            raise ValueError("failure reservation token must be positive")
+        error_text = self._bounded_error(error_text)
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            if row["state"] == "failed_safe" and (
+                row["attempt_count"], row["reserved_at"]
+            ) == (expected_attempt_count, expected_reserved_at):
+                conn.execute("COMMIT")
+                return dict(row)
+            if (
+                row["state"] != "reserved"
+                or row["attempt_count"] != expected_attempt_count
+                or row["reserved_at"] != expected_reserved_at
+                or any(
+                row[field] is not None
+                for field in ("txid", "signed_tx_hex", "signed_at")
+                )
+            ):
+                raise AccountingInvariantError(
+                    "only an unsigned reserved transfer can fail safely"
+                )
+            conn.execute(
+                """
+                UPDATE transfers SET state='failed_safe',result_class='safe_to_retry',
+                  error_text=?,updated_at=? WHERE transfer_id=? AND state='reserved'
+                  AND attempt_count=? AND reserved_at=?
+                """,
+                (
+                    error_text,
+                    now,
+                    transfer_id,
+                    expected_attempt_count,
+                    expected_reserved_at,
+                ),
+            )
+            self._set_order_transfer_state_conn(
+                conn, transfer=row, new_transfer_state="failed_safe", now=now
+            )
+            self._append_transfer_audit_conn(
+                conn,
+                transfer=row,
+                event_type="transfer_failed_safe",
+                old_state="reserved",
+                new_state="failed_safe",
+                now=now,
+            )
+            updated = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            conn.execute("COMMIT")
+            return dict(updated)
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def requeue_failed_safe(
+        self, *, transfer_id: int, now: int
+    ) -> Mapping[str, Any]:
+        self._require_integer(transfer_id, "transfer ID")
+        self._require_integer(now, "requeue time")
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            self._raise_if_unhealthy_conn(conn)
+            row = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            if row["state"] == "queued":
+                conn.execute("COMMIT")
+                return dict(row)
+            if row["state"] != "failed_safe" or any(
+                row[field] is not None
+                for field in ("txid", "signed_tx_hex", "signed_at")
+            ):
+                raise AccountingInvariantError("transfer is not a safe failed operation")
+            conn.execute(
+                """
+                UPDATE transfers SET state='queued',reserved_at=NULL,
+                  result_class=NULL,error_text=NULL,updated_at=? WHERE transfer_id=?
+                """,
+                (now, transfer_id),
+            )
+            self._set_order_transfer_state_conn(
+                conn, transfer=row, new_transfer_state="queued", now=now
+            )
+            self._append_transfer_audit_conn(
+                conn,
+                transfer=row,
+                event_type="transfer_requeued",
+                old_state="failed_safe",
+                new_state="queued",
+                now=now,
+            )
+            updated = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            conn.execute("COMMIT")
+            return dict(updated)
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def mark_transfer_uncertain(
+        self,
+        *,
+        transfer_id: int,
+        expected_state: str,
+        expected_txid: str,
+        error_text: str,
+        now: int,
+    ) -> Mapping[str, Any]:
+        self._require_integer(transfer_id, "transfer ID")
+        self._require_integer(now, "uncertainty time")
+        if expected_state not in ("prepared", "broadcast", "confirmed"):
+            raise ValueError("expected uncertainty source state is invalid")
+        expected_txid = self._hash_text(expected_txid, "expected transaction ID")
+        error_text = self._bounded_error(error_text)
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            if row["state"] != expected_state or row["txid"] != expected_txid:
+                raise AccountingInvariantError(
+                    "uncertainty callback is stale or identifies another transaction"
+                )
+            conn.execute(
+                """
+                UPDATE transfers SET state='uncertain',result_class='uncertain',
+                  error_text=?,updated_at=? WHERE transfer_id=? AND state=? AND txid=?
+                """,
+                (error_text, now, transfer_id, expected_state, expected_txid),
+            )
+            self._set_order_transfer_state_conn(
+                conn, transfer=row, new_transfer_state="uncertain", now=now
+            )
+            self._append_transfer_audit_conn(
+                conn,
+                transfer=row,
+                event_type="transfer_uncertain",
+                old_state=row["state"],
+                new_state="uncertain",
+                now=now,
+            )
+            updated = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            # Adverse evidence is committed even if it makes earned revenue
+            # negative.  Subsequent intake/claims derive and enforce the halt.
+            conn.execute("COMMIT")
+            return dict(updated)
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def mark_transfer_confirmed(
+        self,
+        *,
+        transfer_id: int,
+        observed_txid: str,
+        confirmed_block_hash: str,
+        confirmed_block_height: int,
+        confirmations: int,
+        now: int,
+    ) -> Mapping[str, Any]:
+        self._require_integer(transfer_id, "transfer ID")
+        self._require_integer(confirmed_block_height, "confirmed block height")
+        self._require_integer(confirmations, "confirmations")
+        self._require_integer(now, "confirmation time")
+        if confirmed_block_height < 0 or confirmations < 1:
+            raise ValueError("confirmation evidence is invalid")
+        observed_txid = self._hash_text(observed_txid, "observed transaction ID")
+        confirmed_block_hash = self._hash_text(
+            confirmed_block_hash, "confirmed block hash"
+        )
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            if row["txid"] != observed_txid:
+                raise AccountingInvariantError("confirmation identifies another transaction")
+            if row["state"] == "confirmed":
+                if (
+                    row["confirmed_block_hash"] != confirmed_block_hash
+                    or row["confirmed_block_height"] != confirmed_block_height
+                    or confirmations < row["confirmations"]
+                ):
+                    raise AccountingInvariantError("confirmed anchor is immutable")
+                if confirmations > row["confirmations"]:
+                    conn.execute(
+                        "UPDATE transfers SET confirmations=?,updated_at=? WHERE transfer_id=?",
+                        (confirmations, now, transfer_id),
+                    )
+                    row = self._transfer_row_conn(conn, transfer_id=transfer_id)
+                conn.execute("COMMIT")
+                return dict(row)
+            if row["state"] not in ("prepared", "broadcast", "uncertain"):
+                raise AccountingInvariantError("transfer is not reconcilable as confirmed")
+            conn.execute(
+                """
+                UPDATE transfers SET state='confirmed',confirmed_at=?,
+                  confirmed_block_hash=?,confirmed_block_height=?,confirmations=?,
+                  result_class='broadcast',error_text=NULL,updated_at=?
+                WHERE transfer_id=?
+                """,
+                (
+                    now,
+                    confirmed_block_hash,
+                    confirmed_block_height,
+                    confirmations,
+                    now,
+                    transfer_id,
+                ),
+            )
+            self._set_order_transfer_state_conn(
+                conn, transfer=row, new_transfer_state="confirmed", now=now
+            )
+            self._append_transfer_audit_conn(
+                conn,
+                transfer=row,
+                event_type="transfer_confirmed",
+                old_state=row["state"],
+                new_state="confirmed",
+                now=now,
+            )
+            updated = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            conn.execute("COMMIT")
+            return dict(updated)
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def earned_fee_units(self) -> int:
+        conn = self.connect()
+        try:
+            value = conn.execute(
+                """
+                SELECT COALESCE(SUM(earned_fee_units),0) FROM transfers
+                WHERE state='confirmed' AND kind IN ('release','resolve_buyer')
+                """
+            ).fetchone()[0]
+            return self._nonnegative_aggregate(value, "earned fee units")
+        finally:
+            conn.close()
+
+    def available_fee_units(self) -> int:
+        conn = self.connect()
+        try:
+            value = self._available_fee_conn(conn)
+            if value < 0:
+                raise AccountingInvariantError("available fee revenue is negative")
+            return value
+        finally:
+            conn.close()
+
+    def queue_fee_withdrawal(
+        self,
+        *,
+        operation_key: str,
+        amount_units: int,
+        network_fee_units: int,
+        destination: str,
+        configured_admin_destination: str,
+        now: int,
+        actor_id: int | None = None,
+    ) -> Mapping[str, Any] | None:
+        operation_key = self._machine_text(
+            operation_key,
+            "fee withdrawal operation key",
+            160,
+            re.compile(r"[a-z0-9:_-]+\Z"),
+        )
+        self._require_integer(amount_units, "fee withdrawal amount")
+        self._require_integer(network_fee_units, "fee withdrawal network fee")
+        self._require_integer(now, "fee withdrawal queue time")
+        self._require_optional_integer(actor_id, "actor ID")
+        if (
+            amount_units <= 0
+            or network_fee_units < 0
+            or amount_units > MAX_09C_UNITS
+            or network_fee_units > MAX_09C_UNITS
+            or amount_units + network_fee_units > MAX_09C_UNITS
+        ):
+            raise ValueError("fee withdrawal amounts are out of range")
+        destination = self._bounded_text(destination, "fee destination", 128)
+        configured_admin_destination = self._bounded_text(
+            configured_admin_destination, "configured admin destination", 128
+        )
+        if destination != configured_admin_destination:
+            raise AccountingInvariantError(
+                "fee withdrawal destination differs from configured admin destination"
+            )
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            self._raise_if_unhealthy_conn(conn)
+            existing = conn.execute(
+                "SELECT * FROM transfers WHERE operation_key=?", (operation_key,)
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["kind"] != "fee_withdrawal"
+                    or existing["amount_units"] != amount_units
+                    or existing["network_fee_units"] != network_fee_units
+                    or existing["destination"] != destination
+                ):
+                    raise AccountingInvariantError(
+                        "fee operation key is bound to different economics"
+                    )
+                conn.execute("COMMIT")
+                return dict(existing)
+            self._assert_safe_destination_conn(conn, destination=destination)
+            available = self._available_fee_conn(conn)
+            if available < 0:
+                raise AccountingInvariantError("available fee revenue is negative")
+            if amount_units + network_fee_units > available:
+                conn.execute("COMMIT")
+                return None
+            cursor = conn.execute(
+                """
+                INSERT INTO transfers(
+                  operation_key,kind,is_main_outcome,state,amount_units,
+                  network_fee_units,earned_fee_units,destination,created_at,updated_at
+                ) VALUES(?,'fee_withdrawal',0,'queued',?,?,0,?,?,?)
+                """,
+                (
+                    operation_key,
+                    amount_units,
+                    network_fee_units,
+                    destination,
+                    now,
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise AccountingInvariantError("fee withdrawal ID was not persisted")
+            transfer_id = int(cursor.lastrowid)
+            self._append_audit_conn(
+                conn,
+                order_id=None,
+                actor_id=actor_id,
+                event_type="fee_withdrawal_queued",
+                old_state=None,
+                new_state="queued",
+                detail={
+                    "operation_key": operation_key,
+                    "transfer_id": transfer_id,
+                },
+                created_at=now,
+            )
+            row = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            conn.execute("COMMIT")
+            return dict(row)
+        except sqlite3.IntegrityError as exc:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise AccountingInvariantError(
+                "fee withdrawal violates durable earned-revenue accounting"
+            ) from exc
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def cancel_failed_safe_fee_withdrawal(
+        self, *, transfer_id: int, actor_id: int, now: int
+    ) -> Mapping[str, Any]:
+        self._require_integer(transfer_id, "transfer ID")
+        self._require_integer(actor_id, "actor ID")
+        self._require_integer(now, "fee cancellation time")
+        if transfer_id <= 0 or actor_id <= 0:
+            raise ValueError("transfer and actor IDs must be positive")
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            if (
+                row["kind"] != "fee_withdrawal"
+                or row["state"] != "failed_safe"
+                or row["txid"] is not None
+                or row["signed_tx_hex"] is not None
+            ):
+                raise AccountingInvariantError(
+                    "only an unsigned failed-safe fee withdrawal may be cancelled"
+                )
+            conn.execute(
+                "UPDATE transfers SET state='cancelled',updated_at=? WHERE transfer_id=?",
+                (now, transfer_id),
+            )
+            self._append_audit_conn(
+                conn,
+                order_id=None,
+                actor_id=actor_id,
+                event_type="fee_withdrawal_cancelled",
+                old_state="failed_safe",
+                new_state="cancelled",
+                detail={
+                    "operation_key": row["operation_key"],
+                    "transfer_id": transfer_id,
+                },
+                created_at=now,
+            )
+            updated = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            conn.execute("COMMIT")
+            return dict(updated)
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def _validate_attachment_values(
+        self,
+        *,
+        transfer_id: int,
+        expected_attempt_count: int,
+        expected_reserved_at: int,
+        txid: str,
+        signed_tx_hex: str,
+        destination: str,
+        amount_units: int,
+        network_fee_units: int,
+        prepared_tip_hash: str,
+        prepared_tip_height: int,
+        live_tip_hash: str,
+        live_tip_height: int,
+        wallet_snapshot_hash: str,
+        expected_wallet_snapshot_hash: str,
+        now: int,
+    ) -> dict[str, Any]:
+        for value, label in (
+            (transfer_id, "transfer ID"),
+            (expected_attempt_count, "expected attempt count"),
+            (expected_reserved_at, "expected reservation time"),
+            (amount_units, "prepared amount units"),
+            (network_fee_units, "prepared fee units"),
+            (prepared_tip_height, "prepared tip height"),
+            (live_tip_height, "live tip height"),
+            (now, "attachment time"),
+        ):
+            self._require_integer(value, label)
+        if (
+            transfer_id <= 0
+            or expected_attempt_count <= 0
+            or amount_units <= 0
+            or network_fee_units < 0
+            or prepared_tip_height < 0
+            or live_tip_height < 0
+        ):
+            raise ValueError("prepared transfer integers are out of range")
+        txid = self._hash_text(txid, "transaction ID")
+        signed_tx_hex = self._signed_hex(signed_tx_hex)
+        calculated = hashlib.sha256(
+            hashlib.sha256(bytes.fromhex(signed_tx_hex)).digest()
+        ).digest().hex()
+        if calculated != txid:
+            raise AccountingInvariantError("signed bytes do not match the transaction ID")
+        destination = self._bounded_text(destination, "prepared destination", 128)
+        prepared_tip_hash = self._hash_text(prepared_tip_hash, "prepared tip hash")
+        live_tip_hash = self._hash_text(live_tip_hash, "live tip hash")
+        if (prepared_tip_hash, prepared_tip_height) != (
+            live_tip_hash,
+            live_tip_height,
+        ):
+            raise AccountingInvariantError("live tip changed before signed attachment")
+        wallet_snapshot_hash = self._hash_text(
+            wallet_snapshot_hash, "wallet snapshot hash"
+        )
+        expected_wallet_snapshot_hash = self._hash_text(
+            expected_wallet_snapshot_hash, "expected wallet snapshot hash"
+        )
+        if wallet_snapshot_hash != expected_wallet_snapshot_hash:
+            raise AccountingInvariantError("wallet snapshot changed before signing")
+        return {
+            "txid": txid,
+            "signed_tx_hex": signed_tx_hex,
+            "destination": destination,
+            "amount_units": amount_units,
+            "network_fee_units": network_fee_units,
+            "prepared_tip_hash": prepared_tip_hash,
+            "prepared_tip_height": prepared_tip_height,
+        }
+
+    def _commit_attach(self, conn: sqlite3.Connection) -> None:
+        if self._attach_commit_boundary is None:
+            conn.execute("COMMIT")
+        else:
+            self._attach_commit_boundary(conn)
+
+    @classmethod
+    def _signed_hex(cls, value: object) -> str:
+        value = cls._machine_text(
+            value,
+            "signed transaction hex",
+            20_000,
+            re.compile(r"[0-9a-f]+\Z"),
+        )
+        if len(value) < 2 or len(value) % 2:
+            raise ValueError("signed transaction hex must contain complete bytes")
+        return value
+
+    @classmethod
+    def _bounded_error(cls, value: object) -> str:
+        value = cls._bounded_text(value, "transfer error", 500)
+        return value
+
+    @staticmethod
+    def _transfer_row_conn(
+        conn: sqlite3.Connection, *, transfer_id: int
+    ) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM transfers WHERE transfer_id=?", (transfer_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("transfer does not exist")
+        return row
+
+    def _append_transfer_audit_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        transfer: sqlite3.Row,
+        event_type: str,
+        old_state: str,
+        new_state: str,
+        now: int,
+    ) -> None:
+        self._append_audit_conn(
+            conn,
+            order_id=transfer["order_id"],
+            actor_id=None,
+            event_type=event_type,
+            old_state=old_state,
+            new_state=new_state,
+            detail={
+                "operation_key": transfer["operation_key"],
+                "transfer_id": transfer["transfer_id"],
+            },
+            created_at=now,
+        )
+
+    @staticmethod
+    def _set_order_transfer_state_conn(
+        conn: sqlite3.Connection,
+        *,
+        transfer: sqlite3.Row,
+        new_transfer_state: str,
+        now: int,
+    ) -> None:
+        if transfer["order_id"] is None:
+            return
+        order = conn.execute(
+            "SELECT * FROM orders WHERE order_id=?", (transfer["order_id"],)
+        ).fetchone()
+        if transfer["kind"] == "recovery_refund":
+            cancelled_partial = conn.execute(
+                """
+                SELECT 1
+                FROM transfer_credit_allocations a
+                JOIN deposit_credits c ON c.credit_id=a.credit_id
+                WHERE a.transfer_id=? AND c.recovery_reason='cancelled_partial'
+                LIMIT 1
+                """,
+                (transfer["transfer_id"],),
+            ).fetchone()
+            if cancelled_partial is None:
+                return
+        if new_transfer_state == "broadcast":
+            target = "broadcast"
+        elif new_transfer_state == "failed_safe":
+            target = "transfer_failed_safe"
+        elif new_transfer_state == "uncertain":
+            target = "transfer_uncertain"
+        elif new_transfer_state == "queued":
+            target = (
+                "release_reserved"
+                if transfer["kind"] in ("release", "resolve_buyer")
+                else "refund_reserved"
+            )
+        elif new_transfer_state == "confirmed":
+            target = (
+                "completed"
+                if transfer["kind"] in ("release", "resolve_buyer")
+                else "refunded"
+            )
+        else:
+            return
+        if order["state"] != target:
+            conn.execute(
+                "UPDATE orders SET state=?,completed_at=CASE WHEN ? IN "
+                "('completed','refunded') THEN COALESCE(completed_at,?) ELSE completed_at END,"
+                "updated_at=? WHERE order_id=?",
+                (target, target, now, now, order["order_id"]),
+            )
+
+    def _queue_order_transfer_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        order: sqlite3.Row,
+        kind: str,
+        now: int,
+        actor_id: int | None,
+        allow_release: bool,
+        transition_order: bool,
+    ) -> Mapping[str, Any] | None:
+        if kind == "recovery_refund":
+            return self._queue_recovery_transfer_conn(
+                conn, order=order, now=now, actor_id=actor_id
+            )
+        operation_key = f"order:{order['order_id']}:main"
+        existing = conn.execute(
+            "SELECT * FROM transfers WHERE operation_key=?", (operation_key,)
+        ).fetchone()
+        if existing is not None:
+            if existing["kind"] != kind:
+                raise AccountingInvariantError("main outcome already has a different kind")
+            return dict(existing)
+        if kind == "release" and not allow_release:
+            raise ValueError("release is queued atomically by record_confirmation")
+        if kind in ("release", "resolve_buyer"):
+            user_id = order["buyer_id"]
+            amount = order["net_amount_units"]
+            earned = order["service_fee_units"]
+            target_state = "release_reserved"
+        else:
+            user_id = order["seller_id"]
+            amount = order["net_amount_units"] + order["service_fee_units"]
+            earned = 0
+            target_state = "refund_reserved"
+        if user_id is None:
+            raise AccountingInvariantError("transfer participant is missing")
+        user = conn.execute(
+            "SELECT wallet_addr FROM users WHERE user_id=?", (user_id,)
+        ).fetchone()
+        if user is None or user["wallet_addr"] is None:
+            raise AccountingInvariantError("transfer participant has no validated wallet")
+        destination = self._bounded_text(user["wallet_addr"], "transfer destination", 128)
+        self._assert_safe_destination_conn(conn, destination=destination)
+        if kind == "release":
+            if order["state"] != "matched" or (
+                order["buyer_confirmed"] + order["seller_confirmed"] != 1
+            ):
+                raise AccountingInvariantError("release is not authorized by confirmations")
+        elif kind == "refund":
+            if order["state"] not in ("open", "matched") or (
+                order["buyer_confirmed"] or order["seller_confirmed"]
+            ):
+                raise AccountingInvariantError("refund is not authorized by order state")
+        elif kind == "resolve_buyer":
+            if order["state"] != "disputed":
+                raise AccountingInvariantError("buyer resolution requires a dispute")
+        elif kind == "resolve_seller" and order["state"] != "disputed":
+            raise AccountingInvariantError("seller resolution requires a dispute")
+
+        cursor = conn.execute(
+            """
+            INSERT INTO transfers(
+              operation_key,order_id,kind,is_main_outcome,state,amount_units,
+              network_fee_units,earned_fee_units,destination,created_at,updated_at
+            ) VALUES(?,?,?,1,'queued',?,?,?,?,?,?)
+            """,
+            (
+                operation_key,
+                order["order_id"],
+                kind,
+                amount,
+                order["network_fee_units"],
+                earned,
+                destination,
+                now,
+                now,
+            ),
+        )
+        if cursor.lastrowid is None:
+            raise AccountingInvariantError("transfer ID was not persisted")
+        transfer_id = int(cursor.lastrowid)
+        required = amount + order["network_fee_units"] + earned
+        self._allocate_credit_bucket_conn(
+            conn,
+            transfer_id=transfer_id,
+            order_id=order["order_id"],
+            bucket="main",
+            required_units=required,
+        )
+        if transition_order:
+            conn.execute(
+                "UPDATE orders SET state=?,updated_at=? WHERE order_id=?",
+                (target_state, now, order["order_id"]),
+            )
+        self._append_audit_conn(
+            conn,
+            order_id=order["order_id"],
+            actor_id=actor_id,
+            event_type="transfer_queued",
+            old_state=order["state"],
+            new_state=target_state,
+            detail={"kind": kind, "operation_key": operation_key},
+            created_at=now,
+        )
+        return dict(
+            conn.execute(
+                "SELECT * FROM transfers WHERE transfer_id=?", (transfer_id,)
+            ).fetchone()
+        )
+
+    def _allocate_credit_bucket_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        transfer_id: int,
+        order_id: int,
+        bucket: str,
+        required_units: int,
+    ) -> None:
+        remaining = required_units
+        column = "main_units" if bucket == "main" else "recovery_units"
+        for credit in conn.execute(
+            f"""
+            SELECT c.credit_id,c.{column} AS capacity,
+              COALESCE((SELECT SUM(a.units) FROM transfer_credit_allocations a
+                        WHERE a.credit_id=c.credit_id AND a.bucket=?),0) AS allocated
+            FROM deposit_credits c
+            WHERE c.order_id=? AND c.network=? AND c.credited_at IS NOT NULL
+              AND c.{column}>0 ORDER BY c.credit_id
+            """,
+            (bucket, order_id, self.network),
+        ).fetchall():
+            capacity = credit["capacity"] - credit["allocated"]
+            if capacity < 0:
+                raise AccountingInvariantError("credit bucket is overallocated")
+            units = min(remaining, capacity)
+            if units > 0:
+                conn.execute(
+                    """
+                    INSERT INTO transfer_credit_allocations(
+                      transfer_id,credit_id,order_id,bucket,units
+                    ) VALUES(?,?,?,?,?)
+                    """,
+                    (transfer_id, credit["credit_id"], order_id, bucket, units),
+                )
+                remaining -= units
+            if remaining == 0:
+                break
+        if remaining != 0:
+            raise AccountingInvariantError("credited bucket cannot fund immutable transfer")
+
+    def _queue_recovery_transfer_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        order: sqlite3.Row,
+        now: int,
+        actor_id: int | None,
+    ) -> Mapping[str, Any] | None:
+        transitioned_to_hold = False
+        if order["state"] == "awaiting_deposit":
+            credited = conn.execute(
+                """
+                SELECT COALESCE(SUM(amount_units),0) FROM deposit_credits
+                WHERE order_id=? AND network=? AND credited_at IS NOT NULL
+                """,
+                (order["order_id"], self.network),
+            ).fetchone()[0]
+            if not 1 <= credited < order["deposit_required_units"]:
+                raise AccountingInvariantError(
+                    "partial cancellation requires a credited underpayment"
+                )
+            conn.execute(
+                "UPDATE orders SET state='recovery_hold',updated_at=? WHERE order_id=?",
+                (now, order["order_id"]),
+            )
+            for credit in conn.execute(
+                """
+                SELECT credit_id,main_units,recovery_units FROM deposit_credits
+                WHERE order_id=? AND network=? AND credited_at IS NOT NULL
+                  AND main_units>0 ORDER BY credit_id
+                """,
+                (order["order_id"], self.network),
+            ).fetchall():
+                conn.execute(
+                    """
+                    UPDATE deposit_credits SET main_units=0,
+                      recovery_units=?,recovery_reason='cancelled_partial'
+                    WHERE credit_id=?
+                    """,
+                    (
+                        credit["main_units"] + credit["recovery_units"],
+                        credit["credit_id"],
+                    ),
+                )
+            transitioned_to_hold = True
+            order = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order["order_id"],)
+            ).fetchone()
+
+        terminal_states = {"completed", "refunded", "cancelled", "deposit_expired"}
+        if order["state"] not in terminal_states | {"recovery_hold"}:
+            raise AccountingInvariantError(
+                "recovery refund requires a partial hold or terminal main order"
+            )
+        unfinished = conn.execute(
+            """
+            SELECT * FROM transfers WHERE order_id=? AND kind='recovery_refund'
+              AND state NOT IN ('confirmed','cancelled')
+            ORDER BY transfer_id LIMIT 1
+            """,
+            (order["order_id"],),
+        ).fetchone()
+        if unfinished is not None:
+            return dict(unfinished)
+
+        residual = conn.execute(
+            """
+            SELECT
+              COALESCE((SELECT SUM(recovery_units) FROM deposit_credits
+                        WHERE order_id=? AND network=?
+                          AND credited_at IS NOT NULL),0)
+              - COALESCE((SELECT SUM(a.units)
+                          FROM transfer_credit_allocations a
+                          JOIN deposit_credits c ON c.credit_id=a.credit_id
+                          WHERE a.order_id=? AND c.network=?
+                            AND a.bucket='recovery'),0)
+            """,
+            (order["order_id"], self.network, order["order_id"], self.network),
+        ).fetchone()[0]
+        if type(residual) is not int or residual < 0:
+            raise AccountingInvariantError("recovery capacity is negative or malformed")
+        if residual == 0:
+            if transitioned_to_hold:
+                raise AccountingInvariantError("recovery hold has no residual liability")
+            return None
+        if residual <= order["network_fee_units"]:
+            if transitioned_to_hold:
+                self._append_audit_conn(
+                    conn,
+                    order_id=order["order_id"],
+                    actor_id=actor_id,
+                    event_type="recovery_hold",
+                    old_state="awaiting_deposit",
+                    new_state="recovery_hold",
+                    detail={
+                        "residual_units": residual,
+                        "network_fee_units": order["network_fee_units"],
+                    },
+                    created_at=now,
+                )
+            return None
+        max_credit_id = conn.execute(
+            """
+            SELECT MAX(c.credit_id)
+            FROM deposit_credits c
+            WHERE c.order_id=? AND c.network=? AND c.credited_at IS NOT NULL
+              AND c.recovery_units > COALESCE((
+                SELECT SUM(a.units) FROM transfer_credit_allocations a
+                WHERE a.credit_id=c.credit_id AND a.bucket='recovery'
+              ),0)
+            """,
+            (order["order_id"], self.network),
+        ).fetchone()[0]
+        if type(max_credit_id) is not int:
+            raise AccountingInvariantError("recovery operation lacks a credit identity")
+        seller = conn.execute(
+            "SELECT wallet_addr FROM users WHERE user_id=?", (order["seller_id"],)
+        ).fetchone()
+        if seller is None or seller["wallet_addr"] is None:
+            raise AccountingInvariantError("recovery depositor has no validated wallet")
+        destination = self._bounded_text(
+            seller["wallet_addr"], "recovery destination", 128
+        )
+        self._assert_safe_destination_conn(conn, destination=destination)
+        operation_key = f"order:{order['order_id']}:recovery:{max_credit_id}"
+        existing = conn.execute(
+            "SELECT * FROM transfers WHERE operation_key=?", (operation_key,)
+        ).fetchone()
+        if existing is not None:
+            return dict(existing)
+        cursor = conn.execute(
+            """
+            INSERT INTO transfers(
+              operation_key,order_id,kind,is_main_outcome,state,amount_units,
+              network_fee_units,earned_fee_units,destination,created_at,updated_at
+            ) VALUES(?,?,'recovery_refund',0,'queued',?,?,0,?,?,?)
+            """,
+            (
+                operation_key,
+                order["order_id"],
+                residual - order["network_fee_units"],
+                order["network_fee_units"],
+                destination,
+                now,
+                now,
+            ),
+        )
+        if cursor.lastrowid is None:
+            raise AccountingInvariantError("recovery transfer ID was not persisted")
+        transfer_id = int(cursor.lastrowid)
+        self._allocate_credit_bucket_conn(
+            conn,
+            transfer_id=transfer_id,
+            order_id=order["order_id"],
+            bucket="recovery",
+            required_units=residual,
+        )
+        new_state = order["state"]
+        if order["state"] == "recovery_hold":
+            conn.execute(
+                "UPDATE orders SET state='refund_reserved',updated_at=? WHERE order_id=?",
+                (now, order["order_id"]),
+            )
+            new_state = "refund_reserved"
+        self._append_audit_conn(
+            conn,
+            order_id=order["order_id"],
+            actor_id=actor_id,
+            event_type="transfer_queued",
+            old_state=order["state"],
+            new_state=new_state,
+            detail={"kind": "recovery_refund", "operation_key": operation_key},
+            created_at=now,
+        )
+        return dict(
+            conn.execute(
+                "SELECT * FROM transfers WHERE transfer_id=?", (transfer_id,)
+            ).fetchone()
+        )
+
+    def _raise_if_unhealthy_conn(self, conn: sqlite3.Connection) -> None:
+        if self._health_failure is not None:
+            raise AccountingInvariantError(self._health_failure)
+        if conn.execute(
+            "SELECT 1 FROM transfers WHERE state='uncertain' LIMIT 1"
+        ).fetchone() is not None:
+            raise AccountingInvariantError("uncertain transfer blocks custody intake")
+        issues = self._health_issues_conn(conn, network=self.network)
+        if issues:
+            raise AccountingInvariantError(f"ledger health failure: {','.join(issues)}")
+
+    def _can_auto_queue_recovery_conn(
+        self, conn: sqlite3.Connection, *, order: sqlite3.Row
+    ) -> bool:
+        if self._health_failure is not None:
+            return False
+        if self._health_issues_conn(conn, network=self.network):
+            return False
+        if conn.execute(
+            """
+            SELECT 1 FROM (
+              SELECT network,deposit_addr AS address FROM deposit_credits
+              WHERE order_id=?
+              UNION ALL
+              SELECT network,address FROM deposit_scans WHERE address=?
+            ) evidence WHERE network!=? LIMIT 1
+            """,
+            (order["order_id"], order["deposit_addr"], self.network),
+        ).fetchone() is not None:
+            return False
+        if order["seller_id"] is None:
+            return False
+        seller = conn.execute(
+            "SELECT wallet_addr FROM users WHERE user_id=?", (order["seller_id"],)
+        ).fetchone()
+        if seller is None or seller["wallet_addr"] is None:
+            return False
+        return conn.execute(
+            """
+            SELECT 1 FROM orders
+            WHERE deposit_addr IS NOT NULL AND deposit_addr=? LIMIT 1
+            """,
+            (seller["wallet_addr"],),
+        ).fetchone() is None
+
+    @staticmethod
+    def _assert_safe_destination_conn(
+        conn: sqlite3.Connection, *, destination: str
+    ) -> None:
+        if conn.execute(
+            """
+            SELECT 1 FROM orders
+            WHERE deposit_addr IS NOT NULL AND deposit_addr=? LIMIT 1
+            """,
+            (destination,),
+        ).fetchone() is not None:
+            raise AccountingInvariantError("destination is an escrow deposit address")
+
+    def reconcile_all_deposit_outputs(
+        self,
+        *,
+        network: str,
+        expected_tip_hash: str,
+        expected_tip_height: int,
+        snapshots: Sequence[Mapping[str, Any]],
+        final_tip_hash: str,
+        final_tip_height: int,
+        credit_depth: int,
+        now: int,
+    ) -> ReconciliationResult:
+        """Apply one complete all-address observation at a single live tip.
+
+        The explorer adapter validates its wire contract.  This boundary repeats
+        the fund-sensitive identity and integer checks and refuses a partial or
+        mixed batch before any durable observation is advanced.
+        """
+
+        self._require_integer(now, "reconciliation time")
+        self._require_integer(expected_tip_height, "expected tip height")
+        self._require_integer(final_tip_height, "final tip height")
+        self._require_integer(credit_depth, "credit depth")
+        if expected_tip_height < 0 or final_tip_height < 0:
+            raise ValueError("tip heights must be non-negative")
+        if credit_depth < 1:
+            raise ValueError("credit depth must be positive")
+        network = self._network(network)
+        if network != self.network:
+            raise ValueError("reconciliation network does not match the configured store")
+        expected_tip_hash = self._hash_text(expected_tip_hash, "expected tip hash")
+        final_tip_hash = self._hash_text(final_tip_hash, "final tip hash")
+        if (final_tip_hash, final_tip_height) != (
+            expected_tip_hash,
+            expected_tip_height,
+        ):
+            raise AccountingInvariantError("live tip changed during deposit reconciliation")
+        normalized = self._normalize_snapshot_batch(
+            network=network,
+            expected_tip_hash=expected_tip_hash,
+            expected_tip_height=expected_tip_height,
+            snapshots=snapshots,
+        )
+
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            watched_rows = conn.execute(
+                """
+                SELECT order_id, deposit_addr FROM orders
+                WHERE deposit_addr IS NOT NULL ORDER BY deposit_addr
+                """
+            ).fetchall()
+            watched = {row["deposit_addr"]: row["order_id"] for row in watched_rows}
+            if set(normalized) != set(watched):
+                raise AccountingInvariantError(
+                    "deposit snapshot addresses do not equal the current watched set"
+                )
+
+            scan_ids: list[tuple[str, int]] = []
+            changed_orders: set[int] = set()
+            for address in sorted(watched):
+                outputs = normalized[address]
+                latest = conn.execute(
+                    """
+                    SELECT * FROM deposit_scans
+                    WHERE network=? AND address=? ORDER BY scan_id DESC LIMIT 1
+                    """,
+                    (network, address),
+                ).fetchone()
+                reuse_latest = bool(
+                    latest is not None
+                    and latest["tip_hash"] == expected_tip_hash
+                    and latest["tip_height"] == expected_tip_height
+                )
+                if reuse_latest:
+                    self._require_same_tip_semantic_noop(
+                        conn,
+                        network=network,
+                        address=address,
+                        outputs=outputs,
+                    )
+                    scan_ids.append((address, int(latest["scan_id"])))
+                    continue
+
+                cursor = conn.execute(
+                    """
+                    INSERT INTO deposit_scans(
+                      network,address,tip_hash,tip_height,observed_at
+                    ) VALUES(?,?,?,?,?)
+                    """,
+                    (
+                        network,
+                        address,
+                        expected_tip_hash,
+                        expected_tip_height,
+                        now,
+                    ),
+                )
+                if cursor.lastrowid is None:
+                    raise AccountingInvariantError("deposit scan ID was not persisted")
+                scan_id = int(cursor.lastrowid)
+                scan_ids.append((address, scan_id))
+                order_id = watched[address]
+                returned: set[tuple[str, int]] = set()
+                for output in outputs:
+                    returned.add((output["txid"], output["vout"]))
+                    self._upsert_deposit_output_conn(
+                        conn,
+                        order_id=order_id,
+                        network=network,
+                        address=address,
+                        output=output,
+                        scan_id=scan_id,
+                        credit_depth=credit_depth,
+                        now=now,
+                    )
+                for credit in conn.execute(
+                    """
+                    SELECT credit_id,txid,vout,current_best_chain,last_checked_scan_id
+                    FROM deposit_credits
+                    WHERE network=? AND deposit_addr=?
+                    ORDER BY credit_id
+                    """,
+                    (network, address),
+                ).fetchall():
+                    if (credit["txid"], credit["vout"]) in returned:
+                        continue
+                    conn.execute(
+                        """
+                        UPDATE deposit_credits
+                        SET current_best_chain=0,last_checked_scan_id=?
+                        WHERE credit_id=?
+                        """,
+                        (scan_id, credit["credit_id"]),
+                    )
+                changed_orders.add(order_id)
+
+            # The watched set is deliberately checked again immediately before
+            # commit.  Another process can only race before our IMMEDIATE lock;
+            # this second comparison also detects test fault injection.
+            current_watched = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT DISTINCT deposit_addr FROM orders WHERE deposit_addr IS NOT NULL"
+                )
+            }
+            if current_watched != set(normalized):
+                raise AccountingInvariantError(
+                    "watched deposit set changed during reconciliation"
+                )
+
+            progress_allowed = (
+                self._health_failure is None
+                and not self._health_issues_conn(conn, network=self.network)
+            )
+            for order_id in sorted(changed_orders):
+                if progress_allowed:
+                    self._advance_funded_order_conn(
+                        conn, order_id=order_id, network=self.network, now=now
+                    )
+                refreshed = conn.execute(
+                    "SELECT * FROM orders WHERE order_id=?", (order_id,)
+                ).fetchone()
+                if refreshed["state"] in {
+                    "recovery_hold",
+                    "completed",
+                    "refunded",
+                    "cancelled",
+                    "deposit_expired",
+                } and self._can_auto_queue_recovery_conn(conn, order=refreshed):
+                    self._queue_recovery_transfer_conn(
+                        conn, order=refreshed, now=now, actor_id=None
+                    )
+                self._append_audit_conn(
+                    conn,
+                    order_id=order_id,
+                    actor_id=None,
+                    event_type="deposit_reconciled",
+                    old_state=None,
+                    new_state=None,
+                    detail={
+                        "tip_hash": expected_tip_hash,
+                        "tip_height": expected_tip_height,
+                    },
+                    created_at=now,
+                )
+
+            issues_set = set(self._health_issues_conn(conn, network=self.network))
+            if self._health_failure is not None:
+                issues_set.add("process_health_failure")
+            issues = tuple(sorted(issues_set))
+            recovery_ids = self._recovery_order_ids_conn(conn, network=self.network)
+            restricted = self._restricted_outpoints_conn(conn, network=self.network)
+            conn.execute("COMMIT")
+            return ReconciliationResult(
+                healthy=not issues,
+                health_issues=issues,
+                recovery_order_ids=recovery_ids,
+                restricted_outpoints=restricted,
+                scan_ids=tuple(scan_ids),
+            )
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def order_liability_units(self, *, order_id: int) -> int:
+        self._require_integer(order_id, "order ID")
+        conn = self.connect()
+        try:
+            if conn.execute(
+                "SELECT 1 FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone() is None:
+                raise ValueError("order does not exist")
+            return self._order_liability_conn(
+                conn, order_id=order_id, network=self.network
+            )
+        finally:
+            conn.close()
+
+    def customer_liability_units(self) -> int:
+        conn = self.connect()
+        try:
+            return self._customer_liability_conn(conn, network=self.network)
+        finally:
+            conn.close()
+
+    def provisional_restricted_units(self) -> int:
+        conn = self.connect()
+        try:
+            units = conn.execute(
+                """
+                SELECT COALESCE(SUM(amount_units),0) FROM deposit_credits
+                WHERE network=? AND credited_at IS NULL
+                  AND current_best_chain=1 AND mature=1
+                  AND spent_by_txid IS NULL
+                """,
+                (self.network,),
+            ).fetchone()[0]
+            return self._nonnegative_aggregate(units, "provisional restricted units")
+        finally:
+            conn.close()
+
+    def wallet_solvency_snapshot(
+        self,
+        *,
+        expected_tip_hash: str,
+        expected_tip_height: int,
+        wallet_spendable_units: int,
+        wallet_outpoints: Mapping[str, int],
+        wallet_snapshot_hash: str,
+    ) -> WalletSolvencySnapshot:
+        self._require_integer(expected_tip_height, "expected tip height")
+        self._require_integer(wallet_spendable_units, "wallet spendable units")
+        if expected_tip_height < 0 or wallet_spendable_units < 0:
+            raise ValueError("wallet amounts and tip height must be non-negative")
+        expected_tip_hash = self._hash_text(expected_tip_hash, "expected tip hash")
+        wallet_snapshot_hash = self._hash_text(
+            wallet_snapshot_hash, "wallet snapshot hash"
+        )
+        if not isinstance(wallet_outpoints, Mapping):
+            raise ValueError("wallet outpoints must be a mapping")
+        normalized_outpoints: dict[str, int] = {}
+        for key, units in wallet_outpoints.items():
+            key = self._outpoint_text(key)
+            self._require_integer(units, "wallet outpoint units")
+            if units <= 0 or units > MAX_09C_UNITS or key in normalized_outpoints:
+                raise ValueError("wallet outpoints must be unique positive units")
+            normalized_outpoints[key] = units
+        structured_spendable = sum(normalized_outpoints.values())
+        if structured_spendable > MAX_09C_UNITS:
+            raise ValueError("wallet outpoint sum exceeds the protocol supply")
+        if structured_spendable != wallet_spendable_units:
+            raise AccountingInvariantError(
+                "wallet spendable total differs from structured outpoints"
+            )
+
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN")
+            self._require_common_tip_conn(
+                conn,
+                network=self.network,
+                expected_tip_hash=expected_tip_hash,
+                expected_tip_height=expected_tip_height,
+            )
+            issues_set = set(self._health_issues_conn(conn, network=self.network))
+            if self._health_failure is not None:
+                issues_set.add("process_health_failure")
+            issues = tuple(sorted(issues_set))
+            if issues:
+                raise AccountingInvariantError(
+                    f"ledger health failure: {','.join(issues)}"
+                )
+            self._solvency_checkpoint("after_health")
+            restricted = self._restricted_outpoints_conn(conn, network=self.network)
+            for txid, vout, units in restricted:
+                if normalized_outpoints.get(f"{txid}:{vout}") != units:
+                    raise AccountingInvariantError(
+                        "wallet snapshot does not contain exact restricted outpoint"
+                    )
+            provisional = sum(item[2] for item in restricted)
+            liability = self._customer_liability_conn(conn, network=self.network)
+            pending = self._pending_platform_outflow_conn(conn)
+            usable = wallet_spendable_units - provisional
+            required = liability + pending
+            if usable < 0:
+                raise AccountingInvariantError(
+                    "provisional funds exceed wallet spendable funds"
+                )
+            if usable < required:
+                raise AccountingInvariantError("escrow wallet is insolvent")
+            result = WalletSolvencySnapshot(
+                expected_tip_hash=expected_tip_hash,
+                expected_tip_height=expected_tip_height,
+                wallet_spendable_units=wallet_spendable_units,
+                provisional_restricted_units=provisional,
+                customer_liability_units=liability,
+                pending_platform_outflow_units=pending,
+                usable_wallet_units=usable,
+                required_wallet_units=required,
+                restricted_outpoints=restricted,
+                wallet_snapshot_hash=wallet_snapshot_hash,
+            )
+            conn.execute("COMMIT")
+            return result
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def _solvency_checkpoint(self, phase: str) -> None:
+        """Test seam proving all solvency reads share one SQLite snapshot."""
+
+    @classmethod
+    def _normalize_snapshot_batch(
+        cls,
+        *,
+        network: str,
+        expected_tip_hash: str,
+        expected_tip_height: int,
+        snapshots: Sequence[Mapping[str, Any]],
+    ) -> dict[str, tuple[dict[str, Any], ...]]:
+        if isinstance(snapshots, (str, bytes, bytearray)) or not isinstance(
+            snapshots, Sequence
+        ):
+            raise ValueError("deposit snapshots must be a bounded sequence")
+        if len(snapshots) > 10_000:
+            raise ValueError("too many deposit snapshots")
+        normalized: dict[str, tuple[dict[str, Any], ...]] = {}
+        seen_outpoints: set[tuple[str, str, int]] = set()
+        for snapshot in snapshots:
+            if not isinstance(snapshot, Mapping):
+                raise ValueError("each deposit snapshot must be an object")
+            if snapshot.get("network") != network or snapshot.get("complete") is not True:
+                raise AccountingInvariantError("deposit snapshot is incomplete or wrong network")
+            address = cls._bounded_text(snapshot.get("address"), "snapshot address", 128)
+            if address in normalized:
+                raise AccountingInvariantError("duplicate deposit snapshot address")
+            tip_hash = cls._hash_text(snapshot.get("tip_hash"), "snapshot tip hash")
+            cls._require_integer(snapshot.get("tip_height"), "snapshot tip height")
+            if (tip_hash, snapshot["tip_height"]) != (
+                expected_tip_hash,
+                expected_tip_height,
+            ):
+                raise AccountingInvariantError("deposit snapshot has a mixed tip")
+            outputs = snapshot.get("outputs")
+            if isinstance(outputs, (str, bytes, bytearray)) or not isinstance(
+                outputs, Sequence
+            ):
+                raise ValueError("snapshot outputs must be a bounded sequence")
+            if len(outputs) > 100_000:
+                raise ValueError("too many outputs in deposit snapshot")
+            normalized_outputs: list[dict[str, Any]] = []
+            for raw in outputs:
+                if not isinstance(raw, Mapping):
+                    raise ValueError("deposit output must be an object")
+                txid = cls._hash_text(raw.get("txid"), "deposit transaction ID")
+                cls._require_integer(raw.get("vout"), "deposit output index")
+                cls._require_integer(raw.get("amount_units"), "deposit output units")
+                cls._require_integer(raw.get("block_height"), "deposit block height")
+                cls._require_integer(raw.get("confirmations"), "deposit confirmations")
+                vout = raw["vout"]
+                amount = raw["amount_units"]
+                block_height = raw["block_height"]
+                confirmations = raw["confirmations"]
+                if vout < 0 or amount <= 0 or amount > MAX_09C_UNITS:
+                    raise ValueError("deposit output has invalid index or units")
+                if block_height < 0 or block_height > expected_tip_height or confirmations < 1:
+                    raise ValueError("deposit output has invalid chain position")
+                block_hash = cls._hash_text(raw.get("block_hash"), "deposit block hash")
+                coinbase = cls._binary_flag(raw.get("coinbase"), "coinbase flag")
+                mature = cls._binary_flag(raw.get("mature"), "maturity flag")
+                expected_confirmations = expected_tip_height - block_height + 1
+                if confirmations != expected_confirmations:
+                    raise AccountingInvariantError(
+                        "deposit confirmations do not match the common tip"
+                    )
+                coinbase_maturity = 100 if network == "btc09-mainnet" else 2
+                expected_mature = 1 if not coinbase or confirmations >= coinbase_maturity else 0
+                if mature != expected_mature:
+                    raise AccountingInvariantError(
+                        "deposit maturity does not match network consensus"
+                    )
+                spent_by = raw.get("spent_by")
+                spent_tuple: tuple[str | None, int | None, str | None, int | None]
+                if spent_by is None:
+                    spent_tuple = (None, None, None, None)
+                else:
+                    if not isinstance(spent_by, Mapping):
+                        raise ValueError("spent-by evidence must be an object or null")
+                    spent_txid = cls._hash_text(
+                        spent_by.get("txid"), "spending transaction ID"
+                    )
+                    cls._require_integer(spent_by.get("vin"), "spending input index")
+                    spent_block_hash = cls._hash_text(
+                        spent_by.get("block_hash"), "spending block hash"
+                    )
+                    cls._require_integer(
+                        spent_by.get("block_height"), "spending block height"
+                    )
+                    if (
+                        spent_by["vin"] < 0
+                        or not block_height
+                        <= spent_by["block_height"]
+                        <= expected_tip_height
+                    ):
+                        raise ValueError("spent-by evidence has an invalid position")
+                    spent_tuple = (
+                        spent_txid,
+                        spent_by["vin"],
+                        spent_block_hash,
+                        spent_by["block_height"],
+                    )
+                identity = (network, txid, vout)
+                if identity in seen_outpoints:
+                    raise AccountingInvariantError("duplicate deposit outpoint in batch")
+                seen_outpoints.add(identity)
+                normalized_outputs.append(
+                    {
+                        "txid": txid,
+                        "vout": vout,
+                        "amount_units": amount,
+                        "block_hash": block_hash,
+                        "block_height": block_height,
+                        "confirmations": confirmations,
+                        "coinbase": coinbase,
+                        "mature": mature,
+                        "spent_by_txid": spent_tuple[0],
+                        "spent_by_vin": spent_tuple[1],
+                        "spent_by_block_hash": spent_tuple[2],
+                        "spent_by_block_height": spent_tuple[3],
+                    }
+                )
+            normalized_outputs.sort(
+                key=lambda item: (item["txid"], item["vout"])
+            )
+            normalized[address] = tuple(normalized_outputs)
+        return normalized
+
+    @classmethod
+    def _require_same_tip_semantic_noop(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        network: str,
+        address: str,
+        outputs: Sequence[Mapping[str, Any]],
+    ) -> None:
+        current = {
+            (row["txid"], row["vout"]): row
+            for row in conn.execute(
+                """
+                SELECT * FROM deposit_credits
+                WHERE network=? AND deposit_addr=? AND current_best_chain=1
+                """,
+                (network, address),
+            )
+        }
+        returned = {(row["txid"], row["vout"]): row for row in outputs}
+        if set(current) != set(returned):
+            raise AccountingInvariantError("same-tip deposit snapshot changed its output set")
+        fields = (
+            "amount_units",
+            "block_hash",
+            "block_height",
+            "confirmations",
+            "coinbase",
+            "mature",
+            "spent_by_txid",
+            "spent_by_vin",
+            "spent_by_block_hash",
+            "spent_by_block_height",
+        )
+        for identity, existing in current.items():
+            if any(existing[field] != returned[identity][field] for field in fields):
+                raise AccountingInvariantError("same-tip deposit evidence changed")
+
+    @classmethod
+    def _upsert_deposit_output_conn(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        order_id: int,
+        network: str,
+        address: str,
+        output: Mapping[str, Any],
+        scan_id: int,
+        credit_depth: int,
+        now: int,
+    ) -> None:
+        existing = conn.execute(
+            "SELECT * FROM deposit_credits WHERE network=? AND txid=? AND vout=?",
+            (network, output["txid"], output["vout"]),
+        ).fetchone()
+        qualifies = output["confirmations"] >= credit_depth and output["mature"] == 1
+        if existing is None:
+            main_units, recovery_units, reason = cls._classify_new_credit_conn(
+                conn,
+                order_id=order_id,
+                network=network,
+                amount_units=output["amount_units"],
+                qualifies=qualifies,
+            )
+            conn.execute(
+                """
+                INSERT INTO deposit_credits(
+                  order_id,network,txid,vout,deposit_addr,amount_units,
+                  block_hash,block_height,confirmations,coinbase,mature,
+                  current_best_chain,spent_by_txid,spent_by_vin,
+                  spent_by_block_hash,spent_by_block_height,credited_at,
+                  main_units,recovery_units,recovery_reason,first_seen_at,
+                  last_seen_at,last_seen_scan_id,last_checked_scan_id
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    order_id,
+                    network,
+                    output["txid"],
+                    output["vout"],
+                    address,
+                    output["amount_units"],
+                    output["block_hash"],
+                    output["block_height"],
+                    output["confirmations"],
+                    output["coinbase"],
+                    output["mature"],
+                    output["spent_by_txid"],
+                    output["spent_by_vin"],
+                    output["spent_by_block_hash"],
+                    output["spent_by_block_height"],
+                    now if qualifies else None,
+                    main_units,
+                    recovery_units,
+                    reason,
+                    now,
+                    now,
+                    scan_id,
+                    scan_id,
+                ),
+            )
+            return
+
+        if (
+            existing["order_id"] != order_id
+            or existing["deposit_addr"] != address
+            or existing["amount_units"] != output["amount_units"]
+            or existing["coinbase"] != output["coinbase"]
+        ):
+            raise AccountingInvariantError(
+                "deposit outpoint identity conflicts with its durable credit"
+            )
+        credited_at = existing["credited_at"]
+        main_units = existing["main_units"]
+        recovery_units = existing["recovery_units"]
+        reason = existing["recovery_reason"]
+        if credited_at is None and qualifies:
+            main_units, recovery_units, reason = cls._classify_new_credit_conn(
+                conn,
+                order_id=order_id,
+                network=network,
+                amount_units=output["amount_units"],
+                qualifies=True,
+            )
+            credited_at = now
+        conn.execute(
+            """
+            UPDATE deposit_credits SET
+              block_hash=?,block_height=?,confirmations=?,mature=?,
+              current_best_chain=1,spent_by_txid=?,spent_by_vin=?,
+              spent_by_block_hash=?,spent_by_block_height=?,credited_at=?,
+              main_units=?,recovery_units=?,recovery_reason=?,last_seen_at=?,
+              last_seen_scan_id=?,last_checked_scan_id=?
+            WHERE credit_id=?
+            """,
+            (
+                output["block_hash"],
+                output["block_height"],
+                output["confirmations"],
+                output["mature"],
+                output["spent_by_txid"],
+                output["spent_by_vin"],
+                output["spent_by_block_hash"],
+                output["spent_by_block_height"],
+                credited_at,
+                main_units,
+                recovery_units,
+                reason,
+                now,
+                scan_id,
+                scan_id,
+                existing["credit_id"],
+            ),
+        )
+
+    @classmethod
+    def _classify_new_credit_conn(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        order_id: int,
+        network: str,
+        amount_units: int,
+        qualifies: bool,
+    ) -> tuple[int, int, str | None]:
+        if not qualifies:
+            return 0, 0, None
+        order = conn.execute(
+            "SELECT * FROM orders WHERE order_id=?", (order_id,)
+        ).fetchone()
+        if order is None:
+            raise AccountingInvariantError("deposit credit refers to a missing order")
+        main_allocated = conn.execute(
+            """
+            SELECT COALESCE(SUM(main_units),0) FROM deposit_credits
+            WHERE order_id=? AND network=? AND credited_at IS NOT NULL
+            """,
+            (order_id, network),
+        ).fetchone()[0]
+        main_allocated = cls._nonnegative_aggregate(main_allocated, "main credit units")
+        if main_allocated > order["deposit_required_units"]:
+            raise AccountingInvariantError("main credit capacity exceeds order quote")
+        has_main_transfer = conn.execute(
+            "SELECT 1 FROM transfers WHERE order_id=? AND is_main_outcome=1",
+            (order_id,),
+        ).fetchone() is not None
+        main_states = {"awaiting_deposit", "open", "matched", "disputed"}
+        if order["state"] in main_states and not has_main_transfer:
+            remaining = order["deposit_required_units"] - main_allocated
+            main = min(amount_units, remaining)
+            recovery = amount_units - main
+            return main, recovery, "excess" if recovery else None
+        reason = (
+            "cancelled_partial"
+            if order["state"] in {"recovery_hold", "refund_reserved"}
+            and main_allocated < order["deposit_required_units"]
+            else "late"
+        )
+        return 0, amount_units, reason
+
+    @classmethod
+    def _advance_funded_order_conn(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        order_id: int,
+        network: str,
+        now: int,
+    ) -> None:
+        order = conn.execute(
+            "SELECT * FROM orders WHERE order_id=?", (order_id,)
+        ).fetchone()
+        if order is None or order["state"] != "awaiting_deposit":
+            return
+        main_units = conn.execute(
+            """
+            SELECT COALESCE(SUM(main_units),0) FROM deposit_credits
+            WHERE order_id=? AND network=? AND credited_at IS NOT NULL
+            """,
+            (order_id, network),
+        ).fetchone()[0]
+        if main_units < order["deposit_required_units"]:
+            return
+        new_state = "open" if order["side"] == "sell" else "matched"
+        conn.execute(
+            """
+            UPDATE orders SET state=?,funded_at=COALESCE(funded_at,?),updated_at=?
+            WHERE order_id=? AND state='awaiting_deposit'
+            """,
+            (new_state, now, now, order_id),
+        )
+
+    @classmethod
+    def _order_liability_conn(
+        cls, conn: sqlite3.Connection, *, order_id: int, network: str
+    ) -> int:
+        credited = conn.execute(
+            """
+            SELECT COALESCE(SUM(amount_units),0) FROM deposit_credits
+            WHERE order_id=? AND network=? AND credited_at IS NOT NULL
+            """,
+            (order_id, network),
+        ).fetchone()[0]
+        discharged = conn.execute(
+            """
+            SELECT COALESCE(SUM(a.units),0)
+            FROM transfer_credit_allocations a
+            JOIN transfers t ON t.transfer_id=a.transfer_id
+            JOIN deposit_credits c ON c.credit_id=a.credit_id
+            WHERE a.order_id=? AND c.network=? AND t.state='confirmed'
+            """,
+            (order_id, network),
+        ).fetchone()[0]
+        liability = credited - discharged
+        if liability < 0:
+            raise AccountingInvariantError("order liability is negative")
+        return liability
+
+    @classmethod
+    def _customer_liability_conn(
+        cls, conn: sqlite3.Connection, *, network: str
+    ) -> int:
+        credited = conn.execute(
+            """
+            SELECT COALESCE(SUM(amount_units),0) FROM deposit_credits
+            WHERE network=? AND credited_at IS NOT NULL
+            """,
+            (network,),
+        ).fetchone()[0]
+        discharged = conn.execute(
+            """
+            SELECT COALESCE(SUM(a.units),0)
+            FROM transfer_credit_allocations a
+            JOIN transfers t ON t.transfer_id=a.transfer_id
+            JOIN deposit_credits c ON c.credit_id=a.credit_id
+            WHERE c.network=? AND t.state='confirmed'
+            """,
+            (network,),
+        ).fetchone()[0]
+        liability = credited - discharged
+        if liability < 0:
+            raise AccountingInvariantError("customer liability is negative")
+        return liability
+
+    @classmethod
+    def _restricted_outpoints_conn(
+        cls, conn: sqlite3.Connection, *, network: str
+    ) -> tuple[tuple[str, int, int], ...]:
+        return tuple(
+            (row["txid"], row["vout"], row["amount_units"])
+            for row in conn.execute(
+                """
+                SELECT txid,vout,amount_units FROM deposit_credits
+                WHERE network=? AND credited_at IS NULL
+                  AND current_best_chain=1 AND mature=1
+                  AND spent_by_txid IS NULL
+                ORDER BY txid,vout
+                """,
+                (network,),
+            )
+        )
+
+    @classmethod
+    def _recovery_order_ids_conn(
+        cls, conn: sqlite3.Connection, *, network: str
+    ) -> tuple[int, ...]:
+        rows = conn.execute(
+            """
+            SELECT o.order_id,
+              COALESCE((SELECT SUM(c.recovery_units) FROM deposit_credits c
+                        WHERE c.order_id=o.order_id AND c.network=?
+                          AND c.credited_at IS NOT NULL),0)
+              - COALESCE((SELECT SUM(a.units)
+                          FROM transfer_credit_allocations a
+                          JOIN transfers t ON t.transfer_id=a.transfer_id
+                          JOIN deposit_credits c ON c.credit_id=a.credit_id
+                          WHERE a.order_id=o.order_id AND c.network=?
+                            AND a.bucket='recovery'
+                            AND t.state='confirmed'),0) AS residual,
+              EXISTS(SELECT 1 FROM deposit_credits c
+                     WHERE c.order_id=o.order_id AND c.network=?
+                       AND c.credited_at IS NOT NULL
+                       AND c.current_best_chain=0) AS reorg
+            FROM orders o ORDER BY o.order_id
+            """,
+            (network, network, network),
+        ).fetchall()
+        result: list[int] = []
+        for row in rows:
+            if row["residual"] < 0:
+                raise AccountingInvariantError("recovery liability is negative")
+            if row["residual"] > 0 or row["reorg"]:
+                result.append(row["order_id"])
+        return tuple(result)
+
+    @classmethod
+    def _health_issues_conn(
+        cls, conn: sqlite3.Connection, *, network: str
+    ) -> tuple[str, ...]:
+        issues: set[str] = set()
+        if conn.execute(
+            "SELECT 1 FROM transfers WHERE state='uncertain' LIMIT 1"
+        ).fetchone() is not None:
+            issues.add("uncertain_transfer")
+        if conn.execute(
+            """
+            SELECT 1 FROM (
+              SELECT network,address FROM deposit_scans
+              UNION ALL
+              SELECT network,deposit_addr AS address FROM deposit_credits
+            ) evidence
+            WHERE evidence.network!=?
+              AND evidence.address IN (
+                SELECT deposit_addr FROM orders WHERE deposit_addr IS NOT NULL
+              )
+            LIMIT 1
+            """,
+            (network,),
+        ).fetchone() is not None:
+            issues.add("cross_network_evidence")
+        if conn.execute(
+            """
+            SELECT 1 FROM deposit_credits
+            WHERE network=? AND credited_at IS NOT NULL
+              AND current_best_chain=0 LIMIT 1
+            """,
+            (network,),
+        ).fetchone() is not None:
+            issues.add("post_credit_reorg")
+        if conn.execute(
+            """
+            SELECT 1 FROM deposit_credits c
+            WHERE c.network=? AND c.current_best_chain=1
+              AND c.spent_by_txid IS NOT NULL
+              AND NOT EXISTS(SELECT 1 FROM transfers t WHERE t.txid=c.spent_by_txid)
+            LIMIT 1
+            """,
+            (network,),
+        ).fetchone() is not None:
+            issues.add("unknown_spend")
+        if conn.execute(
+            """
+            SELECT 1 FROM orders o
+            LEFT JOIN users u ON u.user_id=o.seller_id
+            WHERE (
+              COALESCE((SELECT SUM(c.recovery_units) FROM deposit_credits c
+                        WHERE c.order_id=o.order_id AND c.network=?
+                          AND c.credited_at IS NOT NULL),0)
+              - COALESCE((SELECT SUM(a.units)
+                          FROM transfer_credit_allocations a
+                          JOIN deposit_credits c ON c.credit_id=a.credit_id
+                          WHERE a.order_id=o.order_id AND c.network=?
+                            AND a.bucket='recovery'),0)
+            ) > 0
+              AND (u.wallet_addr IS NULL OR EXISTS(
+                SELECT 1 FROM orders watched
+                WHERE watched.deposit_addr IS NOT NULL
+                  AND watched.deposit_addr=u.wallet_addr
+              ))
+            LIMIT 1
+            """,
+            (network, network),
+        ).fetchone() is not None:
+            issues.add("unsafe_recovery_destination")
+        if conn.execute(
+            """
+            SELECT 1 FROM transfers
+            WHERE (
+              state IN ('queued','reserved','failed_safe','cancelled')
+              AND (txid IS NOT NULL OR signed_tx_hex IS NOT NULL
+                   OR signed_at IS NOT NULL OR prepared_tip_hash IS NOT NULL
+                   OR prepared_tip_height IS NOT NULL)
+            ) OR (
+              state IN ('prepared','broadcast','confirmed','uncertain')
+              AND (txid IS NULL OR signed_tx_hex IS NULL
+                   OR signed_at IS NULL OR prepared_tip_hash IS NULL
+                   OR prepared_tip_height IS NULL)
+            )
+            LIMIT 1
+            """
+        ).fetchone() is not None:
+            issues.add("malformed_transfer_identity")
+        cls._customer_liability_conn(conn, network=network)
+        available = cls._available_fee_conn(conn)
+        if available < 0:
+            issues.add("negative_available_fees")
+        return tuple(sorted(issues))
+
+    @classmethod
+    def _pending_platform_outflow_conn(cls, conn: sqlite3.Connection) -> int:
+        value = conn.execute(
+            """
+            SELECT COALESCE(SUM(amount_units + network_fee_units),0)
+            FROM transfers
+            WHERE kind='fee_withdrawal'
+              AND state NOT IN ('confirmed','cancelled')
+            """
+        ).fetchone()[0]
+        return cls._nonnegative_aggregate(value, "pending platform outflow")
+
+    @classmethod
+    def _available_fee_conn(cls, conn: sqlite3.Connection) -> int:
+        earned = conn.execute(
+            """
+            SELECT COALESCE(SUM(earned_fee_units),0) FROM transfers
+            WHERE state='confirmed' AND kind IN ('release','resolve_buyer')
+            """
+        ).fetchone()[0]
+        encumbered = conn.execute(
+            """
+            SELECT COALESCE(SUM(amount_units + network_fee_units),0)
+            FROM transfers WHERE kind='fee_withdrawal' AND state!='cancelled'
+            """
+        ).fetchone()[0]
+        return earned - encumbered
+
+    @classmethod
+    def _require_common_tip_conn(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        network: str,
+        expected_tip_hash: str,
+        expected_tip_height: int,
+    ) -> None:
+        watched = conn.execute(
+            "SELECT DISTINCT deposit_addr FROM orders WHERE deposit_addr IS NOT NULL"
+        ).fetchall()
+        for (address,) in watched:
+            latest = conn.execute(
+                """
+                SELECT * FROM deposit_scans
+                WHERE network=? AND address=? ORDER BY scan_id DESC LIMIT 1
+                """,
+                (network, address),
+            ).fetchone()
+            if latest is None or (
+                latest["tip_hash"], latest["tip_height"]
+            ) != (expected_tip_hash, expected_tip_height):
+                raise AccountingInvariantError("watched addresses lack a common latest tip")
+            stale = conn.execute(
+                """
+                SELECT 1 FROM deposit_credits
+                WHERE network=? AND deposit_addr=?
+                  AND last_checked_scan_id!=? LIMIT 1
+                """,
+                (network, address, latest["scan_id"]),
+            ).fetchone()
+            if stale is not None:
+                raise AccountingInvariantError("deposit credit evidence is stale")
+
+    @classmethod
+    def _append_audit_conn(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        order_id: int | None,
+        actor_id: int | None,
+        event_type: str,
+        old_state: str | None,
+        new_state: str | None,
+        detail: Mapping[str, Any],
+        created_at: int,
+    ) -> int:
+        detail_json = json.dumps(
+            dict(detail),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+        cursor = conn.execute(
+            """
+            INSERT INTO audit_events(
+              order_id,actor_id,event_type,old_state,new_state,detail_json,created_at
+            ) VALUES(?,?,?,?,?,?,?)
+            """,
+            (
+                order_id,
+                actor_id,
+                event_type,
+                old_state,
+                new_state,
+                detail_json,
+                created_at,
+            ),
+        )
+        if cursor.lastrowid is None:
+            raise AccountingInvariantError("audit event ID was not persisted")
+        return int(cursor.lastrowid)
+
+    @staticmethod
+    def _nonnegative_aggregate(value: object, label: str) -> int:
+        if type(value) is not int or value < 0:
+            raise AccountingInvariantError(f"{label} is not a non-negative integer")
+        return value
+
+    @classmethod
+    def _network(cls, value: object) -> str:
+        if value not in ("btc09-mainnet", "btc09-regtest"):
+            raise ValueError("network must be btc09-mainnet or btc09-regtest")
+        return str(value)
+
+    @classmethod
+    def _hash_text(cls, value: object, label: str) -> str:
+        return cls._machine_text(value, label, 64, re.compile(r"[0-9a-f]{64}\Z"))
+
+    @classmethod
+    def _outpoint_text(cls, value: object) -> str:
+        return cls._machine_text(
+            value,
+            "wallet outpoint",
+            84,
+            re.compile(r"[0-9a-f]{64}:(?:0|[1-9][0-9]*)\Z"),
+        )
+
+    @classmethod
+    def _binary_flag(cls, value: object, label: str) -> int:
+        if type(value) is bool:
+            return int(value)
+        cls._require_integer(value, label)
+        if value not in (0, 1):
+            raise ValueError(f"{label} must be 0 or 1")
+        return value
 
     def _apply_migration(self, conn: sqlite3.Connection, plan: _MigrationPlan) -> None:
         if plan.kind == "v3":

@@ -1826,6 +1826,56 @@ transfer. A confirmed release reorg after fees were already withdrawn may make
 available revenue negative; that is an accounting invariant/health failure that
 halts intake and claims, never a value clamped to zero.
 
+#### Task 3 controller addenda (2026-07-10)
+
+These resolved boundary rules are durable requirements for Tasks 3-10:
+
+- Each `Store` has one validated configured network (`btc09-mainnet` by
+  default, `btc09-regtest` only by explicit opt-in). Reconciliation must match
+  it; common-tip, credit, restricted-fund, health, claim, and solvency reads are
+  network-scoped. Evidence for a watched address on another network fails
+  health. The Store independently checks confirmations from block/tip heights
+  and coinbase maturity (100 mainnet, 2 regtest) before permanent credit.
+- `claim_next_transfer` receives a preliminary exact-integer, protocol-capped
+  `wallet_spendable_units` from a read-only snapshot at the requested common
+  tip. Its `BEGIN IMMEDIATE` derives current liability, restricted provisional
+  units, and pending platform outflow and returns `None` before reservation on
+  deficit or unhealthy evidence. The winning result carries the common anchor,
+  sorted restricted outpoints with units, `attempt_count`, and `reserved_at`.
+- After claim and before prepare, Task 4 must re-read the live tip and supply a
+  locked structured wallet snapshot. `wallet_solvency_snapshot` requires the
+  complete outpoint-to-units mapping and deterministic 64-hex snapshot hash,
+  requires the scalar spendable total to equal the exact structured sum, and
+  verifies every restricted outpoint in one SQLite read snapshot. Prepare and
+  attach must compare the same snapshot hash; drift takes the failed-safe retry
+  path before signed bytes attach.
+- Attach, ambiguous-commit recovery, and failed-safe classification bind to the
+  exact reservation `attempt_count` plus `reserved_at`; stale callbacks cannot
+  affect a reclaimed attempt. Uncertainty callbacks additionally bind the
+  expected prior state and txid, so an old timeout cannot demote a confirmed
+  transfer. SHA256d is compared as direct lowercase digest-byte hex, matching
+  Bitcoin 09 `core.Tx.ID()`, with no Bitcoin Core display-byte reversal.
+- The latest identical deposit tip may be reused only for a true semantic
+  no-op; changed evidence at the same tip rejects the entire batch. Accepted
+  adverse scan/reorg/unknown-spend evidence commits before health is reported.
+  Automatic recovery must never roll that evidence back merely because the
+  seller destination is missing or unsafe.
+- `recovery_hold` is only the preterminal partial-cancellation state. Dust on a
+  completed, refunded, cancelled, or deposit-expired order is a derived
+  residual condition and never replaces the terminal main state. A later
+  qualifying top-up automatically queues immutable recovery economics while
+  preserving that state; credit arriving during an in-flight recovery remains
+  liability for a later lifetime operation.
+- Both the Store and schema reject every customer or fee destination equal to
+  any current watched deposit address. Task 4 must additionally reject every
+  destination found in the locked wallet snapshot's full owned address/key set,
+  covering primary, change, unused keys, and the queue-to-prepare race.
+- Post-credit reorg, unknown spend, unsafe recovery destination, negative fee
+  revenue, ambiguous attach health failure, or any uncertain transfer halts new
+  order intake, acceptance, payment-confirmation progress, transfer queueing,
+  and claims. Deposit evidence and exact transfer reconciliation/repair remain
+  allowed so the halt cannot deadlock its own resolution.
+
 - [ ] **Step 5: Stress, verify, and commit**
 
 ```powershell
