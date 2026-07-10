@@ -1772,6 +1772,110 @@ class StoreSchemaTests(unittest.TestCase):
                     (f"order:{order_id}:main", order_id),
                 )
 
+    def test_direct_sql_rejects_same_and_cross_order_escrow_loop_destinations(self):
+        store, order_id = self.create_sell()
+        with managed_connection(store.connect()) as conn:
+            self.fund_and_match(conn, order_id)
+            conn.execute(
+                "UPDATE users SET wallet_addr='deposit-address-7' WHERE user_id=8"
+            )
+            with self.assertRaisesRegex(
+                sqlite3.IntegrityError, "destination is an escrow deposit address"
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO transfers(
+                      operation_key,order_id,kind,is_main_outcome,state,
+                      amount_units,network_fee_units,earned_fee_units,destination,
+                      created_at,updated_at
+                    ) VALUES(?,?,'release',1,'queued',100,10,7,
+                             'deposit-address-7',104,104)
+                    """,
+                    (f"order:{order_id}:main", order_id),
+                )
+
+            other_id = store.create_order(
+                **self.order_values(
+                    maker_id=9,
+                    maker_name="Other Seller",
+                    seller_id=9,
+                    seller_name="Other Seller",
+                    deposit_addr="other-deposit-address",
+                    created_at=105,
+                    updated_at=105,
+                )
+            )
+            self.assertGreater(other_id, order_id)
+            conn.execute(
+                "UPDATE users SET wallet_addr='other-deposit-address' WHERE user_id=8"
+            )
+            with self.assertRaisesRegex(
+                sqlite3.IntegrityError, "destination is an escrow deposit address"
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO transfers(
+                      operation_key,order_id,kind,is_main_outcome,state,
+                      amount_units,network_fee_units,earned_fee_units,destination,
+                      created_at,updated_at
+                    ) VALUES(?,?,'release',1,'queued',100,10,7,
+                             'other-deposit-address',106,106)
+                    """,
+                    (f"order:{order_id}:main", order_id),
+                )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 0
+            )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM transfer_credit_allocations"
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], 0
+            )
+
+    def test_direct_sql_rejects_fee_withdrawal_to_any_escrow_deposit_address(self):
+        store, _ = self.make_confirmed_release()
+        with managed_connection(store.connect()) as conn:
+            conn.execute(
+                """
+                INSERT INTO users(user_id,username,wallet_addr,created_at,updated_at)
+                VALUES(9,'Other Seller','seller-wallet-9',110,110)
+                """
+            )
+            other_id = store.create_order(
+                **self.order_values(
+                    maker_id=9,
+                    maker_name="Other Seller",
+                    seller_id=9,
+                    seller_name="Other Seller",
+                    deposit_addr="fee-loop-deposit",
+                    created_at=110,
+                    updated_at=110,
+                )
+            )
+            self.assertGreater(other_id, 0)
+            with self.assertRaisesRegex(
+                sqlite3.IntegrityError, "destination is an escrow deposit address"
+            ):
+                conn.execute(
+                    """
+                    INSERT INTO transfers(
+                      operation_key,kind,is_main_outcome,state,amount_units,
+                      network_fee_units,earned_fee_units,destination,created_at,updated_at
+                    ) VALUES('fee:escrow-loop','fee_withdrawal',0,'queued',5,1,0,
+                             'fee-loop-deposit',111,111)
+                    """
+                )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM transfers WHERE kind='fee_withdrawal'"
+                ).fetchone()[0],
+                0,
+            )
+
     def test_transfer_state_machine_lane_and_uncertain_global_halt(self):
         store, order_id = self.create_sell()
         with managed_connection(store.connect()) as conn:

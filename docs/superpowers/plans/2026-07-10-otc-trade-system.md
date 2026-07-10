@@ -1146,6 +1146,10 @@ END;
 CREATE TRIGGER IF NOT EXISTS transfer_economics_on_insert
 BEFORE INSERT ON transfers
 BEGIN
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM orders o
+    WHERE o.deposit_addr IS NOT NULL AND o.deposit_addr = NEW.destination
+  ) THEN RAISE(ABORT, 'destination is an escrow deposit address') END;
   SELECT CASE WHEN NEW.kind IN ('release','resolve_buyer') AND NOT EXISTS (
     SELECT 1 FROM orders o JOIN users u ON u.user_id = o.buyer_id
     WHERE o.order_id = NEW.order_id
@@ -1664,6 +1668,10 @@ state, so two queued/concurrent operations cannot reserve the same units.
 Allocations and transfer economics are immutable; DB triggers independently
 reject forged quote values, earned fees, destinations, cross-order links,
 wrong-bucket use, oversubscription, or an unbalanced claim/confirmation.
+Every transfer destination is also rejected when it equals any currently
+watched order deposit address, preventing same-order and cross-order escrow
+loop payouts even for a direct SQL writer. Task 4 repeats this check against
+the locked wallet snapshot's complete owned-address set before preparation.
 Order transitions that authorize a transfer require its queued allocations to
 already equal its immutable amount plus fees. Claim-time kind/state coupling is
 independent: release requires `release_reserved` plus both party flags, ordinary
