@@ -326,7 +326,7 @@ the resulting catalog, stamp v4, and commit last. A denied WAL activation,
 newer schema, malformed required object, or blocked migration must not stamp or
 partially rewrite the database. An already-v4 database is validation-only and
 does not upsert its version row. Validate the complete catalog, not only required
-object presence: allow exactly the 49 active v4 objects plus exact recognized
+object presence: allow exactly the 50 active v4 objects plus exact recognized
 empty archive/withdrawal/index evidence for its migration origin, and reject
 every other table, view, index, or trigger. If the exact live-prototype `orders`
 table lacks `side`, require it to contain zero rows and no sequence history,
