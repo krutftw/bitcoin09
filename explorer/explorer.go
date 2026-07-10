@@ -5,10 +5,12 @@ package explorer
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -19,40 +21,653 @@ import (
 // PeerCounter reports how many peers the node currently has.
 type PeerCounter interface{ PeerCount() int }
 
+const (
+	v1SchemaVersion       = 1
+	v1MaxResponseBytes    = 4 << 20
+	v1ExpensiveQueryLimit = 4
+)
+
 type Server struct {
-	chain *core.Chain
-	peers PeerCounter
-	tmpl  *template.Template
-	start time.Time
+	chain              *core.Chain
+	peers              PeerCounter
+	tmpl               *template.Template
+	start              time.Time
+	network            string
+	coinbaseMaturity   int64
+	handler            http.Handler
+	legacy             *http.ServeMux
+	expensive          chan struct{}
+	maxV1ResponseBytes int
+	tipQuery           func() (core.ChainTipSnapshot, error)
+	blockQuery         func(core.Hash32) (core.BlockLookupSnapshot, error)
+	transactionQuery   func(core.Hash32) (core.TransactionLookupSnapshot, error)
+	addressQuery       func([20]byte) (core.AddressOutputSnapshot, error)
 }
 
-func New(chain *core.Chain, peers PeerCounter) *Server {
-	return &Server{
-		chain: chain,
-		peers: peers,
-		tmpl:  template.Must(template.New("page").Parse(pageTmpl)),
-		start: time.Now(),
+func New(chain *core.Chain, peers PeerCounter) (*Server, error) {
+	if chain == nil {
+		return nil, errors.New("nil explorer chain")
 	}
+	params := chain.Params()
+	network, err := core.CanonicalNetworkID(params)
+	if err != nil {
+		return nil, fmt.Errorf("explorer network: %w", err)
+	}
+	s := &Server{
+		chain:              chain,
+		peers:              peers,
+		tmpl:               template.Must(template.New("page").Parse(pageTmpl)),
+		start:              time.Now(),
+		network:            network,
+		coinbaseMaturity:   params.CoinbaseMaturity,
+		expensive:          make(chan struct{}, v1ExpensiveQueryLimit),
+		maxV1ResponseBytes: v1MaxResponseBytes,
+		tipQuery:           chain.CanonicalTipSnapshot,
+		blockQuery:         chain.LookupBlock,
+		transactionQuery:   chain.LookupTransaction,
+		addressQuery:       chain.ConfirmedOutputsForPKH,
+	}
+	s.legacy = http.NewServeMux()
+	s.legacy.HandleFunc("/", s.handleHome)
+	s.legacy.HandleFunc("/block/", s.handleBlock)
+	s.legacy.HandleFunc("/address/", s.handleAddress)
+	s.legacy.HandleFunc("/search", s.handleSearch)
+	s.legacy.HandleFunc("/api/status", s.handleStatus)
+	s.legacy.HandleFunc("/api/supply", s.handleSupply)
+	s.legacy.HandleFunc("/api/circulating_supply", s.handleCirculatingSupply)
+	s.legacy.HandleFunc("/api/circulating-supply", s.handleCirculatingSupply)
+	s.handler = &serverHandler{server: s}
+	return s, nil
 }
+
+type serverHandler struct{ server *Server }
+
+func (h *serverHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.server.serveHTTP(w, r)
+}
+
+// Handler returns the stable HTTP handler used by Serve.
+func (s *Server) Handler() http.Handler { return s.handler }
 
 // Serve blocks, listening on addr.
 func (s *Server) Serve(addr string) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handleHome)
-	mux.HandleFunc("/block/", s.handleBlock)
-	mux.HandleFunc("/address/", s.handleAddress)
-	mux.HandleFunc("/search", s.handleSearch)
-	mux.HandleFunc("/api/status", s.handleStatus)
-	mux.HandleFunc("/api/supply", s.handleSupply)
-	mux.HandleFunc("/api/circulating_supply", s.handleCirculatingSupply)
-	mux.HandleFunc("/api/circulating-supply", s.handleCirculatingSupply)
-	srv := &http.Server{
-		Addr:         addr,
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+	return s.httpServer(addr).ListenAndServe()
+}
+
+func (s *Server) httpServer(addr string) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    16_384,
 	}
-	return srv.ListenAndServe()
+}
+
+type v1Tip struct {
+	Hash   string `json:"hash"`
+	Height int64  `json:"height"`
+}
+
+type v1TipResponse struct {
+	SchemaVersion int    `json:"schema_version"`
+	Network       string `json:"network"`
+	Tip           v1Tip  `json:"tip"`
+}
+
+type v1Block struct {
+	Hash      string `json:"hash"`
+	Height    *int64 `json:"height"`
+	Canonical bool   `json:"canonical"`
+}
+
+type v1BlockResponse struct {
+	SchemaVersion int     `json:"schema_version"`
+	Network       string  `json:"network"`
+	Found         bool    `json:"found"`
+	Block         v1Block `json:"block"`
+	Tip           v1Tip   `json:"tip"`
+}
+
+type v1BlockAnchor struct {
+	Hash   string `json:"hash"`
+	Height int64  `json:"height"`
+}
+
+type v1TransactionResponse struct {
+	SchemaVersion int            `json:"schema_version"`
+	Network       string         `json:"network"`
+	TxID          string         `json:"txid"`
+	Status        string         `json:"status"`
+	Block         *v1BlockAnchor `json:"block"`
+	Confirmations int64          `json:"confirmations"`
+	Tip           v1Tip          `json:"tip"`
+}
+
+type v1ConfirmedSpend struct {
+	TxID       string        `json:"txid"`
+	InputIndex uint32        `json:"input_index"`
+	Block      v1BlockAnchor `json:"block"`
+}
+
+type v1AddressOutput struct {
+	TxID             string            `json:"txid"`
+	TransactionIndex uint32            `json:"transaction_index"`
+	Vout             uint32            `json:"vout"`
+	AmountUnits      int64             `json:"amount_units"`
+	Block            v1BlockAnchor     `json:"block"`
+	Confirmations    int64             `json:"confirmations"`
+	Coinbase         bool              `json:"coinbase"`
+	Mature           bool              `json:"mature"`
+	SpentBy          *v1ConfirmedSpend `json:"spent_by"`
+}
+
+type v1AddressResponse struct {
+	SchemaVersion int               `json:"schema_version"`
+	Network       string            `json:"network"`
+	Address       string            `json:"address"`
+	Complete      bool              `json:"complete"`
+	Tip           v1Tip             `json:"tip"`
+	Outputs       []v1AddressOutput `json:"outputs"`
+}
+
+type v1TipMismatchResponse struct {
+	SchemaVersion int    `json:"schema_version"`
+	Network       string `json:"network"`
+	Address       string `json:"address"`
+	Complete      bool   `json:"complete"`
+	Tip           v1Tip  `json:"tip"`
+}
+
+type v1ErrorResponse struct {
+	SchemaVersion int    `json:"schema_version"`
+	Network       string `json:"network"`
+	ErrorCode     string `json:"error_code"`
+}
+
+type v1Route int
+
+const (
+	v1RouteUnknown v1Route = iota
+	v1RouteTip
+	v1RouteBlock
+	v1RouteTransaction
+	v1RouteAddressOutputs
+)
+
+func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/api/v1" && !strings.HasPrefix(r.URL.Path, "/api/v1/") {
+		s.legacy.ServeHTTP(w, r)
+		return
+	}
+	s.serveV1(w, r)
+}
+
+func (s *Server) serveV1(w http.ResponseWriter, r *http.Request) {
+	if hasNoncanonicalV1Path(r) {
+		s.writeV1Error(w, r, http.StatusBadRequest, "bad_request")
+		return
+	}
+	route, argument := classifyV1Route(r.URL.Path)
+	if route == v1RouteUnknown {
+		s.writeV1Error(w, r, http.StatusNotFound, "not_found")
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		s.writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
+
+	switch route {
+	case v1RouteTip:
+		if r.URL.RawQuery != "" {
+			s.writeV1Error(w, r, http.StatusBadRequest, "bad_request")
+			return
+		}
+		s.handleV1Tip(w, r)
+	case v1RouteBlock:
+		if r.URL.RawQuery != "" {
+			s.writeV1Error(w, r, http.StatusBadRequest, "bad_request")
+			return
+		}
+		id, err := parseLowerHash(argument)
+		if err != nil {
+			s.writeV1Error(w, r, http.StatusBadRequest, "bad_request")
+			return
+		}
+		s.withExpensiveQuery(w, r, func() { s.handleV1Block(w, r, id) })
+	case v1RouteTransaction:
+		if r.URL.RawQuery != "" {
+			s.writeV1Error(w, r, http.StatusBadRequest, "bad_request")
+			return
+		}
+		id, err := parseLowerHash(argument)
+		if err != nil {
+			s.writeV1Error(w, r, http.StatusBadRequest, "bad_request")
+			return
+		}
+		s.withExpensiveQuery(w, r, func() { s.handleV1Transaction(w, r, id) })
+	case v1RouteAddressOutputs:
+		pkh, err := core.DecodeAddress(argument)
+		if err != nil || core.EncodeAddress(pkh) != argument {
+			s.writeV1Error(w, r, http.StatusBadRequest, "bad_request")
+			return
+		}
+		expected, err := parseExpectedTip(r.URL.RawQuery)
+		if err != nil {
+			s.writeV1Error(w, r, http.StatusBadRequest, "bad_request")
+			return
+		}
+		s.withExpensiveQuery(w, r, func() {
+			s.handleV1AddressOutputs(w, r, argument, pkh, expected)
+		})
+	}
+}
+
+func hasNoncanonicalV1Path(r *http.Request) bool {
+	rawPath := r.RequestURI
+	if beforeQuery, _, ok := strings.Cut(rawPath, "?"); ok {
+		rawPath = beforeQuery
+	}
+	if r.URL.RawPath != "" || strings.Contains(rawPath, "%") || strings.Contains(r.URL.Path, "//") {
+		return true
+	}
+	for _, segment := range strings.Split(r.URL.Path, "/") {
+		if segment == "." || segment == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+func classifyV1Route(path string) (v1Route, string) {
+	switch path {
+	case "/api/v1/tip":
+		return v1RouteTip, ""
+	case "/api/v1":
+		return v1RouteUnknown, ""
+	}
+	for _, candidate := range []struct {
+		prefix string
+		route  v1Route
+	}{
+		{prefix: "/api/v1/block/", route: v1RouteBlock},
+		{prefix: "/api/v1/transaction/", route: v1RouteTransaction},
+	} {
+		if strings.HasPrefix(path, candidate.prefix) {
+			argument := strings.TrimPrefix(path, candidate.prefix)
+			if argument != "" && !strings.Contains(argument, "/") {
+				return candidate.route, argument
+			}
+			return v1RouteUnknown, ""
+		}
+	}
+	const addressPrefix = "/api/v1/address/"
+	const outputsSuffix = "/outputs"
+	if strings.HasPrefix(path, addressPrefix) && strings.HasSuffix(path, outputsSuffix) {
+		address := strings.TrimSuffix(strings.TrimPrefix(path, addressPrefix), outputsSuffix)
+		if address != "" && !strings.Contains(address, "/") {
+			return v1RouteAddressOutputs, address
+		}
+	}
+	return v1RouteUnknown, ""
+}
+
+func parseLowerHash(value string) (core.Hash32, error) {
+	var id core.Hash32
+	if len(value) != hex.EncodedLen(len(id)) || value != strings.ToLower(value) {
+		return id, errors.New("noncanonical hash")
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) != len(id) {
+		return id, errors.New("invalid hash")
+	}
+	copy(id[:], decoded)
+	return id, nil
+}
+
+type expectedTip struct {
+	set    bool
+	hash   core.Hash32
+	height int64
+}
+
+func parseExpectedTip(rawQuery string) (expectedTip, error) {
+	if rawQuery == "" {
+		return expectedTip{}, nil
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil || len(values) != 2 {
+		return expectedTip{}, errors.New("invalid expected tip query")
+	}
+	hashes, hashOK := values["expected_tip_hash"]
+	heights, heightOK := values["expected_tip_height"]
+	if !hashOK || !heightOK || len(hashes) != 1 || len(heights) != 1 ||
+		hashes[0] == "" || heights[0] == "" {
+		return expectedTip{}, errors.New("incomplete expected tip query")
+	}
+	hash, err := parseLowerHash(hashes[0])
+	if err != nil {
+		return expectedTip{}, err
+	}
+	heightText := heights[0]
+	if heightText != "0" && (heightText[0] < '1' || heightText[0] > '9') {
+		return expectedTip{}, errors.New("noncanonical expected tip height")
+	}
+	for _, ch := range heightText {
+		if ch < '0' || ch > '9' {
+			return expectedTip{}, errors.New("invalid expected tip height")
+		}
+	}
+	height, err := strconv.ParseInt(heightText, 10, 64)
+	if err != nil || height < 0 {
+		return expectedTip{}, errors.New("invalid expected tip height")
+	}
+	return expectedTip{set: true, hash: hash, height: height}, nil
+}
+
+func (s *Server) withExpensiveQuery(w http.ResponseWriter, r *http.Request, query func()) {
+	select {
+	case s.expensive <- struct{}{}:
+		defer func() { <-s.expensive }()
+	case <-r.Context().Done():
+		return
+	default:
+		s.writeV1Error(w, r, http.StatusServiceUnavailable, "busy")
+		return
+	}
+	select {
+	case <-r.Context().Done():
+		return
+	default:
+		query()
+	}
+}
+
+func (s *Server) handleV1Tip(w http.ResponseWriter, r *http.Request) {
+	snapshot, err := s.tipQuery()
+	if err != nil {
+		s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	tip, err := s.v1Tip(snapshot)
+	if err != nil {
+		s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	s.writeV1(w, r, http.StatusOK, v1TipResponse{
+		SchemaVersion: v1SchemaVersion,
+		Network:       s.network,
+		Tip:           tip,
+	})
+}
+
+func (s *Server) handleV1Block(w http.ResponseWriter, r *http.Request, id core.Hash32) {
+	snapshot, err := s.blockQuery(id)
+	if err != nil {
+		s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	tip, err := s.v1Tip(snapshot.Tip)
+	if err != nil || snapshot.Network != s.network || snapshot.Hash != id {
+		s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	response := v1BlockResponse{
+		SchemaVersion: v1SchemaVersion,
+		Network:       s.network,
+		Found:         snapshot.Found,
+		Block: v1Block{
+			Hash:      hashText(id),
+			Canonical: snapshot.Canonical,
+		},
+		Tip: tip,
+	}
+	status := http.StatusOK
+	if !snapshot.Found {
+		if snapshot.Height != -1 || snapshot.Canonical {
+			s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+			return
+		}
+		status = http.StatusNotFound
+	} else {
+		if snapshot.Height < 0 ||
+			(snapshot.Canonical && snapshot.Height > snapshot.Tip.Height) ||
+			(snapshot.Canonical && snapshot.Height == snapshot.Tip.Height && snapshot.Hash != snapshot.Tip.Hash) ||
+			(snapshot.Hash == snapshot.Tip.Hash && (!snapshot.Canonical || snapshot.Height != snapshot.Tip.Height)) {
+			s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+			return
+		}
+		height := snapshot.Height
+		response.Block.Height = &height
+	}
+	s.writeV1(w, r, status, response)
+}
+
+func (s *Server) handleV1Transaction(w http.ResponseWriter, r *http.Request, id core.Hash32) {
+	snapshot, err := s.transactionQuery(id)
+	if err != nil {
+		s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	tip, err := s.v1Tip(snapshot.Tip)
+	if err != nil || snapshot.Network != s.network || snapshot.TxID != id {
+		s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	response := v1TransactionResponse{
+		SchemaVersion: v1SchemaVersion,
+		Network:       s.network,
+		TxID:          hashText(id),
+		Status:        snapshot.Status,
+		Confirmations: snapshot.Confirmations,
+		Tip:           tip,
+	}
+	switch snapshot.Status {
+	case core.TransactionStatusUnknown, core.TransactionStatusMempool:
+		if snapshot.BlockHash != (core.Hash32{}) || snapshot.BlockHeight != -1 || snapshot.Confirmations != 0 {
+			s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+			return
+		}
+	case core.TransactionStatusConfirmed:
+		if snapshot.BlockHeight < 0 || snapshot.BlockHeight > snapshot.Tip.Height ||
+			snapshot.Confirmations != snapshot.Tip.Height-snapshot.BlockHeight+1 ||
+			(snapshot.BlockHeight == snapshot.Tip.Height) != (snapshot.BlockHash == snapshot.Tip.Hash) {
+			s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+			return
+		}
+		response.Block = &v1BlockAnchor{
+			Hash:   hashText(snapshot.BlockHash),
+			Height: snapshot.BlockHeight,
+		}
+	default:
+		s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	s.writeV1(w, r, http.StatusOK, response)
+}
+
+func (s *Server) handleV1AddressOutputs(
+	w http.ResponseWriter,
+	r *http.Request,
+	address string,
+	pkh [20]byte,
+	expected expectedTip,
+) {
+	snapshot, err := s.addressQuery(pkh)
+	if err != nil {
+		s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	tip, err := s.v1Tip(snapshot.Tip)
+	if err != nil || snapshot.Network != s.network || !snapshot.Complete {
+		s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	if expected.set && (snapshot.Tip.Hash != expected.hash || snapshot.Tip.Height != expected.height) {
+		s.writeV1(w, r, http.StatusConflict, v1TipMismatchResponse{
+			SchemaVersion: v1SchemaVersion,
+			Network:       s.network,
+			Address:       address,
+			Complete:      false,
+			Tip:           tip,
+		})
+		return
+	}
+	outputs, err := s.v1AddressOutputs(snapshot)
+	if err != nil {
+		s.writeV1Error(w, r, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	s.writeV1(w, r, http.StatusOK, v1AddressResponse{
+		SchemaVersion: v1SchemaVersion,
+		Network:       s.network,
+		Address:       address,
+		Complete:      true,
+		Tip:           tip,
+		Outputs:       outputs,
+	})
+}
+
+func (s *Server) v1Tip(snapshot core.ChainTipSnapshot) (v1Tip, error) {
+	if snapshot.Network != s.network || snapshot.Height < 0 {
+		return v1Tip{}, errors.New("inconsistent tip snapshot")
+	}
+	return v1Tip{Hash: hashText(snapshot.Hash), Height: snapshot.Height}, nil
+}
+
+func (s *Server) v1AddressOutputs(snapshot core.AddressOutputSnapshot) ([]v1AddressOutput, error) {
+	outputs := make([]v1AddressOutput, 0, len(snapshot.Outputs))
+	type outpoint struct {
+		txid core.Hash32
+		vout uint32
+	}
+	type spendingInput struct {
+		txid core.Hash32
+		vin  uint32
+	}
+	type transactionPosition struct {
+		height int64
+		index  uint32
+	}
+	seenOutputs := make(map[outpoint]struct{}, len(snapshot.Outputs))
+	seenSpends := make(map[spendingInput]struct{})
+	heightHashes := make(map[int64]core.Hash32)
+	transactionIDs := make(map[transactionPosition]core.Hash32)
+	for i, output := range snapshot.Outputs {
+		if !core.MoneyRange(output.AmountUnits) || output.AmountUnits == 0 ||
+			output.BlockHeight < 0 || output.BlockHeight > snapshot.Tip.Height ||
+			output.Confirmations != snapshot.Tip.Height-output.BlockHeight+1 ||
+			output.Mature != (!output.Coinbase || output.Confirmations >= s.coinbaseMaturity) {
+			return nil, errors.New("inconsistent address output")
+		}
+		if i > 0 {
+			previous := snapshot.Outputs[i-1]
+			if previous.BlockHeight > output.BlockHeight ||
+				(previous.BlockHeight == output.BlockHeight && previous.TransactionIndex > output.TransactionIndex) ||
+				(previous.BlockHeight == output.BlockHeight && previous.TransactionIndex == output.TransactionIndex && previous.Vout >= output.Vout) {
+				return nil, errors.New("noncanonical address output order")
+			}
+		}
+		if (output.BlockHeight == snapshot.Tip.Height) != (output.BlockHash == snapshot.Tip.Hash) {
+			return nil, errors.New("address output tip identity mismatch")
+		}
+		if prior, ok := heightHashes[output.BlockHeight]; ok && prior != output.BlockHash {
+			return nil, errors.New("conflicting canonical block hash")
+		}
+		heightHashes[output.BlockHeight] = output.BlockHash
+		position := transactionPosition{height: output.BlockHeight, index: output.TransactionIndex}
+		if prior, ok := transactionIDs[position]; ok && prior != output.TxID {
+			return nil, errors.New("conflicting transaction identity")
+		}
+		transactionIDs[position] = output.TxID
+		identity := outpoint{txid: output.TxID, vout: output.Vout}
+		if _, duplicate := seenOutputs[identity]; duplicate {
+			return nil, errors.New("duplicate address outpoint")
+		}
+		seenOutputs[identity] = struct{}{}
+		converted := v1AddressOutput{
+			TxID:             hashText(output.TxID),
+			TransactionIndex: output.TransactionIndex,
+			Vout:             output.Vout,
+			AmountUnits:      output.AmountUnits,
+			Block: v1BlockAnchor{
+				Hash:   hashText(output.BlockHash),
+				Height: output.BlockHeight,
+			},
+			Confirmations: output.Confirmations,
+			Coinbase:      output.Coinbase,
+			Mature:        output.Mature,
+		}
+		if output.SpentBy != nil {
+			spent := output.SpentBy
+			if spent.BlockHeight < output.BlockHeight || spent.BlockHeight > snapshot.Tip.Height ||
+				(output.Coinbase && spent.BlockHeight-output.BlockHeight < s.coinbaseMaturity) ||
+				((spent.BlockHeight == snapshot.Tip.Height) != (spent.BlockHash == snapshot.Tip.Hash)) {
+				return nil, errors.New("inconsistent confirmed spend")
+			}
+			if prior, ok := heightHashes[spent.BlockHeight]; ok && prior != spent.BlockHash {
+				return nil, errors.New("conflicting spending block hash")
+			}
+			heightHashes[spent.BlockHeight] = spent.BlockHash
+			spendIdentity := spendingInput{txid: spent.TxID, vin: spent.InputIndex}
+			if _, duplicate := seenSpends[spendIdentity]; duplicate {
+				return nil, errors.New("duplicate confirmed spending input")
+			}
+			seenSpends[spendIdentity] = struct{}{}
+			converted.SpentBy = &v1ConfirmedSpend{
+				TxID:       hashText(spent.TxID),
+				InputIndex: spent.InputIndex,
+				Block: v1BlockAnchor{
+					Hash:   hashText(spent.BlockHash),
+					Height: spent.BlockHeight,
+				},
+			}
+		}
+		outputs = append(outputs, converted)
+	}
+	return outputs, nil
+}
+
+func hashText(id core.Hash32) string { return hex.EncodeToString(id[:]) }
+
+func (s *Server) writeV1Error(w http.ResponseWriter, r *http.Request, status int, code string) {
+	s.writeV1(w, r, status, v1ErrorResponse{
+		SchemaVersion: v1SchemaVersion,
+		Network:       s.network,
+		ErrorCode:     code,
+	})
+}
+
+func (s *Server) writeV1(w http.ResponseWriter, r *http.Request, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(status)
+		return
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		status = http.StatusServiceUnavailable
+		body, _ = json.Marshal(v1ErrorResponse{
+			SchemaVersion: v1SchemaVersion,
+			Network:       s.network,
+			ErrorCode:     "chain_unavailable",
+		})
+	} else if len(body) > s.maxV1ResponseBytes {
+		status = http.StatusServiceUnavailable
+		body, _ = json.Marshal(v1ErrorResponse{
+			SchemaVersion: v1SchemaVersion,
+			Network:       s.network,
+			ErrorCode:     "snapshot_too_large",
+		})
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // difficulty returns how many times harder the current target is than the

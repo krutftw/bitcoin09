@@ -2003,12 +2003,15 @@ relaxation of any Task 4 gate.
   only `added` is relayed. This avoids unrelated API churn without weakening
   duplicate suppression.
 - Explorer V1 response shapes are exact and reject extra/duplicate fields.
-  All use full lowercase hashes, JSON integers, canonical network, and exactly
-  one response tip anchor:
+  Every authoritative chain-state success/status variant, including the typed
+  missing-block 404 and address tip-mismatch 409, uses full lowercase hashes,
+  JSON integers, canonical network, and exactly one response tip anchor.
+  Generic protocol/resource 400/404/405/503 envelopes intentionally contain no
+  tip and may be returned without entering a Chain query:
 
   ```json
   {"schema_version":1,"network":"btc09-mainnet","tip":{"hash":"<64hex>","height":7000}}
-  {"schema_version":1,"network":"btc09-mainnet","block":{"hash":"<query64hex>","height":6995,"canonical":true},"tip":{"hash":"<64hex>","height":7000}}
+  {"schema_version":1,"network":"btc09-mainnet","found":true,"block":{"hash":"<query64hex>","height":6995,"canonical":true},"tip":{"hash":"<64hex>","height":7000}}
   {"schema_version":1,"network":"btc09-mainnet","txid":"<query64hex>","status":"confirmed","block":{"hash":"<64hex>","height":6999},"confirmations":2,"tip":{"hash":"<64hex>","height":7000}}
   ```
 
@@ -2102,12 +2105,25 @@ relaxation of any Task 4 gate.
   process listing. Python uses an absolute binary path, `shell=False`, a
   minimal environment, and exceptions that never contain signed hex, seeds,
   tokens, argv, subprocess stdout/stderr, or the full environment.
-- The Python explorer accepts only an explicitly configured numeric loopback
-  HTTP base (`127.0.0.1` or `[::1]`, explicit port, no userinfo/path/query/
-  fragment), bypasses proxy environment variables, never follows redirects,
-  requires JSON content type, bounds response bodies, and applies connect/read
-  timeouts. HTTP proxy and redirect forgery tests must fail closed. Transport
-  failure remains distinct from a valid chain status of `unknown`.
+- The Python explorer accepts only an explicitly configured canonical lowercase
+  HTTP base matching `http://127.0.0.1:<1..65535>` or
+  `http://[::1]:<1..65535>` exactly. It rejects a trailing slash, userinfo, zone
+  IDs, mapped IPv6, shorthand/integer/octal/hex IPv4, whitespace/NUL, and every
+  path/query/fragment. Each request uses a fresh stdlib
+  `http.client.HTTPConnection` directly to the validated numeric host; no proxy
+  or redirect machinery is involved. It sends `Accept-Encoding: identity`,
+  rejects duplicate/ambiguous response headers and non-identity content
+  encoding, and applies explicit connect/read timeouts plus a monotonic whole-
+  response deadline. The deadline is enforced even while headers or a body are
+  being slow-dripped by a per-request watchdog that closes the non-reused
+  connection, plus remaining-time socket bounds and `read1` checks; the
+  watchdog is always cancelled. JSON bodies are capped at 4 MiB using both a
+  canonical Content-Length precheck and cap-plus-one streaming read. Strict UTF-8 (no
+  BOM), JSON media type/UTF-8 charset, duplicate keys at every depth, NaN/
+  Infinity, trailing values, booleans as integers, and extra/missing keys all
+  fail closed. HTTP proxy, redirect, slow-drip, oversized/chunked-body, and
+  encoding forgery tests must fail closed. Transport/protocol failure remains
+  distinct from a valid chain transaction status of `unknown`.
 - Python `Wallet.prepare` receives the prior typed `WalletSnapshot` and must
   match its V1 hash; `Wallet.broadcast` receives the persisted prepared tip and
   canonical network. Broadcast first proves that tip remains canonical and
@@ -2169,6 +2185,136 @@ git commit -m "Harden consensus money and chain persistence"
 
 Task 4B remains blocked until a fresh reviewer approves that exact commit.
 
+Task 4B is also delivered through three separately reviewed commits so the
+independent trust boundaries remain auditable:
+
+1. **Task 4B1** implements Steps 1-3: atomic core query snapshots, exact Go
+   explorer V1 endpoints, and the pinned fail-closed Python Explorer adapter;
+   commit `Add canonical OTC explorer boundaries` after focused/full review.
+2. **Task 4B2** implements Step 4: atomic P2P acceptance/relay, kernel-locked
+   crash-durable wallet V1, structured snapshot/hash, prepare/inspect/broadcast
+   machine commands, and strict integer CLI parsing; commit
+   `Add durable OTC wallet commands` after Windows/Linux and crash review.
+3. **Task 4B3** implements Step 5: the Python Wallet adapter and integrated
+   prepare/broadcast/reorg/secret-redaction tests; commit
+   `Add fail-closed OTC wallet adapter` after adversarial review.
+
+Each commit starts from the approved predecessor, gets its own review package,
+and must be approved before the next sub-slice edits begin. Task 4B Step 6 is
+the final aggregate gate, not permission to squash or bypass those reviews.
+
+Task 4B1 has these controller decisions before RED tests begin:
+
+- Add `MainNetMachineID = "btc09-mainnet"`,
+  `RegTestMachineID = "btc09-regtest"`, and one shared
+  `CanonicalNetworkID(*Params) (string, error)` implementation in
+  `core/params.go`. It compares the complete supplied Params value with the
+  canonical `MainNet` or `RegTest` value; matching `Name` alone is insufficient.
+  Nil, an unknown name, or same-name/custom-consensus parameters fail closed.
+  Explorer and every later CLI/wallet machine boundary use this one helper;
+  Task 4B1 does not change Task 4A money arithmetic.
+- `explorer.New` becomes `New(*core.Chain, PeerCounter) (*Server, error)` and
+  validates/stores that canonical identity before any handler or listener can
+  exist. Nil/noncanonical chains return an error; no handler may emit an empty
+  network or silently fall back to `Params.Name`. Update the node call site and
+  test it in `cmd/btc09/main.go` and `cmd/btc09/main_test.go` in B1.
+- Every address, tip, block, or transaction query takes exactly one
+  `Chain.RLock`, derives the live tip and lookup result inside it, and copies all
+  result values before unlock. HTTP never assembles one response from separate
+  public Chain calls. Transaction precedence is canonical-confirmed, then
+  mempool, then unknown; a side-chain-only transaction is unknown. A known
+  side-chain block is `found=true,canonical=false`; a missing block is the
+  anchored 404 variant below. Address order is creation order `(block height,
+  transaction index, vout)`, hashes are direct digest-byte lowercase hex, and
+  tests include a later transaction in the same block spending the output with
+  the exact `spent_by.input_index`.
+- Block-membership, transaction, and address-history queries share the same
+  locked full-canonical-sequence validator as Store snapshots: exact genesis,
+  ID/height metadata, every parent link, merkle root, and cumulative-work
+  recurrence. Intermediate branch splices, mutated transaction/merkle data, or
+  corrupted work fail closed as `chain_unavailable`; no query may label such
+  data canonical, confirmed, or `complete=true`.
+- Coinbase `mature` is true exactly when `confirmations >=
+  Params.CoinbaseMaturity`, matching both prospective next-block consensus
+  validation and the Store. The genesis output is included when querying the
+  all-zero PKH because the snapshot promises every canonical output, including
+  spent or economically unspendable outputs.
+- Every V1 route is GET-only; HEAD, POST, and OPTIONS return 405 with
+  `Allow: GET`. POST and OPTIONS carry the exact JSON 405 envelope below. Go's
+  real `net/http` server suppresses HEAD response bodies, so a recognized-route
+  HEAD carries the same required V1 headers plus `Allow: GET` but an empty wire
+  body; verify that behavior through `httptest.Server`, not only
+  `ResponseRecorder`. Every other HEAD result is likewise bodyless: raw-path
+  rejection remains 400 and an unmatched path remains 404 under the precedence
+  below, with the required V1 headers but no JSON body. Paths are
+  exact and reject extra segments, trailing slashes,
+  path-cleaning aliases, or any percent-encoded alias. Tip/block/transaction
+  reject all query fields. Address accepts either no query or exactly one value
+  for each of `expected_tip_hash` and `expected_tip_height`; duplicate, empty,
+  partial, unknown, non-lowercase hash, or noncanonical decimal height is 400.
+  Raw-path routing runs first: percent/path-cleaning aliases are 400 and an
+  unmatched/extra/trailing V1 path is 404 regardless of method. For a recognized
+  route shape, the method check precedes parameter/query validation, so non-GET
+  is 405 and only a GET with malformed parameters is 400.
+  All V1 success and error responses have exactly one
+  `Content-Type: application/json; charset=utf-8`, plus `Cache-Control:
+  no-store` and `X-Content-Type-Options: nosniff`.
+- For non-HEAD requests, the exact generic error bodies are
+  `{"schema_version":1,"network":"btc09-mainnet","error_code":"bad_request"}`
+  for 400, the same shape with `not_found` for an unknown V1 path (404),
+  `method_not_allowed` for POST/OPTIONS 405 (HEAD 405 has the explicitly empty
+  wire body above), `busy` for an expensive-query saturation 503,
+  `snapshot_too_large` for a response-cap 503, and `chain_unavailable` for a
+  core atomic-query/integrity failure 503. They never echo untrusted input or
+  internal error text. A syntactically valid but missing block instead returns HTTP 404 with
+  the exact atomic body
+  `{"schema_version":1,"network":"btc09-mainnet","found":false,"block":{"hash":"<query64hex>","height":null,"canonical":false},"tip":{"hash":"<64hex>","height":7000}}`.
+  A found block uses the same exact keys with `found:true`, integer height, and
+  its true canonical flag. For a canonical block, matching the tip height or
+  hash requires both identities to match; a valid noncanonical side branch may
+  have a height greater than the canonical tip.
+- The exact expected-tip mismatch body is
+  `{"schema_version":1,"network":"btc09-mainnet","address":"...","complete":false,"tip":{"hash":"<64hex>","height":7000}}` with HTTP 409,
+  the V1 headers above, and no `outputs` key.
+- Address-history, transaction, and block-membership lookups share one
+  nonblocking four-permit semaphore because all three validate the complete
+  canonical sequence before returning authoritative chain state. Saturation returns the exact
+  `busy` 503 before entering a Chain scan; cancellation and every return path
+  release the permit. Every V1 response is encoded into a bounded buffer before
+  headers are written; a body above 4 MiB is never truncated or partially sent
+  and becomes the exact `snapshot_too_large` 503. Tests block/saturate the
+  expensive seam, prove excess requests do not enter Chain scanning, and prove
+  no permit leaks. The production HTTP server sets `ReadHeaderTimeout=5s`,
+  `ReadTimeout=10s`, `WriteTimeout=10s`, `IdleTimeout=30s`, and
+  `MaxHeaderBytes=16384`, with a testable server-construction seam.
+- Python exposes an all-or-nothing batch helper whose input is a bounded
+  `read_watched_addresses` callback. It reads and validates the complete unique
+  watched set exactly once before the first tip request and once after the final
+  tip request, rejecting any change. Callback results must be non-string
+  sequences of at most 10,000 canonical re-encoded 09C Base58Check addresses
+  (version `0x09`, exact checksum), with no duplicates. Empty sets still perform
+  both tip reads; nonempty addresses are fetched sequentially in sorted order.
+  Each response is at most 4 MiB, the batch is at most 100,000 total outpoints
+  and 32 MiB aggregate response bytes, and a cross-address duplicate outpoint
+  or spending-input identity rejects the whole batch. This is an early barrier;
+  the Store's repeated watched-set checks inside `BEGIN IMMEDIATE` remain the
+  final authority.
+- The Python adapter accepts tip/transaction HTTP 200 only; address output
+  accepts exact 200 or the exact anchored 409 as typed `TipMismatch`; block
+  accepts exact 200/found-true or exact 404/found-false. Every other status or
+  body is a transport/protocol failure, distinct from transaction
+  `status="unknown"` and block `found=false`.
+- Wire snapshots retain nested `tip`, `block`, and
+  `spent_by:{txid,input_index,block}`. The adapter explicitly converts each
+  validated address snapshot to the Store's flattened shape using
+  `tip_hash/tip_height`, `block_hash/block_height`, and
+  `spent_by:{txid,vin,block_hash,block_height}`; direct raw-JSON handoff is
+  forbidden and tested. `vout`, `transaction_index`, and `input_index` are true
+  JSON integers in `0..2^32-1`; amounts are in `1..MaxMoneyUnits`; all heights,
+  confirmations, maturity, and confirmed-spend positions match the anchored
+  tip and consensus exactly. Extra/missing fields, duplicate nested keys, and
+  booleans-as-integers reject.
+
 - [ ] **Task 4B Step 1: Write failing canonical address-history tests**
 
 Build regtest chains and assert:
@@ -2187,7 +2333,7 @@ Build regtest chains and assert:
 Implement:
 
 ```go
-func (c *Chain) ConfirmedOutputsForPKH(pkh [20]byte) AddressOutputSnapshot
+func (c *Chain) ConfirmedOutputsForPKH(pkh [20]byte) (AddressOutputSnapshot, error)
 ```
 
 Scan the current canonical `mainIDs`/blocks under one consistent chain read
@@ -2254,12 +2400,16 @@ canonical ancestor after newer blocks arrive.
 
 - [ ] **Task 4B Step 3: Write and implement the fail-closed Python explorer adapter**
 
-Tests reject timeouts, non-200, malformed JSON, `complete=false`, wrong
-schema/network/address, duplicate `(network,txid,vout)`, negative/non-integer
-units, short/non-lowercase hashes, impossible heights/confirmations, duplicate
-or malformed `spent_by`, and unsorted output. All failures are “unknown” and
-must never be converted to a zero balance. Valid empty and multi-partial
-snapshots remain distinguishable.
+Tests accept only the endpoint-specific status variants frozen above and reject
+every other status, timeout/deadline, malformed JSON, `complete=false` in a 200,
+wrong schema/network/address, duplicate `(network,txid,vout)`, negative/non-
+integer units, short/non-lowercase hashes, impossible heights/confirmations,
+duplicate or malformed `spent_by`, and unsorted output. They also exercise proxy
+and metadata redirects, slow-drip total timeout, oversized Content-Length and
+chunked cap-plus-one bodies, duplicate nested keys, BOM/bad UTF-8/charset,
+compressed bodies, NaN/Infinity, trailing values, extra fields, and bool-as-int.
+All transport/protocol failures raise and must never become a zero balance.
+Valid empty and multi-output snapshots remain distinguishable.
 Transaction-status tests reject identity/status mismatches and treat transport
 failure as unknown-to-the-service, not chain status `unknown`.
 Tip/block tests reject stale or internally inconsistent anchors. A live tip
@@ -2270,6 +2420,20 @@ already persisted signed transaction is never replaced.
 Batch tests fetch addresses A/B/C at expected tip T and reject all results if B
 returns 409, C returns another tip, the final tip advances, the watched DB set
 changes, or an output/outpoint repeats across address responses.
+
+Verify/review/commit Task 4B1 before Step 4:
+
+```powershell
+go test ./core ./explorer -count=1
+python -m unittest bot.tests.test_explorer -v
+python -m unittest discover -s bot/tests -p "test_*.py" -v
+go test ./... -count=1
+go vet ./...
+git add core/params.go core/chain.go core/core_test.go explorer/explorer.go explorer/explorer_test.go cmd/btc09/main.go cmd/btc09/main_test.go bot/otc/explorer.py bot/tests/test_explorer.py docs/superpowers/plans/2026-07-10-otc-trade-system.md
+git commit -m "Add canonical OTC explorer boundaries"
+```
+
+Generate a Task 4B1 review package and obtain fresh approval before Step 4.
 
 - [ ] **Task 4B Step 4: Write failing prepare/persist/broadcast Go tests**
 
@@ -2442,6 +2606,32 @@ best-effort save. Kill a subprocess while it owns the platform lock and prove
 the OS releases the lock so the next process can open the unchanged wallet; do
 not implement ownership with a bare persistent `O_EXCL` sentinel file.
 
+Task 4B2 ends after the Go wallet/P2P/CLI implementation and its platform/crash
+tests are green, before Python Wallet implementation begins:
+
+```powershell
+go test ./core ./p2p ./wallet ./cmd/btc09 -count=1
+go test ./... -count=1
+go vet ./...
+$walletTest = Join-Path $env:TEMP ("bitcoin09-wallet-{0}.test" -f [guid]::NewGuid())
+$cliTest = Join-Path $env:TEMP ("bitcoin09-cli-{0}.test" -f [guid]::NewGuid())
+try {
+  $env:GOOS='linux'; $env:GOARCH='amd64'
+  go test ./wallet -c -o $walletTest
+  if ($LASTEXITCODE -ne 0) { throw "Linux wallet test compile failed" }
+  go test ./cmd/btc09 -c -o $cliTest
+  if ($LASTEXITCODE -ne 0) { throw "Linux CLI test compile failed" }
+} finally {
+  Remove-Item Env:GOOS -ErrorAction SilentlyContinue
+  Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $walletTest,$cliTest -Force -ErrorAction SilentlyContinue
+}
+git add go.mod go.sum core/chain.go core/core_test.go wallet/wallet.go wallet/wallet_test.go wallet/filelock_unix.go wallet/filelock_windows.go wallet/durable_replace_unix.go wallet/durable_replace_windows.go p2p/p2p.go p2p/p2p_test.go cmd/btc09/main.go cmd/btc09/main_test.go
+git commit -m "Add durable OTC wallet commands"
+```
+
+Generate a Task 4B2 review package and obtain fresh approval before Step 5.
+
 - [ ] **Task 4B Step 5: Implement and test the Python wallet adapter**
 
 Use integer base-unit decimal formatting without float and invoke the wallet
@@ -2488,21 +2678,34 @@ wallet keys, restricted outpoints, exact sum overflow, a new address between
 snapshot and prepare, and wrong network/tip. No test parses the human `balance`
 or `wallet list` output.
 
-- [ ] **Task 4B Step 6: Verify, review, and commit**
+Task 4B3 stages only the Python wallet boundary and its integrated tests after
+the Step 5 adversarial suite is green:
+
+```powershell
+python -m unittest bot.tests.test_wallet -v
+python -m unittest discover -s bot/tests -p "test_*.py" -v
+go test ./... -count=1
+git add bot/otc/wallet.py bot/tests/test_wallet.py
+git commit -m "Add fail-closed OTC wallet adapter"
+```
+
+Generate a Task 4B3 review package and obtain fresh approval before Step 6.
+
+- [ ] **Task 4B Step 6: Verify and final range readback**
 
 ```powershell
 go test ./... -count=1
 python -m unittest bot.tests.test_explorer bot.tests.test_wallet -v
 python -m unittest discover -s bot/tests -p "test_*.py" -v
-git add core/chain.go core/core_test.go wallet/wallet.go wallet/wallet_test.go wallet/filelock_unix.go wallet/filelock_windows.go wallet/durable_replace_unix.go wallet/durable_replace_windows.go explorer/explorer.go explorer/explorer_test.go p2p/p2p.go p2p/p2p_test.go cmd/btc09/main.go cmd/btc09/main_test.go bot/otc/explorer.py bot/otc/wallet.py bot/tests/test_explorer.py bot/tests/test_wallet.py
-git commit -m "Add canonical OTC wallet boundaries"
+go vet ./...
+$status = git status --short
+if ($status) { $status; throw "Task 4B aggregate gate requires a clean worktree" }
 ```
 
-The Task 4B staged set is reviewed against the already-approved Task 4A base;
-it must not rewrite Task 4A money or persistence invariants. If Task 4B needs a
-new direct module dependency, stage the corresponding `go.mod`/`go.sum` change
-explicitly. Generate a separate Task 4B review package and obtain a fresh
-approval before Task 5 begins.
+The aggregate gate expects a clean worktree containing the three already-
+reviewed Task 4B commits on the approved Task 4A base; it creates no fourth
+implementation commit. Task 4B must not rewrite Task 4A money or persistence
+invariants. Obtain one final range readback approval before Task 5 begins.
 
 ---
 

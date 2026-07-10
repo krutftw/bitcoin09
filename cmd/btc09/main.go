@@ -116,6 +116,10 @@ func openChain(p *core.Params, dataDir string) (*core.Chain, *core.Store) {
 	return chain, store
 }
 
+func newExplorerServer(chain *core.Chain, peers explorer.PeerCounter) (*explorer.Server, error) {
+	return explorer.New(chain, peers)
+}
+
 func cmdNode(args []string) {
 	fs := flag.NewFlagSet("node", flag.ExitOnError)
 	mine := fs.Bool("mine", false, "mine blocks with all CPU cores")
@@ -179,7 +183,10 @@ func cmdNode(args []string) {
 	}
 
 	if *explorerAddr != "" {
-		exp := explorer.New(chain, node)
+		exp, err := newExplorerServer(chain, node)
+		if err != nil {
+			log.Fatalf("explorer init: %v", err)
+		}
 		go func() {
 			log.Printf("explorer on http://%s", *explorerAddr)
 			if err := exp.Serve(*explorerAddr); err != nil {

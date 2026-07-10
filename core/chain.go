@@ -26,6 +26,76 @@ type blockIndex struct {
 	id      Hash32
 }
 
+// Transaction lookup status values are stable machine-facing identifiers.
+const (
+	TransactionStatusUnknown   = "unknown"
+	TransactionStatusMempool   = "mempool"
+	TransactionStatusConfirmed = "confirmed"
+)
+
+// ChainTipSnapshot is a detached, atomic view of the canonical chain tip.
+type ChainTipSnapshot struct {
+	Network string
+	Hash    Hash32
+	Height  int64
+}
+
+// BlockLookupSnapshot reports whether a block is known and whether it belongs
+// to the canonical chain anchored by Tip. Height is -1 when Found is false.
+type BlockLookupSnapshot struct {
+	Network   string
+	Tip       ChainTipSnapshot
+	Found     bool
+	Hash      Hash32
+	Height    int64
+	Canonical bool
+}
+
+// TransactionLookupSnapshot reports canonical confirmation state anchored by
+// Tip. BlockHeight is -1 for mempool and unknown transactions.
+type TransactionLookupSnapshot struct {
+	Network       string
+	Tip           ChainTipSnapshot
+	TxID          Hash32
+	Status        string
+	BlockHash     Hash32
+	BlockHeight   int64
+	Confirmations int64
+}
+
+// ConfirmedSpend identifies the canonical transaction input that spent an
+// address output.
+type ConfirmedSpend struct {
+	TxID        Hash32
+	InputIndex  uint32
+	BlockHash   Hash32
+	BlockHeight int64
+}
+
+// ConfirmedAddressOutput is one output created on the canonical chain. Spent
+// outputs remain present and carry their confirmed spender.
+type ConfirmedAddressOutput struct {
+	TxID             Hash32
+	TransactionIndex uint32
+	Vout             uint32
+	AmountUnits      int64
+	BlockHash        Hash32
+	BlockHeight      int64
+	Confirmations    int64
+	Coinbase         bool
+	Mature           bool
+	SpentBy          *ConfirmedSpend
+}
+
+// AddressOutputSnapshot is the complete canonical output history for one PKH
+// at the exact Tip anchor.
+type AddressOutputSnapshot struct {
+	Network  string
+	Complete bool
+	Tip      ChainTipSnapshot
+	Outputs  []ConfirmedAddressOutput
+}
+
 // Chain holds consensus state: every valid block ever seen, the best chain
 // selected by cumulative work, the UTXO set of that chain, and a mempool.
 type Chain struct {
@@ -77,6 +147,259 @@ func (c *Chain) Tip() (Hash32, int64) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.tip.id, c.tip.height
+}
+
+// CanonicalTipSnapshot returns the canonical machine-network identity and tip
+// as one detached read snapshot.
+func (c *Chain) CanonicalTipSnapshot() (ChainTipSnapshot, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.canonicalTipSnapshotLocked()
+}
+
+// LookupBlock returns canonical membership for a known block, including a
+// side-chain block whose height may exceed the current canonical tip.
+func (c *Chain) LookupBlock(id Hash32) (BlockLookupSnapshot, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	tip, err := c.canonicalTipSnapshotLocked()
+	if err != nil {
+		return BlockLookupSnapshot{}, err
+	}
+	result := BlockLookupSnapshot{
+		Network: tip.Network,
+		Tip:     tip,
+		Hash:    id,
+		Height:  -1,
+	}
+	canonical, err := c.validatedCanonicalSequenceLocked()
+	if err != nil {
+		return BlockLookupSnapshot{}, err
+	}
+	bi, ok := c.index[id]
+	if !ok {
+		return result, nil
+	}
+	if bi == nil || bi.block == nil || bi.height < 0 || bi.id != id || bi.block.Header.ID() != id {
+		return BlockLookupSnapshot{}, errors.New("block index entry is inconsistent")
+	}
+	result.Found = true
+	result.Height = bi.height
+	result.Canonical = bi.height < int64(len(canonical)) && canonical[bi.height].id == id
+	return result, nil
+}
+
+// LookupTransaction applies canonical-confirmed, mempool, then unknown
+// precedence under one chain read snapshot. Side-chain-only transactions are
+// intentionally unknown.
+func (c *Chain) LookupTransaction(id Hash32) (TransactionLookupSnapshot, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	tip, err := c.canonicalTipSnapshotLocked()
+	if err != nil {
+		return TransactionLookupSnapshot{}, err
+	}
+	result := TransactionLookupSnapshot{
+		Network:     tip.Network,
+		Tip:         tip,
+		TxID:        id,
+		Status:      TransactionStatusUnknown,
+		BlockHeight: -1,
+	}
+	canonical, err := c.validatedCanonicalSequenceLocked()
+	if err != nil {
+		return TransactionLookupSnapshot{}, err
+	}
+	for height, bi := range canonical {
+		blockID := bi.id
+		for _, tx := range bi.block.Txs {
+			if tx == nil {
+				return TransactionLookupSnapshot{}, errors.New("nil transaction in canonical block")
+			}
+			if tx.ID() != id {
+				continue
+			}
+			result.Status = TransactionStatusConfirmed
+			result.BlockHash = blockID
+			result.BlockHeight = int64(height)
+			result.Confirmations = tip.Height - int64(height) + 1
+			return result, nil
+		}
+	}
+	if tx, ok := c.mempool[id]; ok {
+		if tx == nil || tx.ID() != id {
+			return TransactionLookupSnapshot{}, errors.New("mempool transaction index is inconsistent")
+		}
+		result.Status = TransactionStatusMempool
+	}
+	return result, nil
+}
+
+// ConfirmedOutputsForPKH scans the canonical blocks rather than the UTXO set,
+// retaining spent history and excluding mempool-only outputs. Creation order
+// is block height, transaction index, then vout.
+func (c *Chain) ConfirmedOutputsForPKH(pkh [20]byte) (AddressOutputSnapshot, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	tip, err := c.canonicalTipSnapshotLocked()
+	if err != nil {
+		return AddressOutputSnapshot{}, err
+	}
+	result := AddressOutputSnapshot{
+		Network:  tip.Network,
+		Complete: true,
+		Tip:      tip,
+		Outputs:  make([]ConfirmedAddressOutput, 0),
+	}
+	canonical, err := c.validatedCanonicalSequenceLocked()
+	if err != nil {
+		return AddressOutputSnapshot{}, err
+	}
+	created := make(map[OutPoint]int)
+	for height, bi := range canonical {
+		blockID := bi.id
+		confirmations := tip.Height - int64(height) + 1
+		for txIndex, tx := range bi.block.Txs {
+			if tx == nil {
+				return AddressOutputSnapshot{}, errors.New("nil transaction in canonical block")
+			}
+			txID := tx.ID()
+			for inputIndex, input := range tx.Ins {
+				outputIndex, ok := created[input.Prev]
+				if !ok {
+					continue
+				}
+				if result.Outputs[outputIndex].SpentBy != nil {
+					return AddressOutputSnapshot{}, errors.New("canonical output has multiple confirmed spenders")
+				}
+				spend := ConfirmedSpend{
+					TxID:        txID,
+					InputIndex:  uint32(inputIndex),
+					BlockHash:   blockID,
+					BlockHeight: int64(height),
+				}
+				result.Outputs[outputIndex].SpentBy = &spend
+			}
+			coinbase := tx.IsCoinbase()
+			for vout, output := range tx.Outs {
+				if output.PubKeyHash != pkh {
+					continue
+				}
+				outpoint := OutPoint{TxID: txID, Idx: uint32(vout)}
+				if _, duplicate := created[outpoint]; duplicate {
+					return AddressOutputSnapshot{}, errors.New("duplicate canonical address outpoint")
+				}
+				created[outpoint] = len(result.Outputs)
+				result.Outputs = append(result.Outputs, ConfirmedAddressOutput{
+					TxID:             txID,
+					TransactionIndex: uint32(txIndex),
+					Vout:             uint32(vout),
+					AmountUnits:      output.Value,
+					BlockHash:        blockID,
+					BlockHeight:      int64(height),
+					Confirmations:    confirmations,
+					Coinbase:         coinbase,
+					Mature:           !coinbase || confirmations >= c.params.CoinbaseMaturity,
+				})
+			}
+		}
+	}
+	return result, nil
+}
+
+func (c *Chain) canonicalTipSnapshotLocked() (ChainTipSnapshot, error) {
+	network, err := CanonicalNetworkID(c.params)
+	if err != nil {
+		return ChainTipSnapshot{}, err
+	}
+	if c.tip == nil || c.tip.block == nil || c.tip.height < 0 ||
+		int64(len(c.mainIDs)) != c.tip.height+1 || len(c.mainIDs) == 0 ||
+		c.mainIDs[len(c.mainIDs)-1] != c.tip.id {
+		return ChainTipSnapshot{}, errors.New("canonical tip is inconsistent")
+	}
+	indexed, ok := c.index[c.tip.id]
+	if !ok || indexed != c.tip || c.tip.block.Header.ID() != c.tip.id {
+		return ChainTipSnapshot{}, errors.New("canonical tip index is inconsistent")
+	}
+	genesisID := c.mainIDs[0]
+	genesis, err := c.canonicalBlockIndexLocked(0, genesisID)
+	if err != nil || genesisID != GenesisBlock(c.params).Header.ID() {
+		return ChainTipSnapshot{}, errors.New("canonical genesis index is inconsistent")
+	}
+	if c.tip.height == 0 {
+		if c.tip != genesis {
+			return ChainTipSnapshot{}, errors.New("canonical genesis tip is inconsistent")
+		}
+	} else if c.tip.block.Header.PrevBlock != c.mainIDs[len(c.mainIDs)-2] {
+		return ChainTipSnapshot{}, errors.New("canonical tip parent linkage is inconsistent")
+	}
+	return ChainTipSnapshot{Network: network, Hash: c.tip.id, Height: c.tip.height}, nil
+}
+
+func (c *Chain) canonicalBlockIndexLocked(height int64, id Hash32) (*blockIndex, error) {
+	bi, ok := c.index[id]
+	if !ok || bi == nil || bi.block == nil || bi.height != height || bi.id != id ||
+		bi.block.Header.ID() != id {
+		return nil, fmt.Errorf("canonical block index is inconsistent at height %d", height)
+	}
+	return bi, nil
+}
+
+// validatedCanonicalSequenceLocked validates the complete canonical sequence
+// without copying it. Callers must hold c.mu for reading and must not retain
+// the returned internal pointers after releasing that lock.
+func (c *Chain) validatedCanonicalSequenceLocked() ([]*blockIndex, error) {
+	if c.params == nil || c.tip == nil || c.tip.block == nil || c.tip.cumWork == nil ||
+		c.tip.cumWork.Sign() <= 0 || c.tip.height < 0 || len(c.mainIDs) == 0 ||
+		int64(len(c.mainIDs)) != c.tip.height+1 || c.mainIDs[len(c.mainIDs)-1] != c.tip.id {
+		return nil, errors.New("canonical sequence metadata is inconsistent")
+	}
+	indexedTip, ok := c.index[c.tip.id]
+	if !ok || indexedTip != c.tip {
+		return nil, errors.New("canonical tip metadata is detached")
+	}
+
+	sequence := make([]*blockIndex, len(c.mainIDs))
+	expectedGenesis := GenesisBlock(c.params)
+	var previousID Hash32
+	var expectedWork *big.Int
+	for height, id := range c.mainIDs {
+		bi, ok := c.index[id]
+		if !ok || bi == nil || bi.block == nil || bi.cumWork == nil {
+			return nil, fmt.Errorf("canonical block %d is incomplete", height)
+		}
+		if bi.id != id || bi.height != int64(height) || bi.block.Header.ID() != id {
+			return nil, fmt.Errorf("canonical block %d identity mismatch", height)
+		}
+		blockWork := WorkFromTarget(CompactToTarget(bi.block.Header.Bits))
+		if expectedWork == nil {
+			expectedWork = new(big.Int).Set(blockWork)
+		} else {
+			expectedWork = new(big.Int).Add(expectedWork, blockWork)
+		}
+		if bi.cumWork.Sign() <= 0 || bi.cumWork.Cmp(expectedWork) != 0 {
+			return nil, fmt.Errorf("canonical block %d work mismatch", height)
+		}
+		if height == 0 && !bytes.Equal(bi.block.Bytes(), expectedGenesis.Bytes()) {
+			return nil, errors.New("canonical genesis mismatch")
+		}
+		if height > 0 && bi.block.Header.PrevBlock != previousID {
+			return nil, fmt.Errorf("canonical block %d parent mismatch", height)
+		}
+		if MerkleRoot(bi.block.Txs) != bi.block.Header.MerkleRoot {
+			return nil, fmt.Errorf("canonical block %d merkle mismatch", height)
+		}
+		sequence[height] = bi
+		previousID = id
+	}
+	if sequence[len(sequence)-1] != c.tip || previousID != c.tip.id ||
+		expectedWork == nil || expectedWork.Cmp(c.tip.cumWork) != 0 {
+		return nil, errors.New("canonical tip does not match the validated sequence")
+	}
+	return sequence, nil
 }
 
 func (c *Chain) Height() int64 { _, h := c.Tip(); return h }
@@ -626,18 +949,9 @@ func (c *Chain) canonicalMainSnapshot() (canonicalMainSnapshot, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if c.tip == nil || c.tip.cumWork == nil || c.tip.cumWork.Sign() <= 0 {
-		return canonicalMainSnapshot{}, errors.New("canonical tip is incomplete")
-	}
-	if c.tip.height < 0 || int64(len(c.mainIDs)) != c.tip.height+1 {
-		return canonicalMainSnapshot{}, errors.New("canonical height/index mismatch")
-	}
-	if len(c.mainIDs) == 0 || c.mainIDs[len(c.mainIDs)-1] != c.tip.id {
-		return canonicalMainSnapshot{}, errors.New("canonical tip ID mismatch")
-	}
-	indexedTip, ok := c.index[c.tip.id]
-	if !ok || indexedTip != c.tip {
-		return canonicalMainSnapshot{}, errors.New("canonical tip metadata is detached")
+	canonical, err := c.validatedCanonicalSequenceLocked()
+	if err != nil {
+		return canonicalMainSnapshot{}, err
 	}
 
 	snapshot := canonicalMainSnapshot{
@@ -647,39 +961,10 @@ func (c *Chain) canonicalMainSnapshot() (canonicalMainSnapshot, error) {
 		cumWork:   new(big.Int).Set(c.tip.cumWork),
 		blocks:    make([]*Block, 0, c.tip.height),
 	}
-	var previousID Hash32
-	var expectedWork *big.Int
-	expectedGenesis := GenesisBlock(c.params)
-	for height, id := range c.mainIDs {
-		bi, ok := c.index[id]
-		if !ok || bi == nil || bi.block == nil || bi.cumWork == nil {
-			return canonicalMainSnapshot{}, fmt.Errorf("canonical block %d is incomplete", height)
-		}
-		if bi.id != id || bi.height != int64(height) || bi.block.Header.ID() != id {
-			return canonicalMainSnapshot{}, fmt.Errorf("canonical block %d identity mismatch", height)
-		}
-		blockWork := WorkFromTarget(CompactToTarget(bi.block.Header.Bits))
-		if expectedWork == nil {
-			expectedWork = new(big.Int).Set(blockWork)
-		} else {
-			expectedWork = new(big.Int).Add(expectedWork, blockWork)
-		}
-		if bi.cumWork.Sign() <= 0 || bi.cumWork.Cmp(expectedWork) != 0 {
-			return canonicalMainSnapshot{}, fmt.Errorf("canonical block %d work mismatch", height)
-		}
-		if height == 0 && !bytes.Equal(bi.block.Bytes(), expectedGenesis.Bytes()) {
-			return canonicalMainSnapshot{}, errors.New("canonical genesis mismatch")
-		}
-		if height > 0 && bi.block.Header.PrevBlock != previousID {
-			return canonicalMainSnapshot{}, fmt.Errorf("canonical block %d parent mismatch", height)
-		}
-		if MerkleRoot(bi.block.Txs) != bi.block.Header.MerkleRoot {
-			return canonicalMainSnapshot{}, fmt.Errorf("canonical block %d merkle mismatch", height)
-		}
+	for height, bi := range canonical {
 		if height > 0 {
 			snapshot.blocks = append(snapshot.blocks, cloneBlock(bi.block))
 		}
-		previousID = id
 	}
 	return snapshot, nil
 }

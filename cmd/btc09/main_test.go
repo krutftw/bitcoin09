@@ -1,6 +1,23 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/krutftw/bitcoin09/core"
+)
+
+func TestNewExplorerServerPropagatesCanonicalNetworkFailure(t *testing.T) {
+	if _, err := newExplorerServer(nil, nil); err == nil {
+		t.Fatal("newExplorerServer accepted a nil chain")
+	}
+	chain, err := core.NewChain(&core.RegTest)
+	if err != nil {
+		t.Fatalf("NewChain: %v", err)
+	}
+	if _, err := newExplorerServer(chain, nil); err != nil {
+		t.Fatalf("newExplorerServer canonical regtest: %v", err)
+	}
+}
 
 func TestDefaultMainnetSeeds(t *testing.T) {
 	seeds := defaultSeeds(paramsFor("mainnet"))

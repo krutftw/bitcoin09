@@ -121,6 +121,61 @@ func TestGenesisDeterministicAndBurned(t *testing.T) {
 	}
 }
 
+func TestCanonicalNetworkIDRequiresExactCanonicalParams(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		p    *Params
+		want string
+	}{
+		{name: "mainnet", p: &MainNet, want: MainNetMachineID},
+		{name: "regtest", p: &RegTest, want: RegTestMachineID},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := CanonicalNetworkID(tt.p)
+			if err != nil {
+				t.Fatalf("CanonicalNetworkID: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("CanonicalNetworkID = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	customMainnet := MainNet
+	customMainnet.CoinbaseMaturity++
+	customRegtest := RegTest
+	customRegtest.NetMagic++
+	for _, tt := range []struct {
+		name string
+		p    *Params
+	}{
+		{name: "nil", p: nil},
+		{name: "unknown", p: &Params{Name: "unknown"}},
+		{name: "same-name custom mainnet", p: &customMainnet},
+		{name: "same-name custom regtest", p: &customRegtest},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, err := CanonicalNetworkID(tt.p); err == nil {
+				t.Fatalf("CanonicalNetworkID returned %q for noncanonical params", got)
+			}
+		})
+	}
+
+	// The exported convenience values are mutable Go variables. Machine
+	// identity must stay pinned to the compiled canonical consensus values even
+	// if an application accidentally changes one of those variables.
+	canonicalMainnet := MainNet
+	originalMainnet := MainNet
+	defer func() { MainNet = originalMainnet }()
+	MainNet.CoinbaseMaturity++
+	if got, err := CanonicalNetworkID(&canonicalMainnet); err != nil || got != MainNetMachineID {
+		t.Fatalf("compiled canonical mainnet lost identity after exported-var mutation: got %q err %v", got, err)
+	}
+	if got, err := CanonicalNetworkID(&MainNet); err == nil {
+		t.Fatalf("mutated exported MainNet accepted as %q", got)
+	}
+}
+
 func TestMineAndSpend(t *testing.T) {
 	c := testChain(t)
 	minerKey, minerPKH := keyAndPKH(t)
@@ -1010,6 +1065,692 @@ func TestCanonicalMainSnapshotConcurrentReorgIsOneBranch(t *testing.T) {
 		default:
 		}
 	}
+}
+
+func TestCanonicalTipBlockAndTransactionLookupSnapshots(t *testing.T) {
+	c := testChain(t)
+	minerKey, minerPKH := keyAndPKH(t)
+	canonicalOne := mineOne(t, c, minerPKH)
+	mineOne(t, c, minerPKH)
+
+	fork := testChain(t)
+	_, forkPKH := keyAndPKH(t)
+	sideOne := mineOne(t, fork, forkPKH)
+	if err := c.AcceptBlock(sideOne); err != nil {
+		t.Fatalf("accept side-chain block: %v", err)
+	}
+
+	tip, err := c.CanonicalTipSnapshot()
+	if err != nil {
+		t.Fatalf("CanonicalTipSnapshot: %v", err)
+	}
+	wantTipID, wantTipHeight := c.Tip()
+	if tip.Network != RegTestMachineID || tip.Hash != wantTipID || tip.Height != wantTipHeight {
+		t.Fatalf("tip snapshot = %+v, want network/hash/height %q/%x/%d",
+			tip, RegTestMachineID, wantTipID, wantTipHeight)
+	}
+
+	canonical, err := c.LookupBlock(canonicalOne.Header.ID())
+	if err != nil {
+		t.Fatalf("LookupBlock canonical: %v", err)
+	}
+	if canonical.Network != RegTestMachineID || canonical.Tip != tip || !canonical.Found ||
+		!canonical.Canonical || canonical.Hash != canonicalOne.Header.ID() || canonical.Height != 1 {
+		t.Fatalf("canonical block lookup = %+v", canonical)
+	}
+
+	side, err := c.LookupBlock(sideOne.Header.ID())
+	if err != nil {
+		t.Fatalf("LookupBlock side chain: %v", err)
+	}
+	if side.Network != RegTestMachineID || side.Tip != tip || !side.Found ||
+		side.Canonical || side.Hash != sideOne.Header.ID() || side.Height != 1 {
+		t.Fatalf("side-chain block lookup = %+v", side)
+	}
+
+	missingID := SHA256d([]byte("missing-block"))
+	missing, err := c.LookupBlock(missingID)
+	if err != nil {
+		t.Fatalf("LookupBlock missing: %v", err)
+	}
+	if missing.Network != RegTestMachineID || missing.Tip != tip || missing.Found ||
+		missing.Canonical || missing.Hash != missingID || missing.Height != -1 {
+		t.Fatalf("missing block lookup = %+v", missing)
+	}
+
+	confirmedID := canonicalOne.Txs[0].ID()
+	confirmed, err := c.LookupTransaction(confirmedID)
+	if err != nil {
+		t.Fatalf("LookupTransaction confirmed: %v", err)
+	}
+	if confirmed.Network != RegTestMachineID || confirmed.Tip != tip ||
+		confirmed.TxID != confirmedID || confirmed.Status != TransactionStatusConfirmed ||
+		confirmed.BlockHash != canonicalOne.Header.ID() || confirmed.BlockHeight != 1 ||
+		confirmed.Confirmations != 2 {
+		t.Fatalf("confirmed transaction lookup = %+v", confirmed)
+	}
+
+	outpoint := OutPoint{TxID: confirmedID, Idx: 0}
+	_, destination := keyAndPKH(t)
+	mempoolTx := &Tx{
+		Version: 1,
+		Ins:     []TxIn{{Prev: outpoint}},
+		Outs:    []TxOut{{Value: canonicalOne.Txs[0].Outs[0].Value - 1, PubKeyHash: destination}},
+	}
+	if err := mempoolTx.Sign([]ed25519.PrivateKey{minerKey}); err != nil {
+		t.Fatalf("sign mempool fixture: %v", err)
+	}
+	if err := c.AcceptTx(mempoolTx); err != nil {
+		t.Fatalf("AcceptTx mempool fixture: %v", err)
+	}
+	mempool, err := c.LookupTransaction(mempoolTx.ID())
+	if err != nil {
+		t.Fatalf("LookupTransaction mempool: %v", err)
+	}
+	if mempool.Network != RegTestMachineID || mempool.Tip != tip ||
+		mempool.TxID != mempoolTx.ID() || mempool.Status != TransactionStatusMempool ||
+		mempool.BlockHash != (Hash32{}) || mempool.BlockHeight != -1 || mempool.Confirmations != 0 {
+		t.Fatalf("mempool transaction lookup = %+v", mempool)
+	}
+
+	sideOnlyID := sideOne.Txs[0].ID()
+	unknown, err := c.LookupTransaction(sideOnlyID)
+	if err != nil {
+		t.Fatalf("LookupTransaction side-only: %v", err)
+	}
+	if unknown.Network != RegTestMachineID || unknown.Tip != tip ||
+		unknown.TxID != sideOnlyID || unknown.Status != TransactionStatusUnknown ||
+		unknown.BlockHash != (Hash32{}) || unknown.BlockHeight != -1 || unknown.Confirmations != 0 {
+		t.Fatalf("side-only transaction lookup = %+v", unknown)
+	}
+
+	unknownID := SHA256d([]byte("unknown-transaction"))
+	trulyUnknown, err := c.LookupTransaction(unknownID)
+	if err != nil {
+		t.Fatalf("LookupTransaction unknown: %v", err)
+	}
+	if trulyUnknown.TxID != unknownID || trulyUnknown.Status != TransactionStatusUnknown ||
+		trulyUnknown.Tip != tip {
+		t.Fatalf("unknown transaction lookup = %+v", trulyUnknown)
+	}
+
+	// Confirmed status must win even if a damaged caller has also left the
+	// same identity in the mempool map.
+	c.mu.Lock()
+	c.mempool[confirmedID] = cloneTx(canonicalOne.Txs[0])
+	c.mu.Unlock()
+	precedence, err := c.LookupTransaction(confirmedID)
+	if err != nil {
+		t.Fatalf("LookupTransaction precedence: %v", err)
+	}
+	if precedence.Status != TransactionStatusConfirmed || precedence.BlockHash != canonicalOne.Header.ID() {
+		t.Fatalf("canonical transaction did not precede mempool duplicate: %+v", precedence)
+	}
+
+	// The DTOs contain detached values: caller mutation cannot change a later
+	// query or the chain's internal state.
+	tip.Hash = Hash32{0xff}
+	canonical.Hash = Hash32{0xee}
+	confirmed.TxID = Hash32{0xdd}
+	againTip, err := c.CanonicalTipSnapshot()
+	if err != nil {
+		t.Fatalf("CanonicalTipSnapshot again: %v", err)
+	}
+	againBlock, err := c.LookupBlock(canonicalOne.Header.ID())
+	if err != nil {
+		t.Fatalf("LookupBlock again: %v", err)
+	}
+	againTx, err := c.LookupTransaction(confirmedID)
+	if err != nil {
+		t.Fatalf("LookupTransaction again: %v", err)
+	}
+	if againTip.Hash != wantTipID || againBlock.Hash != canonicalOne.Header.ID() || againTx.TxID != confirmedID {
+		t.Fatal("mutating returned query DTO changed chain state")
+	}
+
+	custom := RegTest
+	custom.CoinbaseMaturity++
+	noncanonical, err := NewChain(&custom)
+	if err != nil {
+		t.Fatalf("NewChain custom params: %v", err)
+	}
+	if _, err := noncanonical.CanonicalTipSnapshot(); err == nil {
+		t.Fatal("tip query accepted noncanonical consensus params")
+	}
+	if _, err := noncanonical.LookupBlock(GenesisBlock(&custom).Header.ID()); err == nil {
+		t.Fatal("block query accepted noncanonical consensus params")
+	}
+	if _, err := noncanonical.LookupTransaction(GenesisBlock(&custom).Txs[0].ID()); err == nil {
+		t.Fatal("transaction query accepted noncanonical consensus params")
+	}
+	if _, err := noncanonical.ConfirmedOutputsForPKH([20]byte{}); err == nil {
+		t.Fatal("address query accepted noncanonical consensus params")
+	}
+}
+
+func TestConfirmedOutputsForPKHIncludesCompleteCanonicalHistory(t *testing.T) {
+	c := testChain(t)
+	minerKey, minerPKH := keyAndPKH(t)
+	aliceKey, alicePKH := keyAndPKH(t)
+	_, bobPKH := keyAndPKH(t)
+	_, mempoolOnlyPKH := keyAndPKH(t)
+
+	firstReward := mineOne(t, c, minerPKH)
+	mineOne(t, c, minerPKH)
+	firstRewardID := firstReward.Txs[0].ID()
+	firstRewardValue := firstReward.Txs[0].Outs[0].Value
+
+	create := &Tx{
+		Version: 1,
+		Ins:     []TxIn{{Prev: OutPoint{TxID: firstRewardID, Idx: 0}}},
+		Outs: []TxOut{
+			{Value: 10_000, PubKeyHash: alicePKH},
+			{Value: 20_000, PubKeyHash: alicePKH},
+			{Value: firstRewardValue - 31_000, PubKeyHash: alicePKH},
+		},
+	}
+	if err := create.Sign([]ed25519.PrivateKey{minerKey}); err != nil {
+		t.Fatalf("sign creation transaction: %v", err)
+	}
+	spend := &Tx{
+		Version: 1,
+		Ins: []TxIn{
+			{Prev: OutPoint{TxID: create.ID(), Idx: 1}},
+			{Prev: OutPoint{TxID: create.ID(), Idx: 0}},
+		},
+		Outs: []TxOut{{Value: 29_900, PubKeyHash: bobPKH}},
+	}
+	if err := spend.Sign([]ed25519.PrivateKey{aliceKey, aliceKey}); err != nil {
+		t.Fatalf("sign same-block spend: %v", err)
+	}
+	block := mineCandidateBlock(t, c, minerPKH,
+		NewCoinbase(3, SubsidyAt(3), minerPKH, "same-block-history"), create, spend)
+	if err := c.AcceptBlock(block); err != nil {
+		t.Fatalf("AcceptBlock address-history fixture: %v", err)
+	}
+
+	snapshot, err := c.ConfirmedOutputsForPKH(alicePKH)
+	if err != nil {
+		t.Fatalf("ConfirmedOutputsForPKH: %v", err)
+	}
+	tipID, tipHeight := c.Tip()
+	if snapshot.Network != RegTestMachineID || !snapshot.Complete ||
+		snapshot.Tip.Network != RegTestMachineID || snapshot.Tip.Hash != tipID ||
+		snapshot.Tip.Height != tipHeight {
+		t.Fatalf("address snapshot anchor = %+v", snapshot)
+	}
+	if len(snapshot.Outputs) != 3 {
+		t.Fatalf("address output count = %d, want 3", len(snapshot.Outputs))
+	}
+	for i, output := range snapshot.Outputs {
+		if output.TxID != create.ID() || output.TransactionIndex != 1 ||
+			output.Vout != uint32(i) || output.BlockHash != block.Header.ID() ||
+			output.BlockHeight != 3 || output.Confirmations != 1 || output.Coinbase || !output.Mature {
+			t.Fatalf("output %d metadata = %+v", i, output)
+		}
+	}
+	if snapshot.Outputs[0].AmountUnits != 10_000 {
+		t.Fatalf("first amount = %d, want 10000", snapshot.Outputs[0].AmountUnits)
+	}
+	if got := snapshot.Outputs[0].SpentBy; got == nil || got.TxID != spend.ID() ||
+		got.InputIndex != 1 || got.BlockHash != block.Header.ID() || got.BlockHeight != 3 {
+		t.Fatalf("same-block spent_by = %+v", got)
+	}
+	if got := snapshot.Outputs[1].SpentBy; got == nil || got.TxID != spend.ID() || got.InputIndex != 0 {
+		t.Fatalf("same-block first-input spent_by = %+v", got)
+	}
+	if snapshot.Outputs[2].SpentBy != nil {
+		t.Fatalf("unspent output has spent_by = %+v", snapshot.Outputs[2].SpentBy)
+	}
+
+	// Hashes are direct digest bytes, never display-order reversals.
+	wantTxID := create.ID()
+	wantBlockID := block.Header.ID()
+	if snapshot.Outputs[0].TxID != wantTxID || snapshot.Outputs[0].BlockHash != wantBlockID {
+		t.Fatal("address history changed direct digest-byte hash order")
+	}
+	var reversedTxID Hash32
+	for i := range wantTxID {
+		reversedTxID[i] = wantTxID[len(wantTxID)-1-i]
+	}
+	if reversedTxID == wantTxID {
+		t.Fatal("test fixture unexpectedly has a palindromic transaction ID")
+	}
+	if snapshot.Outputs[0].TxID == reversedTxID {
+		t.Fatal("address history returned reversed transaction ID bytes")
+	}
+
+	mempoolSpend := &Tx{
+		Version: 1,
+		Ins:     []TxIn{{Prev: OutPoint{TxID: create.ID(), Idx: 2}}},
+		Outs: []TxOut{{
+			Value:      create.Outs[2].Value - 100,
+			PubKeyHash: mempoolOnlyPKH,
+		}},
+	}
+	if err := mempoolSpend.Sign([]ed25519.PrivateKey{aliceKey}); err != nil {
+		t.Fatalf("sign mempool-only transaction: %v", err)
+	}
+	if err := c.AcceptTx(mempoolSpend); err != nil {
+		t.Fatalf("AcceptTx mempool-only transaction: %v", err)
+	}
+	mempoolOnly, err := c.ConfirmedOutputsForPKH(mempoolOnlyPKH)
+	if err != nil {
+		t.Fatalf("ConfirmedOutputsForPKH mempool-only: %v", err)
+	}
+	if !mempoolOnly.Complete || len(mempoolOnly.Outputs) != 0 {
+		t.Fatalf("mempool output appeared in confirmed history: %+v", mempoolOnly)
+	}
+
+	beforeMutation := snapshot.Outputs[0]
+	snapshot.Outputs[0].AmountUnits++
+	snapshot.Outputs[0].TxID = Hash32{0xaa}
+	snapshot.Outputs[0].SpentBy.TxID = Hash32{0xbb}
+	again, err := c.ConfirmedOutputsForPKH(alicePKH)
+	if err != nil {
+		t.Fatalf("ConfirmedOutputsForPKH after mutation: %v", err)
+	}
+	if again.Outputs[0].AmountUnits != beforeMutation.AmountUnits ||
+		again.Outputs[0].TxID != beforeMutation.TxID ||
+		again.Outputs[0].SpentBy == nil || again.Outputs[0].SpentBy.TxID != spend.ID() {
+		t.Fatal("mutating returned address DTO changed later query state")
+	}
+	if again.Outputs[2].SpentBy != nil {
+		t.Fatal("mempool spend was reported as a confirmed spend")
+	}
+
+	// Advance the canonical tip without mining the mempool transaction.
+	next := mineCandidateBlock(t, c, minerPKH,
+		NewCoinbase(4, SubsidyAt(4), minerPKH, "confirmations-advance"))
+	if err := c.AcceptBlock(next); err != nil {
+		t.Fatalf("AcceptBlock confirmation fixture: %v", err)
+	}
+	advanced, err := c.ConfirmedOutputsForPKH(alicePKH)
+	if err != nil {
+		t.Fatalf("ConfirmedOutputsForPKH advanced: %v", err)
+	}
+	if advanced.Tip.Hash != next.Header.ID() || advanced.Tip.Height != 4 {
+		t.Fatalf("advanced tip = %+v", advanced.Tip)
+	}
+	for i, output := range advanced.Outputs {
+		if output.Confirmations != 2 {
+			t.Fatalf("advanced output %d confirmations = %d, want 2", i, output.Confirmations)
+		}
+	}
+	stillMempool, err := c.LookupTransaction(mempoolSpend.ID())
+	if err != nil {
+		t.Fatalf("LookupTransaction retained mempool: %v", err)
+	}
+	if stillMempool.Status != TransactionStatusMempool {
+		t.Fatalf("mempool-only transaction status after unrelated block = %q", stillMempool.Status)
+	}
+}
+
+func TestChainQueriesFailClosedWithoutMutatingInconsistentCanonicalState(t *testing.T) {
+	queries := []struct {
+		name string
+		run  func(*Chain) error
+	}{
+		{
+			name: "tip",
+			run: func(c *Chain) error {
+				_, err := c.CanonicalTipSnapshot()
+				return err
+			},
+		},
+		{
+			name: "block",
+			run: func(c *Chain) error {
+				_, err := c.LookupBlock(SHA256d([]byte("missing-under-corruption")))
+				return err
+			},
+		},
+		{
+			name: "transaction",
+			run: func(c *Chain) error {
+				_, err := c.LookupTransaction(SHA256d([]byte("unknown-under-corruption")))
+				return err
+			},
+		},
+		{
+			name: "address",
+			run: func(c *Chain) error {
+				_, err := c.ConfirmedOutputsForPKH([20]byte{1})
+				return err
+			},
+		},
+	}
+	corruptions := []struct {
+		name    string
+		corrupt func(*Chain)
+	}{
+		{
+			name: "missing canonical index linkage",
+			corrupt: func(c *Chain) {
+				delete(c.index, c.mainIDs[0])
+			},
+		},
+		{
+			name: "detached tip metadata",
+			corrupt: func(c *Chain) {
+				detached := *c.tip
+				detached.cumWork = new(big.Int).Set(c.tip.cumWork)
+				c.tip = &detached
+			},
+		},
+	}
+
+	for _, corruption := range corruptions {
+		for _, query := range queries {
+			t.Run(corruption.name+"/"+query.name, func(t *testing.T) {
+				c := testChain(t)
+				_, pkh := keyAndPKH(t)
+				mineOne(t, c, pkh)
+				c.mu.Lock()
+				corruption.corrupt(c)
+				beforeTip := c.tip
+				beforeMain := append([]Hash32(nil), c.mainIDs...)
+				beforeIndex := make(map[Hash32]*blockIndex, len(c.index))
+				for id, bi := range c.index {
+					beforeIndex[id] = bi
+				}
+				c.mu.Unlock()
+
+				if err := query.run(c); err == nil {
+					t.Fatal("query accepted inconsistent canonical state")
+				}
+
+				c.mu.RLock()
+				if c.tip != beforeTip || !reflect.DeepEqual(c.mainIDs, beforeMain) ||
+					!reflect.DeepEqual(c.index, beforeIndex) {
+					c.mu.RUnlock()
+					t.Fatal("failed query mutated inconsistent chain state")
+				}
+				c.mu.RUnlock()
+			})
+		}
+	}
+}
+
+func TestHistoryQueriesRejectCorruptedIntermediateCanonicalSequence(t *testing.T) {
+	type fixture struct {
+		chain          *Chain
+		canonicalBlock Hash32
+		sideBlock      Hash32
+		address        [20]byte
+	}
+	newFixture := func(t *testing.T) fixture {
+		t.Helper()
+		chain := testChain(t)
+		_, canonicalPKH := keyAndPKH(t)
+		first := mineOne(t, chain, canonicalPKH)
+		mineOne(t, chain, canonicalPKH)
+		mineOne(t, chain, canonicalPKH)
+
+		fork := testChain(t)
+		_, sidePKH := keyAndPKH(t)
+		side := mineOne(t, fork, sidePKH)
+		if err := chain.AcceptBlock(side); err != nil {
+			t.Fatalf("accept side fixture: %v", err)
+		}
+		return fixture{
+			chain:          chain,
+			canonicalBlock: first.Header.ID(),
+			sideBlock:      side.Header.ID(),
+			address:        canonicalPKH,
+		}
+	}
+
+	corruptions := []struct {
+		name    string
+		corrupt func(fixture)
+	}{
+		{
+			name: "spliced intermediate parent",
+			corrupt: func(f fixture) {
+				f.chain.mainIDs[1] = f.sideBlock
+			},
+		},
+		{
+			name: "mutated transaction merkle mismatch",
+			corrupt: func(f fixture) {
+				f.chain.index[f.chain.mainIDs[1]].block.Txs[0].Outs[0].Value++
+			},
+		},
+		{
+			name: "intermediate cumulative work mismatch",
+			corrupt: func(f fixture) {
+				bi := f.chain.index[f.chain.mainIDs[1]]
+				bi.cumWork = new(big.Int).Add(bi.cumWork, big.NewInt(1))
+			},
+		},
+	}
+
+	for _, corruption := range corruptions {
+		t.Run(corruption.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.chain.mu.Lock()
+			corruption.corrupt(f)
+			f.chain.mu.Unlock()
+
+			if _, err := f.chain.LookupBlock(f.canonicalBlock); err == nil {
+				t.Fatal("block lookup certified corrupted canonical sequence")
+			}
+			if _, err := f.chain.LookupTransaction(SHA256d([]byte(t.Name()))); err == nil {
+				t.Fatal("transaction lookup certified corrupted canonical sequence")
+			}
+			if _, err := f.chain.ConfirmedOutputsForPKH(f.address); err == nil {
+				t.Fatal("address history certified corrupted canonical sequence")
+			}
+			if _, err := f.chain.canonicalMainSnapshot(); err == nil {
+				t.Fatal("Store snapshot certified corrupted canonical sequence")
+			}
+		})
+	}
+}
+
+func TestConfirmedOutputsForPKHGenesisAndCoinbaseMaturityBoundary(t *testing.T) {
+	c := testChain(t)
+	genesis := GenesisBlock(&RegTest)
+	genesisID := genesis.Txs[0].ID()
+
+	zeroAtGenesis, err := c.ConfirmedOutputsForPKH([20]byte{})
+	if err != nil {
+		t.Fatalf("ConfirmedOutputsForPKH genesis: %v", err)
+	}
+	if len(zeroAtGenesis.Outputs) != 1 {
+		t.Fatalf("all-zero PKH output count = %d, want genesis output", len(zeroAtGenesis.Outputs))
+	}
+	genesisOutput := zeroAtGenesis.Outputs[0]
+	if genesisOutput.TxID != genesisID || genesisOutput.TransactionIndex != 0 ||
+		genesisOutput.Vout != 0 || genesisOutput.BlockHash != genesis.Header.ID() ||
+		genesisOutput.BlockHeight != 0 || genesisOutput.Confirmations != 1 ||
+		!genesisOutput.Coinbase || genesisOutput.Mature {
+		t.Fatalf("genesis output = %+v", genesisOutput)
+	}
+
+	_, minerPKH := keyAndPKH(t)
+	first := mineOne(t, c, minerPKH)
+	minerAtOne, err := c.ConfirmedOutputsForPKH(minerPKH)
+	if err != nil {
+		t.Fatalf("ConfirmedOutputsForPKH height one: %v", err)
+	}
+	firstOutput := findConfirmedOutput(t, minerAtOne, first.Txs[0].ID(), 0)
+	if firstOutput.Confirmations != RegTest.CoinbaseMaturity-1 || firstOutput.Mature {
+		t.Fatalf("coinbase before maturity boundary = %+v", firstOutput)
+	}
+	zeroAtOne, err := c.ConfirmedOutputsForPKH([20]byte{})
+	if err != nil {
+		t.Fatalf("ConfirmedOutputsForPKH mature genesis: %v", err)
+	}
+	if got := findConfirmedOutput(t, zeroAtOne, genesisID, 0); got.Confirmations != RegTest.CoinbaseMaturity || !got.Mature {
+		t.Fatalf("genesis at maturity boundary = %+v", got)
+	}
+
+	mineOne(t, c, minerPKH)
+	minerAtTwo, err := c.ConfirmedOutputsForPKH(minerPKH)
+	if err != nil {
+		t.Fatalf("ConfirmedOutputsForPKH height two: %v", err)
+	}
+	firstOutput = findConfirmedOutput(t, minerAtTwo, first.Txs[0].ID(), 0)
+	if firstOutput.Confirmations != RegTest.CoinbaseMaturity || !firstOutput.Mature {
+		t.Fatalf("coinbase at maturity boundary = %+v", firstOutput)
+	}
+}
+
+func TestQuerySnapshotsRemainAtomicAcrossReorg(t *testing.T) {
+	c := testChain(t)
+	_, oldPKH := keyAndPKH(t)
+	oldBlock := mineOne(t, c, oldPKH)
+	oldTip := oldBlock.Header.ID()
+	oldTxID := oldBlock.Txs[0].ID()
+
+	fork := testChain(t)
+	_, newPKH := keyAndPKH(t)
+	newOne := mineOne(t, fork, newPKH)
+	newTwo := mineOne(t, fork, newPKH)
+	newTip := newTwo.Header.ID()
+	if err := c.AcceptBlock(newOne); err != nil {
+		t.Fatalf("accept equal-work fork block: %v", err)
+	}
+
+	assertAtomic := func() {
+		t.Helper()
+		address, err := c.ConfirmedOutputsForPKH(oldPKH)
+		if err != nil {
+			t.Fatalf("address query during reorg: %v", err)
+		}
+		switch address.Tip.Hash {
+		case oldTip:
+			if address.Tip.Height != 1 || len(address.Outputs) != 1 ||
+				address.Outputs[0].BlockHash != oldTip {
+				t.Fatalf("address query mixed old tip with another branch: %+v", address)
+			}
+		case newTip:
+			if address.Tip.Height != 2 || len(address.Outputs) != 0 {
+				t.Fatalf("address query mixed new tip with old output: %+v", address)
+			}
+		default:
+			t.Fatalf("address query returned unexpected tip %x", address.Tip.Hash)
+		}
+
+		block, err := c.LookupBlock(oldTip)
+		if err != nil {
+			t.Fatalf("block query during reorg: %v", err)
+		}
+		if !block.Found || block.Height != 1 {
+			t.Fatalf("known old block disappeared during reorg: %+v", block)
+		}
+		if block.Tip.Hash == oldTip && !block.Canonical {
+			t.Fatalf("old tip lookup marked noncanonical against itself: %+v", block)
+		}
+		if block.Tip.Hash == newTip && block.Canonical {
+			t.Fatalf("old block lookup mixed new tip with old canonicality: %+v", block)
+		}
+		if block.Tip.Hash != oldTip && block.Tip.Hash != newTip {
+			t.Fatalf("block query returned unexpected tip %x", block.Tip.Hash)
+		}
+
+		tx, err := c.LookupTransaction(oldTxID)
+		if err != nil {
+			t.Fatalf("transaction query during reorg: %v", err)
+		}
+		if tx.Tip.Hash == oldTip && (tx.Status != TransactionStatusConfirmed || tx.BlockHash != oldTip) {
+			t.Fatalf("transaction query mixed old tip and status: %+v", tx)
+		}
+		if tx.Tip.Hash == newTip && tx.Status != TransactionStatusUnknown {
+			t.Fatalf("transaction query mixed new tip and old confirmation: %+v", tx)
+		}
+		if tx.Tip.Hash != oldTip && tx.Tip.Hash != newTip {
+			t.Fatalf("transaction query returned unexpected tip %x", tx.Tip.Hash)
+		}
+	}
+
+	assertAtomic()
+	done := make(chan error, 1)
+	go func() { done <- c.AcceptBlock(newTwo) }()
+	for {
+		assertAtomic()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("reorg: %v", err)
+			}
+			assertAtomic()
+			return
+		default:
+		}
+	}
+}
+
+func TestLookupBlockReportsTallerLowerWorkSideChainHeight(t *testing.T) {
+	main := testChain(t)
+	fork := testChain(t)
+	_, mainPKH := keyAndPKH(t)
+	_, forkPKH := keyAndPKH(t)
+	mainTime := time.Now().Unix() - 10
+	for range 17 {
+		mineOneAt(t, main, mainPKH, mainTime)
+	}
+
+	forkBaseTime := time.Now().Unix() - 100
+	forkBlocks := make([]*Block, 0, 20)
+	for height := int64(1); height <= 20; height++ {
+		forkBlocks = append(forkBlocks, mineOneAt(t, fork, forkPKH, forkBaseTime+height))
+	}
+	for i, block := range forkBlocks {
+		if err := main.AcceptBlock(block); err != nil {
+			t.Fatalf("accept lower-work side block %d: %v", i+1, err)
+		}
+	}
+
+	tip, err := main.CanonicalTipSnapshot()
+	if err != nil {
+		t.Fatalf("CanonicalTipSnapshot: %v", err)
+	}
+	if tip.Height != 17 {
+		t.Fatalf("lower-work fork unexpectedly replaced canonical tip at height %d", tip.Height)
+	}
+	sideTip := forkBlocks[len(forkBlocks)-1]
+	lookup, err := main.LookupBlock(sideTip.Header.ID())
+	if err != nil {
+		t.Fatalf("LookupBlock taller side chain: %v", err)
+	}
+	if !lookup.Found || lookup.Canonical || lookup.Height != 20 || lookup.Height <= lookup.Tip.Height {
+		t.Fatalf("taller lower-work side-chain lookup = %+v", lookup)
+	}
+}
+
+func findConfirmedOutput(
+	t *testing.T,
+	snapshot AddressOutputSnapshot,
+	txid Hash32,
+	vout uint32,
+) ConfirmedAddressOutput {
+	t.Helper()
+	for _, output := range snapshot.Outputs {
+		if output.TxID == txid && output.Vout == vout {
+			return output
+		}
+	}
+	t.Fatalf("missing confirmed output %x:%d", txid, vout)
+	return ConfirmedAddressOutput{}
+}
+
+func mineOneAt(t *testing.T, c *Chain, pkh [20]byte, unixTime int64) *Block {
+	t.Helper()
+	template := BuildBlockTemplate(c, pkh, "timed-test")
+	template.Header.Time = unixTime
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	result := Mine(ctx, c, template, 4)
+	if result.Block == nil {
+		t.Fatal("timed mining fixture timed out")
+	}
+	if err := c.AcceptBlock(result.Block); err != nil {
+		t.Fatalf("AcceptBlock timed fixture: %v", err)
+	}
+	return result.Block
 }
 
 func cloneTxMap(src map[Hash32]*Tx) map[Hash32]*Tx {
