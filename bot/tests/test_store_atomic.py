@@ -138,11 +138,71 @@ class StoreAtomicTests(unittest.TestCase):
             now=now,
         )
 
+    def common_observation_tip(self) -> tuple[str, int]:
+        with closing(self.store.connect()) as conn:
+            watched = conn.execute(
+                """
+                SELECT DISTINCT deposit_addr FROM orders
+                WHERE deposit_addr IS NOT NULL
+                """
+            ).fetchall()
+            latest = conn.execute(
+                """
+                SELECT s.tip_hash,s.tip_height
+                FROM deposit_scans s
+                WHERE s.scan_id=(
+                  SELECT MAX(candidate.scan_id) FROM deposit_scans candidate
+                  WHERE candidate.network=? AND candidate.address=s.address
+                )
+                  AND s.network=? AND s.address IN (
+                    SELECT deposit_addr FROM orders WHERE deposit_addr IS NOT NULL
+                  )
+                """,
+                (self.NETWORK, self.NETWORK),
+            ).fetchall()
+        if len(latest) != len(watched) or not latest:
+            raise AssertionError("test mutation lacks a complete watched-address tip")
+        tips = {(row["tip_hash"], row["tip_height"]) for row in latest}
+        if len(tips) != 1:
+            raise AssertionError("test mutation lacks one common watched-address tip")
+        return next(iter(tips))
+
+    def mark_transfer_broadcast(self, **values: object):
+        tip_hash, tip_height = self.common_observation_tip()
+        return Store.mark_transfer_broadcast(
+            self.store,
+            expected_tip_hash=tip_hash,
+            expected_tip_height=tip_height,
+            **values,
+        )
+
+    def mark_transfer_uncertain(self, **values: object):
+        tip_hash, tip_height = self.common_observation_tip()
+        return Store.mark_transfer_uncertain(
+            self.store,
+            expected_tip_hash=tip_hash,
+            expected_tip_height=tip_height,
+            **values,
+        )
+
+    def mark_transfer_confirmed(self, **values: object):
+        tip_hash, tip_height = self.common_observation_tip()
+        return Store.mark_transfer_confirmed(
+            self.store,
+            expected_tip_hash=tip_hash,
+            expected_tip_height=tip_height,
+            **values,
+        )
+
     def fund(self, order_id: int, *, amount: int = 117, number: int = 1) -> None:
         order = self.store.get_order(order_id=order_id)
         assert order is not None
         self.reconcile(
-            [self.snapshot(order["deposit_addr"], [self.output(number, amount)], tip_number=1)],
+            [
+                self.snapshot(
+                    order["deposit_addr"], [self.output(number, amount)], tip_number=1
+                )
+            ],
             tip_number=1,
         )
 
@@ -187,7 +247,9 @@ class StoreAtomicTests(unittest.TestCase):
                 (order_id,),
             ).fetchall()
             self.assertEqual([tuple(row) for row in rows], [(50, 50, 0), (67, 67, 0)])
-            scan_count = conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0]
+            scan_count = conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[
+                0
+            ]
 
         replay = self.reconcile(
             [self.snapshot("deposit-7", [first, second], tip_number=1)],
@@ -196,8 +258,13 @@ class StoreAtomicTests(unittest.TestCase):
         )
         self.assertTrue(replay.healthy)
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM deposit_credits").fetchone()[0], 2)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0], scan_count)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM deposit_credits").fetchone()[0], 2
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0],
+                scan_count,
+            )
 
         other_id = self.create_sell(maker_id=9, address="deposit-9", now=202)
         with self.assertRaises(AccountingInvariantError):
@@ -224,7 +291,9 @@ class StoreAtomicTests(unittest.TestCase):
             scans = conn.execute(
                 "SELECT scan_id,tip_hash FROM deposit_scans ORDER BY scan_id"
             ).fetchall()
-        self.assertEqual([row[1] for row in scans], [self.h(11), self.h(12), self.h(11)])
+        self.assertEqual(
+            [row[1] for row in scans], [self.h(11), self.h(12), self.h(11)]
+        )
         self.assertEqual([row[0] for row in scans], sorted(row[0] for row in scans))
 
         contradictory = dict(output)
@@ -236,23 +305,34 @@ class StoreAtomicTests(unittest.TestCase):
                 now=203,
             )
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0], 3)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0], 3
+            )
 
-    def test_provisional_coinbase_and_precredit_disappearance_never_create_liability(self):
+    def test_provisional_coinbase_and_precredit_disappearance_never_create_liability(
+        self,
+    ):
         order_id = self.create_sell()
         provisional = self.output(1, 200, confirmations=5, block_height=126)
         immature = self.output(
             2, 300, confirmations=99, coinbase=True, mature=False, block_height=32
         )
         result = self.reconcile(
-            [self.snapshot("deposit-7", [provisional, immature], tip_number=1, tip_height=130)],
+            [
+                self.snapshot(
+                    "deposit-7", [provisional, immature], tip_number=1, tip_height=130
+                )
+            ],
             tip_number=1,
             tip_height=130,
         )
         self.assertTrue(result.healthy)
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 0)
         self.assertEqual(self.store.provisional_restricted_units(), 200)
-        self.assertEqual(result.restricted_outpoints, ((provisional["txid"], provisional["vout"], 200),))
+        self.assertEqual(
+            result.restricted_outpoints,
+            ((provisional["txid"], provisional["vout"], 200),),
+        )
 
         self.reconcile(
             [self.snapshot("deposit-7", [], tip_number=2, tip_height=131)],
@@ -329,9 +409,13 @@ class StoreAtomicTests(unittest.TestCase):
         assert order is not None
         self.assertEqual(order["state"], "awaiting_deposit")
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM deposit_credits").fetchone()[0], 1)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM deposit_credits").fetchone()[0], 1
+            )
 
-    def test_all_address_barrier_rejects_incomplete_mixed_and_racing_sets_atomically(self):
+    def test_all_address_barrier_rejects_incomplete_mixed_and_racing_sets_atomically(
+        self,
+    ):
         self.create_sell()
         self.create_sell(maker_id=9, address="deposit-9")
         snapshots = [
@@ -361,7 +445,9 @@ class StoreAtomicTests(unittest.TestCase):
                 now=201,
             )
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0], 2)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0], 2
+            )
 
     def test_store_network_is_configured_and_cross_network_evidence_fails_health(self):
         order_id = self.create_sell()
@@ -380,7 +466,9 @@ class StoreAtomicTests(unittest.TestCase):
                 now=200,
             )
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0], 0)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0], 0
+            )
             scan_id = conn.execute(
                 """
                 INSERT INTO deposit_scans(network,address,tip_hash,tip_height,observed_at)
@@ -424,16 +512,14 @@ class StoreAtomicTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(AccountingInvariantError, "maturity"):
             self.reconcile(
-                [
-                    self.snapshot(
-                        "deposit-7", [early], tip_number=2, tip_height=130
-                    )
-                ],
+                [self.snapshot("deposit-7", [early], tip_number=2, tip_height=130)],
                 tip_number=2,
                 tip_height=130,
             )
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0], 0)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0], 0
+            )
 
     def test_customer_payout_to_same_or_cross_escrow_address_is_atomic_error(self):
         order_id = self.create_sell()
@@ -449,25 +535,39 @@ class StoreAtomicTests(unittest.TestCase):
         with self.assertRaisesRegex(AccountingInvariantError, "escrow deposit"):
             self.store.record_confirmation(order_id=order_id, actor_id=8, now=221)
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], before[0])
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], before[0]
+            )
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0],
                 before[1] + 1,
             )
-            order = conn.execute("SELECT * FROM orders WHERE order_id=?", (order_id,)).fetchone()
+            order = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
             self.assertEqual((order["buyer_confirmed"], order["state"]), (0, "matched"))
 
         other_id = self.create_sell(maker_id=9, address="deposit-9", now=222)
         self.assertGreater(other_id, order_id)
         with closing(self.store.connect()) as conn:
             conn.execute("UPDATE users SET wallet_addr='deposit-9' WHERE user_id=8")
-            before_transfer = conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0]
-            before_audit = conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0]
+            before_transfer = conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[
+                0
+            ]
+            before_audit = conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[
+                0
+            ]
         with self.assertRaisesRegex(AccountingInvariantError, "escrow deposit"):
             self.store.record_confirmation(order_id=order_id, actor_id=8, now=223)
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], before_transfer)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], before_audit)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0],
+                before_transfer,
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0],
+                before_audit,
+            )
 
     @staticmethod
     def sha256d_hex(raw_hex: str) -> str:
@@ -507,13 +607,13 @@ class StoreAtomicTests(unittest.TestCase):
     def confirm_claim(self, claim, *, raw_hex: str = "01020304", now: int = 303):
         self.attach_claim(claim, raw_hex=raw_hex, now=now - 2)
         txid = self.sha256d_hex(raw_hex)
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             observed_status="mempool",
             now=now - 1,
         )
-        return self.store.mark_transfer_confirmed(
+        return self.mark_transfer_confirmed(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             confirmed_block_hash=self.h(801),
@@ -531,14 +631,14 @@ class StoreAtomicTests(unittest.TestCase):
         self.attach_claim(claim)
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 117)
         txid = self.sha256d_hex("01020304")
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             observed_status="mempool",
             now=302,
         )
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 117)
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=claim.transfer_id,
             expected_state="broadcast",
             expected_txid=txid,
@@ -546,7 +646,7 @@ class StoreAtomicTests(unittest.TestCase):
             now=303,
         )
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 117)
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             confirmed_block_hash=self.h(801),
@@ -557,7 +657,7 @@ class StoreAtomicTests(unittest.TestCase):
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 0)
         self.assertEqual(self.store.earned_fee_units(), 7)
 
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=claim.transfer_id,
             expected_state="confirmed",
             expected_txid=txid,
@@ -566,7 +666,7 @@ class StoreAtomicTests(unittest.TestCase):
         )
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 117)
         self.assertEqual(self.store.earned_fee_units(), 0)
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             confirmed_block_hash=self.h(802),
@@ -577,7 +677,9 @@ class StoreAtomicTests(unittest.TestCase):
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 0)
         self.assertEqual(self.store.earned_fee_units(), 7)
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 1)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 1
+            )
 
     def test_excess_release_then_recovery_confirmation_discharges_exact_137(self):
         order_id = self.create_sell()
@@ -591,7 +693,9 @@ class StoreAtomicTests(unittest.TestCase):
             order_id=order_id, kind="recovery_refund", now=304
         )
         self.assertIsNotNone(recovery)
-        self.assertEqual((recovery["amount_units"], recovery["network_fee_units"]), (10, 10))
+        self.assertEqual(
+            (recovery["amount_units"], recovery["network_fee_units"]), (10, 10)
+        )
         order = self.store.get_order(order_id=order_id)
         assert order is not None
         self.assertEqual(order["state"], "completed")
@@ -625,7 +729,7 @@ class StoreAtomicTests(unittest.TestCase):
             now=305,
         )
         main_txid = self.sha256d_hex("01020304")
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=main_claim.transfer_id,
             expected_state="confirmed",
             expected_txid=main_txid,
@@ -642,7 +746,7 @@ class StoreAtomicTests(unittest.TestCase):
         self.assertEqual(
             self.store.get_order(order_id=order_id)["state"], "transfer_uncertain"
         )
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=main_claim.transfer_id,
             observed_txid=main_txid,
             confirmed_block_hash=self.h(982),
@@ -651,9 +755,7 @@ class StoreAtomicTests(unittest.TestCase):
             now=308,
         )
         self.assertEqual(self.store.get_order(order_id=order_id)["state"], "completed")
-        self.store.requeue_failed_safe(
-            transfer_id=recovery_claim.transfer_id, now=309
-        )
+        self.store.requeue_failed_safe(transfer_id=recovery_claim.transfer_id, now=309)
         recovery_claim = self.store.claim_next_transfer(
             expected_tip_hash=self.h(1),
             expected_tip_height=10,
@@ -662,13 +764,13 @@ class StoreAtomicTests(unittest.TestCase):
         )
         self.attach_claim(recovery_claim, raw_hex="d1d2d3d4", now=311)
         recovery_txid = self.sha256d_hex("d1d2d3d4")
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=recovery_claim.transfer_id,
             observed_txid=recovery_txid,
             observed_status="mempool",
             now=312,
         )
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=main_claim.transfer_id,
             expected_state="confirmed",
             expected_txid=main_txid,
@@ -678,7 +780,7 @@ class StoreAtomicTests(unittest.TestCase):
         self.assertEqual(
             self.store.get_order(order_id=order_id)["state"], "transfer_uncertain"
         )
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=recovery_claim.transfer_id,
             observed_txid=recovery_txid,
             confirmed_block_hash=self.h(983),
@@ -690,7 +792,7 @@ class StoreAtomicTests(unittest.TestCase):
             self.store.get_order(order_id=order_id)["state"], "transfer_uncertain"
         )
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 117)
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=main_claim.transfer_id,
             observed_txid=main_txid,
             confirmed_block_hash=self.h(984),
@@ -727,7 +829,9 @@ class StoreAtomicTests(unittest.TestCase):
                 "SELECT main_units,recovery_units,recovery_reason FROM deposit_credits"
             ).fetchone()
             self.assertEqual(tuple(credit), (0, 10, "cancelled_partial"))
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 0)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 0
+            )
 
         partial_at_tip_2 = dict(partial)
         partial_at_tip_2["confirmations"] = 7
@@ -749,7 +853,9 @@ class StoreAtomicTests(unittest.TestCase):
             transfer = conn.execute(
                 "SELECT * FROM transfers WHERE kind='recovery_refund'"
             ).fetchone()
-            self.assertEqual((transfer["amount_units"], transfer["network_fee_units"]), (1, 10))
+            self.assertEqual(
+                (transfer["amount_units"], transfer["network_fee_units"]), (1, 10)
+            )
             self.assertEqual(
                 conn.execute(
                     "SELECT COALESCE(SUM(units),0) FROM transfer_credit_allocations "
@@ -767,13 +873,13 @@ class StoreAtomicTests(unittest.TestCase):
         self.assertIsNotNone(claim)
         self.attach_claim(claim, raw_hex="c1c2c3c4", now=204)
         txid = self.sha256d_hex("c1c2c3c4")
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             observed_status="mempool",
             now=205,
         )
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             confirmed_block_hash=self.h(980),
@@ -783,7 +889,7 @@ class StoreAtomicTests(unittest.TestCase):
         )
         self.assertEqual(self.store.get_order(order_id=order_id)["state"], "refunded")
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 0)
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=claim.transfer_id,
             expected_state="confirmed",
             expected_txid=txid,
@@ -794,14 +900,14 @@ class StoreAtomicTests(unittest.TestCase):
             self.store.get_order(order_id=order_id)["state"], "transfer_uncertain"
         )
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 11)
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             observed_status="mempool",
             now=208,
         )
         self.assertEqual(self.store.get_order(order_id=order_id)["state"], "broadcast")
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             confirmed_block_hash=self.h(981),
@@ -845,12 +951,16 @@ class StoreAtomicTests(unittest.TestCase):
             {"live_tip_hash": self.h(901)},
             {"wallet_snapshot_hash": self.h(902)},
         ):
-            with self.subTest(override=override), self.assertRaises(AccountingInvariantError):
+            with (
+                self.subTest(override=override),
+                self.assertRaises(AccountingInvariantError),
+            ):
                 self.store.attach_signed_transfer(**(base | override))
         with closing(self.store.connect()) as conn:
             self.assertEqual(
                 conn.execute(
-                    "SELECT state FROM transfers WHERE transfer_id=?", (claim.transfer_id,)
+                    "SELECT state FROM transfers WHERE transfer_id=?",
+                    (claim.transfer_id,),
                 ).fetchone()[0],
                 "reserved",
             )
@@ -882,7 +992,9 @@ class StoreAtomicTests(unittest.TestCase):
                 prepared_tip_height=claim.expected_tip_height,
             )
 
-    def test_subprocess_termination_around_attach_commit_reopens_as_reserved_or_prepared(self):
+    def test_subprocess_termination_around_attach_commit_reopens_as_reserved_or_prepared(
+        self,
+    ):
         order_id = self.create_sell()
         self.fund(order_id)
         self.match_sell(order_id)
@@ -945,7 +1057,11 @@ store.attach_signed_transfer(
             stderr=subprocess.DEVNULL,
         )
         deadline = time.monotonic() + 10
-        while not signal.exists() and process.poll() is None and time.monotonic() < deadline:
+        while (
+            not signal.exists()
+            and process.poll() is None
+            and time.monotonic() < deadline
+        ):
             time.sleep(0.005)
         self.assertTrue(signal.exists(), "attach child never reached commit boundary")
         time.sleep(random.uniform(0.005, 0.105))
@@ -966,7 +1082,10 @@ store.attach_signed_transfer(
             self.assertEqual(row["state"], "reserved")
             self.assertIsNone(row["signed_tx_hex"])
         else:
-            self.assertEqual((row["state"], row["txid"], row["signed_tx_hex"]), ("prepared", txid, raw_hex))
+            self.assertEqual(
+                (row["state"], row["txid"], row["signed_tx_hex"]),
+                ("prepared", txid, raw_hex),
+            )
 
     def test_stale_reservation_token_cannot_attach_fail_or_recover_later_attempt(self):
         order_id = self.create_sell()
@@ -1038,11 +1157,7 @@ store.attach_signed_transfer(
             network=self.NETWORK,
             expected_tip_hash=self.h(1),
             expected_tip_height=10,
-            snapshots=[
-                self.snapshot(
-                    "deposit-7", [self.output(1, 117)], tip_number=1
-                )
-            ],
+            snapshots=[self.snapshot("deposit-7", [self.output(1, 117)], tip_number=1)],
             final_tip_hash=self.h(1),
             final_tip_height=10,
             credit_depth=6,
@@ -1075,7 +1190,7 @@ store.attach_signed_transfer(
         self.confirm_claim(claim, now=303)
         txid = self.sha256d_hex("01020304")
         with self.assertRaisesRegex(AccountingInvariantError, "stale"):
-            self.store.mark_transfer_uncertain(
+            self.mark_transfer_uncertain(
                 transfer_id=claim.transfer_id,
                 expected_state="prepared",
                 expected_txid=txid,
@@ -1102,8 +1217,16 @@ store.attach_signed_transfer(
                 "UPDATE orders SET state='cancelled',updated_at=301 WHERE order_id=?",
                 (recovery_order,),
             )
+        self.reconcile(
+            [
+                self.snapshot("deposit-7", [original], tip_number=1),
+                self.snapshot("uncertain-recovery-deposit", [], tip_number=1),
+            ],
+            tip_number=1,
+            now=302,
+        )
         txid = self.sha256d_hex("b1b2b3b4")
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=claim.transfer_id,
             expected_state="prepared",
             expected_txid=txid,
@@ -1132,9 +1255,7 @@ store.attach_signed_transfer(
         late_recovery = self.output(2, 11, confirmations=7)
         reconcile_result = self.reconcile(
             [
-                self.snapshot(
-                    "deposit-7", [original_two], tip_number=2, tip_height=11
-                ),
+                self.snapshot("deposit-7", [original_two], tip_number=2, tip_height=11),
                 self.snapshot(
                     "uncertain-recovery-deposit",
                     [late_recovery],
@@ -1148,9 +1269,7 @@ store.attach_signed_transfer(
         )
         self.assertFalse(reconcile_result.healthy)
         self.assertIn("uncertain_transfer", reconcile_result.health_issues)
-        self.assertEqual(
-            self.store.order_liability_units(order_id=recovery_order), 11
-        )
+        self.assertEqual(self.store.order_liability_units(order_id=recovery_order), 11)
         with closing(self.store.connect()) as conn:
             self.assertEqual(
                 conn.execute(
@@ -1158,7 +1277,7 @@ store.attach_signed_transfer(
                 ).fetchone()[0],
                 0,
             )
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             confirmed_block_hash=self.h(970),
@@ -1170,9 +1289,7 @@ store.attach_signed_transfer(
             order_id=recovery_order, kind="recovery_refund", now=306
         )
         self.assertIsNotNone(repaired_recovery)
-        new_id = self.create_sell(
-            maker_id=93, address="allowed-after-repair", now=307
-        )
+        new_id = self.create_sell(maker_id=93, address="allowed-after-repair", now=307)
         self.assertGreater(new_id, order_id)
 
     def earn_service_fee(self) -> tuple[int, object]:
@@ -1272,8 +1389,13 @@ store.attach_signed_transfer(
                 now=312,
             )
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], before[0])
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], before[1])
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], before[0]
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0],
+                before[1],
+            )
 
     def test_zero_percent_pilot_cannot_withdraw_unearned_fee(self):
         order_id = self.store.create_order(
@@ -1299,11 +1421,7 @@ store.attach_signed_transfer(
             )
         zero_credit = self.output(70, 110)
         self.reconcile(
-            [
-                self.snapshot(
-                    "zero-fee-deposit", [zero_credit], tip_number=1
-                )
-            ],
+            [self.snapshot("zero-fee-deposit", [zero_credit], tip_number=1)],
             tip_number=1,
         )
         self.add_user(71, wallet="zero-fee-buyer-wallet")
@@ -1369,7 +1487,7 @@ store.attach_signed_transfer(
 
         new_buy = self.create_buy(maker_id=90, now=315)
         earning_txid = self.sha256d_hex("01020304")
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=earning_claim.transfer_id,
             expected_state="confirmed",
             expected_txid=earning_txid,
@@ -1416,7 +1534,7 @@ store.attach_signed_transfer(
                 ),
                 intake_before,
             )
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=earning_claim.transfer_id,
             observed_txid=earning_txid,
             confirmed_block_hash=self.h(952),
@@ -1454,7 +1572,7 @@ store.attach_signed_transfer(
         )
         self.assertIsNotNone(reserved)
         earning_txid = self.sha256d_hex("01020304")
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=earning_claim.transfer_id,
             expected_state="confirmed",
             expected_txid=earning_txid,
@@ -1470,13 +1588,13 @@ store.attach_signed_transfer(
             error_text="prepare child was terminated",
             now=314,
         )
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=earning_claim.transfer_id,
             observed_txid=earning_txid,
             observed_status="mempool",
             now=315,
         )
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=earning_claim.transfer_id,
             observed_txid=earning_txid,
             confirmed_block_hash=self.h(960),
@@ -1486,7 +1604,9 @@ store.attach_signed_transfer(
         )
         self.store.requeue_failed_safe(transfer_id=reserved.transfer_id, now=317)
 
-    def test_prepared_operation_becomes_uncertain_and_two_uncertain_rows_resolve_one_at_time(self):
+    def test_prepared_operation_becomes_uncertain_and_two_uncertain_rows_resolve_one_at_time(
+        self,
+    ):
         _, earning_claim = self.earn_service_fee()
         fee = self.store.queue_fee_withdrawal(
             operation_key="fee:prepared-race",
@@ -1496,6 +1616,7 @@ store.attach_signed_transfer(
             configured_admin_destination="admin-wallet",
             now=310,
         )
+        self.assertIsNotNone(fee)
         fee_claim = self.store.claim_next_transfer(
             expected_tip_hash=self.h(1),
             expected_tip_height=10,
@@ -1506,7 +1627,7 @@ store.attach_signed_transfer(
         self.attach_claim(fee_claim, raw_hex="71727374", now=312)
         earning_txid = self.sha256d_hex("01020304")
         fee_txid = self.sha256d_hex("71727374")
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=earning_claim.transfer_id,
             expected_state="confirmed",
             expected_txid=earning_txid,
@@ -1514,13 +1635,13 @@ store.attach_signed_transfer(
             now=313,
         )
         with self.assertRaises(AccountingInvariantError):
-            self.store.mark_transfer_broadcast(
+            self.mark_transfer_broadcast(
                 transfer_id=fee_claim.transfer_id,
                 observed_txid=fee_txid,
                 observed_status="mempool",
                 now=314,
             )
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=fee_claim.transfer_id,
             expected_state="prepared",
             expected_txid=fee_txid,
@@ -1532,13 +1653,13 @@ store.attach_signed_transfer(
             (fee_claim.transfer_id, fee_txid),
         ):
             with self.assertRaisesRegex(AccountingInvariantError, "another uncertain"):
-                self.store.mark_transfer_broadcast(
+                self.mark_transfer_broadcast(
                     transfer_id=transfer_id,
                     observed_txid=txid,
                     observed_status="mempool",
                     now=316,
                 )
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=fee_claim.transfer_id,
             observed_txid=fee_txid,
             confirmed_block_hash=self.h(961),
@@ -1546,13 +1667,13 @@ store.attach_signed_transfer(
             confirmations=1,
             now=317,
         )
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=earning_claim.transfer_id,
             observed_txid=earning_txid,
             observed_status="mempool",
             now=318,
         )
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=earning_claim.transfer_id,
             observed_txid=earning_txid,
             confirmed_block_hash=self.h(962),
@@ -1579,14 +1700,14 @@ store.attach_signed_transfer(
         )
         self.attach_claim(fee_claim, raw_hex="a1a2a3a4", now=312)
         fee_txid = self.sha256d_hex("a1a2a3a4")
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=fee_claim.transfer_id,
             observed_txid=fee_txid,
             observed_status="mempool",
             now=313,
         )
         earning_txid = self.sha256d_hex("01020304")
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=earning_claim.transfer_id,
             expected_state="confirmed",
             expected_txid=earning_txid,
@@ -1604,13 +1725,13 @@ store.attach_signed_transfer(
         with self.assertRaises(AccountingInvariantError):
             self.store.requeue_failed_safe(transfer_id=fee_claim.transfer_id, now=315)
         with self.assertRaisesRegex(AccountingInvariantError, "wallet lane"):
-            self.store.mark_transfer_broadcast(
+            self.mark_transfer_broadcast(
                 transfer_id=earning_claim.transfer_id,
                 observed_txid=earning_txid,
                 observed_status="mempool",
                 now=315,
             )
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=fee_claim.transfer_id,
             observed_txid=fee_txid,
             confirmed_block_hash=self.h(965),
@@ -1618,13 +1739,13 @@ store.attach_signed_transfer(
             confirmations=1,
             now=316,
         )
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=earning_claim.transfer_id,
             observed_txid=earning_txid,
             observed_status="mempool",
             now=317,
         )
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=earning_claim.transfer_id,
             observed_txid=earning_txid,
             confirmed_block_hash=self.h(966),
@@ -1670,7 +1791,7 @@ store.attach_signed_transfer(
                 transfer_id=claim.transfer_id, actor_id=99, now=315
             )
         txid = self.sha256d_hex("81828384")
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             observed_status="mempool",
@@ -1680,7 +1801,7 @@ store.attach_signed_transfer(
             self.store.cancel_failed_safe_fee_withdrawal(
                 transfer_id=claim.transfer_id, actor_id=99, now=317
             )
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=claim.transfer_id,
             expected_state="broadcast",
             expected_txid=txid,
@@ -1691,7 +1812,7 @@ store.attach_signed_transfer(
             self.store.cancel_failed_safe_fee_withdrawal(
                 transfer_id=claim.transfer_id, actor_id=99, now=319
             )
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=claim.transfer_id,
             observed_txid=txid,
             confirmed_block_hash=self.h(963),
@@ -1724,13 +1845,18 @@ store.attach_signed_transfer(
         self.assertEqual(order["state"], "recovery_hold")
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 1)
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 0)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 0
+            )
 
     def test_every_terminal_state_preserves_main_state_through_dust_and_topup(self):
         saved_store = self.store
         try:
             for terminal in ("completed", "refunded", "cancelled", "deposit_expired"):
-                with self.subTest(terminal=terminal), tempfile.TemporaryDirectory() as directory:
+                with (
+                    self.subTest(terminal=terminal),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
                     self.store = Store(Path(directory) / "terminal.db")
                     self.store.initialize()
                     order_id = self.create_sell()
@@ -1786,7 +1912,9 @@ store.attach_signed_transfer(
                     order = self.store.get_order(order_id=order_id)
                     assert order is not None
                     self.assertEqual(order["state"], terminal)
-                    self.assertEqual(self.store.order_liability_units(order_id=order_id), 10)
+                    self.assertEqual(
+                        self.store.order_liability_units(order_id=order_id), 10
+                    )
                     with closing(self.store.connect()) as conn:
                         self.assertEqual(
                             conn.execute(
@@ -1833,14 +1961,12 @@ store.attach_signed_transfer(
                         now=340,
                     )
                     self.assertIsNotNone(recovery_claim)
-                    self.attach_claim(
-                        recovery_claim, raw_hex="31323334", now=341
-                    )
+                    self.attach_claim(recovery_claim, raw_hex="31323334", now=341)
                     self.assertEqual(
                         self.store.get_order(order_id=order_id)["state"], terminal
                     )
                     recovery_txid = self.sha256d_hex("31323334")
-                    self.store.mark_transfer_broadcast(
+                    self.mark_transfer_broadcast(
                         transfer_id=recovery_claim.transfer_id,
                         observed_txid=recovery_txid,
                         observed_status="mempool",
@@ -1849,7 +1975,7 @@ store.attach_signed_transfer(
                     self.assertEqual(
                         self.store.get_order(order_id=order_id)["state"], terminal
                     )
-                    self.store.mark_transfer_uncertain(
+                    self.mark_transfer_uncertain(
                         transfer_id=recovery_claim.transfer_id,
                         expected_state="broadcast",
                         expected_txid=recovery_txid,
@@ -1859,7 +1985,7 @@ store.attach_signed_transfer(
                     self.assertEqual(
                         self.store.get_order(order_id=order_id)["state"], terminal
                     )
-                    self.store.mark_transfer_confirmed(
+                    self.mark_transfer_confirmed(
                         transfer_id=recovery_claim.transfer_id,
                         observed_txid=recovery_txid,
                         confirmed_block_hash=self.h(950),
@@ -1873,7 +1999,9 @@ store.attach_signed_transfer(
         finally:
             self.store = saved_store
 
-    def test_unsafe_auto_recovery_destination_commits_new_liability_before_reporting(self):
+    def test_unsafe_auto_recovery_destination_commits_new_liability_before_reporting(
+        self,
+    ):
         order_id = self.create_sell()
         with closing(self.store.connect()) as conn:
             conn.execute(
@@ -1890,10 +2018,18 @@ store.attach_signed_transfer(
         self.assertIn(order_id, result.recovery_order_ids)
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 11)
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0], 1)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM deposit_credits").fetchone()[0], 1)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 0)
-        with self.assertRaisesRegex(AccountingInvariantError, "unsafe_recovery_destination"):
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM deposit_scans").fetchone()[0], 1
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM deposit_credits").fetchone()[0], 1
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 0
+            )
+        with self.assertRaisesRegex(
+            AccountingInvariantError, "unsafe_recovery_destination"
+        ):
             self.store.queue_order_transfer(
                 order_id=order_id, kind="recovery_refund", now=201
             )
@@ -2074,7 +2210,9 @@ store.attach_signed_transfer(
                 now=201,
             )
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], before)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], before
+            )
 
     def test_public_audit_mutation_is_serialized_and_rolls_back_commit_failure(self):
         barrier = threading.Barrier(20)
@@ -2138,7 +2276,9 @@ store.attach_signed_transfer(
 
         def confirm(_: int):
             barrier.wait()
-            return self.store.record_confirmation(order_id=order_id, actor_id=7, now=221)
+            return self.store.record_confirmation(
+                order_id=order_id, actor_id=7, now=221
+            )
 
         with ThreadPoolExecutor(max_workers=20) as pool:
             list(pool.map(confirm, range(20)))
@@ -2174,7 +2314,9 @@ store.attach_signed_transfer(
         self.assertEqual(first["buyer_confirmed"], 1)
         self.assertEqual(replay["buyer_confirmed"], 1)
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 0)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 0
+            )
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0],
                 before + 1,
@@ -2194,14 +2336,20 @@ store.attach_signed_transfer(
         )
         self.assertEqual(replay, first)
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 1)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], audits)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM transfers").fetchone()[0], 1
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], audits
+            )
         with self.assertRaisesRegex(AccountingInvariantError, "different kind"):
             self.store.queue_order_transfer(
                 order_id=order_id, kind="resolve_buyer", actor_id=99, now=222
             )
 
-    def test_global_claim_race_has_one_winner_and_returns_barrier_and_attempt_token(self):
+    def test_global_claim_race_has_one_winner_and_returns_barrier_and_attempt_token(
+        self,
+    ):
         order_id = self.create_sell()
         self.fund(order_id)
         self.match_sell(order_id)
@@ -2269,7 +2417,9 @@ store.attach_signed_transfer(
             )
         )
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], audits)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], audits
+            )
             self.assertEqual(
                 conn.execute(
                     "SELECT state FROM transfers WHERE transfer_id=?",
@@ -2295,7 +2445,9 @@ store.attach_signed_transfer(
             )
         )
         with closing(self.store.connect()) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], audits)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], audits
+            )
             self.assertEqual(
                 conn.execute(
                     "SELECT state FROM transfers WHERE transfer_id=?",
@@ -2325,7 +2477,9 @@ store.attach_signed_transfer(
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["state"], "queued")
 
-    def test_claim_deficit_masked_by_provisional_funds_leaves_queue_and_audit_unchanged(self):
+    def test_claim_deficit_masked_by_provisional_funds_leaves_queue_and_audit_unchanged(
+        self,
+    ):
         order_id = self.create_sell()
         credited = self.output(1, 117)
         provisional = self.output(2, 10, confirmations=5, block_height=6)
@@ -2353,7 +2507,9 @@ store.attach_signed_transfer(
                 ).fetchone()[0],
                 "queued",
             )
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], audits)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], audits
+            )
 
     def test_wallet_solvency_reads_one_wal_snapshot_during_concurrent_reconcile(self):
         order_id = self.create_sell()
@@ -2415,7 +2571,7 @@ store.attach_signed_transfer(
         self.assertEqual(self.store.order_liability_units(order_id=order_id), 137)
 
     def test_final_wallet_snapshot_requires_exact_structure_hash_and_total(self):
-        order_id = self.create_sell()
+        self.create_sell()
         credited = self.output(1, 117)
         provisional = self.output(2, 10, confirmations=5, block_height=6)
         self.reconcile(

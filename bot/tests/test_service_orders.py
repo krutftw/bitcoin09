@@ -17,6 +17,7 @@ from bot.otc.explorer import (
     ConfirmedOutput,
     ExplorerProtocolError,
     Tip,
+    TransactionStatus,
 )
 from bot.otc.service import AuthorizationError, TradeService
 from bot.otc.store import AccountingInvariantError, Store
@@ -71,6 +72,7 @@ class FakeExplorer:
     def __init__(self) -> None:
         self.current_tip = Tip(h(900), 100)
         self.outputs_by_address: dict[str, tuple[ConfirmedOutput, ...]] = {}
+        self.transactions: dict[str, TransactionStatus] = {}
         self.batch_calls = 0
         self.lock = threading.Lock()
 
@@ -123,6 +125,28 @@ class FakeExplorer:
 
     def tip(self) -> Tip:
         return self.current_tip
+
+    def transaction(self, txid: str) -> TransactionStatus:
+        return self.transactions.get(
+            txid,
+            TransactionStatus(txid, "unknown", None, 0, self.current_tip),
+        )
+
+    def set_transaction(
+        self,
+        txid: str,
+        status: str,
+        *,
+        confirmations: int = 0,
+        block_number: int = 70_000,
+    ) -> None:
+        block = None
+        if status == "confirmed":
+            height = self.current_tip.height - confirmations + 1
+            block = BlockAnchor(h(block_number), height)
+        self.transactions[txid] = TransactionStatus(
+            txid, status, block, confirmations, self.current_tip
+        )
 
 
 class FakeWallet:
@@ -242,6 +266,7 @@ class FakeWallet:
             raise RuntimeError("broadcast test gate timed out")
         if error is not None:
             raise error
+        self.explorer.set_transaction(expected_txid, "mempool")
         return BroadcastResult(
             expected_txid,
             "mempool",
@@ -305,19 +330,81 @@ class TradeServiceOrderTests(unittest.TestCase):
             receive_address=address(30_000 + buyer_id),
         )
 
+    def common_observation_tip(self) -> tuple[str, int]:
+        with closing(self.store.connect()) as conn:
+            watched = conn.execute(
+                """
+                SELECT DISTINCT deposit_addr FROM orders
+                WHERE deposit_addr IS NOT NULL
+                """
+            ).fetchall()
+            latest = conn.execute(
+                """
+                SELECT s.tip_hash,s.tip_height
+                FROM deposit_scans s
+                WHERE s.scan_id=(
+                  SELECT MAX(candidate.scan_id) FROM deposit_scans candidate
+                  WHERE candidate.network=? AND candidate.address=s.address
+                )
+                  AND s.network=? AND s.address IN (
+                    SELECT deposit_addr FROM orders WHERE deposit_addr IS NOT NULL
+                  )
+                """,
+                (self.store.network, self.store.network),
+            ).fetchall()
+        if len(latest) != len(watched) or not latest:
+            raise AssertionError("test mutation lacks a complete watched-address tip")
+        tips = {(row["tip_hash"], row["tip_height"]) for row in latest}
+        if len(tips) != 1:
+            raise AssertionError("test mutation lacks one common watched-address tip")
+        return next(iter(tips))
+
+    def mark_transfer_broadcast(self, **values: object):
+        tip_hash, tip_height = self.common_observation_tip()
+        return Store.mark_transfer_broadcast(
+            self.store,
+            expected_tip_hash=tip_hash,
+            expected_tip_height=tip_height,
+            **values,
+        )
+
+    def mark_transfer_uncertain(self, **values: object):
+        tip_hash, tip_height = self.common_observation_tip()
+        return Store.mark_transfer_uncertain(
+            self.store,
+            expected_tip_hash=tip_hash,
+            expected_tip_height=tip_height,
+            **values,
+        )
+
+    def mark_transfer_confirmed(self, **values: object):
+        tip_hash, tip_height = self.common_observation_tip()
+        return Store.mark_transfer_confirmed(
+            self.store,
+            expected_tip_hash=tip_hash,
+            expected_tip_height=tip_height,
+            **values,
+        )
+
     def confirmed_then_prepared_transfers(self):
         first = self.accept_sell(self.fund(self.create_sell(seller_id=50)), buyer_id=51)
         self.service.confirm_sent(first.order_id, actor_id=51)
         self.service.confirm_received(first.order_id, actor_id=50)
         self.service.mine()
         first_transfer = self.store.get_order_transfer(order_id=first.order_id)
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=first_transfer["transfer_id"],
             observed_txid=first_transfer["txid"],
             confirmed_block_hash=h(90_001),
             confirmed_block_height=99,
             confirmations=2,
             now=self.clock(),
+        )
+        self.explorer.set_transaction(
+            first_transfer["txid"],
+            "confirmed",
+            confirmations=2,
+            block_number=90_001,
         )
 
         second = self.accept_sell(
@@ -369,13 +456,19 @@ class TradeServiceOrderTests(unittest.TestCase):
         fee_service.confirm_received(matched.order_id, actor_id=70)
         fee_service.mine()
         release = self.store.get_order_transfer(order_id=order.order_id)
-        self.store.mark_transfer_confirmed(
+        self.mark_transfer_confirmed(
             transfer_id=release["transfer_id"],
             observed_txid=release["txid"],
             confirmed_block_hash=h(95_001),
             confirmed_block_height=99,
             confirmations=2,
             now=self.clock(),
+        )
+        self.explorer.set_transaction(
+            release["txid"],
+            "confirmed",
+            confirmations=2,
+            block_number=95_001,
         )
         destination = address(40_000)
         withdrawal = self.store.queue_fee_withdrawal(
@@ -801,7 +894,7 @@ class TradeServiceOrderTests(unittest.TestCase):
     ) -> None:
         first_transfer, second_transfer = self.confirmed_then_prepared_transfers()
 
-        self.store.mark_transfer_uncertain(
+        self.mark_transfer_uncertain(
             transfer_id=first_transfer["transfer_id"],
             expected_state="confirmed",
             expected_txid=first_transfer["txid"],
@@ -828,6 +921,7 @@ class TradeServiceOrderTests(unittest.TestCase):
                 raise RuntimeError("uncertainty test gate timed out")
 
         self.store._uncertainty_checkpoint = checkpoint  # type: ignore[method-assign]
+        tip_hash, tip_height = self.common_observation_tip()
         with ThreadPoolExecutor(max_workers=2) as pool:
             uncertainty = pool.submit(
                 self.store.mark_transfer_uncertain,
@@ -836,6 +930,8 @@ class TradeServiceOrderTests(unittest.TestCase):
                 expected_txid=first_transfer["txid"],
                 error_text="confirmed transfer disappeared",
                 now=self.clock(),
+                expected_tip_hash=tip_hash,
+                expected_tip_height=tip_height,
             )
             self.assertTrue(uncertainty_holds_writer.wait(timeout=5))
             broadcast = pool.submit(self.service.mine)
@@ -859,7 +955,7 @@ class TradeServiceOrderTests(unittest.TestCase):
 
         def mark_uncertain():
             uncertainty_started.set()
-            return self.store.mark_transfer_uncertain(
+            return self.mark_transfer_uncertain(
                 transfer_id=first_transfer["transfer_id"],
                 expected_state="confirmed",
                 expected_txid=first_transfer["txid"],
@@ -1139,7 +1235,7 @@ class TradeServiceOrderTests(unittest.TestCase):
                     (withdrawal["transfer_id"],),
                 ).fetchone()
             )
-        recovered = self.store.mark_transfer_broadcast(
+        recovered = self.mark_transfer_broadcast(
             transfer_id=stored["transfer_id"],
             observed_txid=stored["txid"],
             observed_status="mempool",
@@ -1165,14 +1261,14 @@ class TradeServiceOrderTests(unittest.TestCase):
             )
 
         self.assertEqual(recover().classification, "prepared")
-        transfer = self.store.mark_transfer_broadcast(
+        transfer = self.mark_transfer_broadcast(
             transfer_id=transfer["transfer_id"],
             observed_txid=transfer["txid"],
             observed_status="mempool",
             now=self.clock(),
         )
         self.assertEqual(recover().classification, "broadcast")
-        transfer = self.store.mark_transfer_confirmed(
+        transfer = self.mark_transfer_confirmed(
             transfer_id=transfer["transfer_id"],
             observed_txid=transfer["txid"],
             confirmed_block_hash=h(96_001),
@@ -1181,7 +1277,7 @@ class TradeServiceOrderTests(unittest.TestCase):
             now=self.clock(),
         )
         self.assertEqual(recover().classification, "confirmed")
-        transfer = self.store.mark_transfer_uncertain(
+        transfer = self.mark_transfer_uncertain(
             transfer_id=transfer["transfer_id"],
             expected_state="confirmed",
             expected_txid=transfer["txid"],
@@ -1200,7 +1296,7 @@ class TradeServiceOrderTests(unittest.TestCase):
         def commit_then_advance(conn) -> None:
             conn.execute("COMMIT")
             prepared = self.store.get_order_transfer(order_id=order.order_id)
-            self.store.mark_transfer_broadcast(
+            self.mark_transfer_broadcast(
                 transfer_id=prepared["transfer_id"],
                 observed_txid=prepared["txid"],
                 observed_status="mempool",
@@ -1399,7 +1495,7 @@ class TradeServiceOrderTests(unittest.TestCase):
         self.assertEqual(halted.state, "awaiting_deposit")
         self.assertEqual(self.store.count_transfers(order_id=target.order_id), 0)
         blocker_transfer = self.store.get_order_transfer(order_id=blocker.order_id)
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=blocker_transfer["transfer_id"],
             observed_txid=blocker_transfer["txid"],
             observed_status="mempool",
@@ -1463,7 +1559,7 @@ class TradeServiceOrderTests(unittest.TestCase):
         )
         self.assertEqual(self.store.count_transfers(order_id=target.order_id), 0)
         blocker_transfer = self.store.get_order_transfer(order_id=blocker.order_id)
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=blocker_transfer["transfer_id"],
             observed_txid=blocker_transfer["txid"],
             observed_status="mempool",
@@ -1532,7 +1628,7 @@ class TradeServiceOrderTests(unittest.TestCase):
         )
         self.assertEqual(self.store.count_transfers(order_id=accepted.order_id), 0)
         blocker_transfer = self.store.get_order_transfer(order_id=blocker.order_id)
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=blocker_transfer["transfer_id"],
             observed_txid=blocker_transfer["txid"],
             observed_status="mempool",
@@ -1594,7 +1690,7 @@ class TradeServiceOrderTests(unittest.TestCase):
         self.assertEqual(replay.events, ())
         self.assertEqual(self.store.count_transfers(order_id=target.order_id), 0)
         blocker_transfer = self.store.get_order_transfer(order_id=blocker.order_id)
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=blocker_transfer["transfer_id"],
             observed_txid=blocker_transfer["txid"],
             observed_status="mempool",
@@ -1697,7 +1793,7 @@ class TradeServiceOrderTests(unittest.TestCase):
             )
         self.assertEqual(self.store.count_transfers(order_id=accepted.order_id), 0)
         blocker_transfer = self.store.get_order_transfer(order_id=blocker.order_id)
-        self.store.mark_transfer_broadcast(
+        self.mark_transfer_broadcast(
             transfer_id=blocker_transfer["transfer_id"],
             observed_txid=blocker_transfer["txid"],
             observed_status="mempool",
@@ -1794,9 +1890,7 @@ class TradeServiceOrderTests(unittest.TestCase):
                     release_winner = threading.Event()
                     original = store._enforce_deposit_deadline_conn
 
-                    def gate(
-                        conn, *, order_id, network, now, allow_fund_movement
-                    ):
+                    def gate(conn, *, order_id, network, now, allow_fund_movement):
                         if now == winner_now:
                             winner_holds_writer.set()
                             if not release_winner.wait(timeout=5):

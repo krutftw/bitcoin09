@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import sys
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -885,6 +886,22 @@ class Store:
         finally:
             conn.close()
 
+    def get_order_recovery_transfer(self, *, order_id: int) -> Mapping[str, Any] | None:
+        self._require_integer(order_id, "order ID")
+        conn = self.connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT * FROM transfers
+                WHERE order_id=? AND kind='recovery_refund'
+                ORDER BY transfer_id DESC LIMIT 1
+                """,
+                (order_id,),
+            ).fetchone()
+            return None if row is None else dict(row)
+        finally:
+            conn.close()
+
     def count_transfers(self, *, order_id: int | None = None) -> int:
         self._require_optional_integer(order_id, "order ID")
         conn = self.connect()
@@ -898,6 +915,49 @@ class Store:
             if type(value) is not int or value < 0:
                 raise AccountingInvariantError("transfer count is malformed")
             return value
+        finally:
+            conn.close()
+
+    def get_transfer(self, *, transfer_id: int) -> Mapping[str, Any]:
+        self._require_integer(transfer_id, "transfer ID")
+        if transfer_id <= 0:
+            raise ValueError("transfer ID must be positive")
+        conn = self.connect()
+        try:
+            return dict(self._transfer_row_conn(conn, transfer_id=transfer_id))
+        finally:
+            conn.close()
+
+    def list_reconcilable_transfers(self) -> tuple[Mapping[str, Any], ...]:
+        conn = self.connect()
+        try:
+            return tuple(
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT * FROM transfers
+                    WHERE state IN ('prepared','broadcast','confirmed','uncertain')
+                    ORDER BY transfer_id
+                    """
+                ).fetchall()
+            )
+        finally:
+            conn.close()
+
+    def health_issues(self) -> tuple[str, ...]:
+        conn = self.connect()
+        try:
+            issues = set(self._health_issues_conn(conn, network=self.network))
+            if self._health_failure is not None:
+                issues.add("process_health_failure")
+            return tuple(sorted(issues))
+        finally:
+            conn.close()
+
+    def pending_platform_outflow_units(self) -> int:
+        conn = self.connect()
+        try:
+            return self._pending_platform_outflow_conn(conn)
         finally:
             conn.close()
 
@@ -1092,6 +1152,7 @@ class Store:
         deposit_deadline: int | None,
         now: int,
         actor_wallet: str | None = None,
+        trade_deadline: int | None = None,
     ) -> Mapping[str, Any] | None:
         self._require_integer(order_id, "order ID")
         self._require_integer(actor_id, "actor ID")
@@ -1100,6 +1161,7 @@ class Store:
             raise ValueError("order and actor IDs must be positive")
         actor_name = self._bounded_text(actor_name, "actor name", 128)
         self._require_optional_integer(deposit_deadline, "deposit deadline")
+        self._require_optional_integer(trade_deadline, "trade deadline")
         if preallocated_deposit_addr is not None:
             preallocated_deposit_addr = self._bounded_text(
                 preallocated_deposit_addr, "preallocated deposit address", 128
@@ -1138,14 +1200,24 @@ class Store:
                     or deposit_deadline is not None
                 ):
                     raise ValueError("WTS acceptance does not assign a deposit address")
+                if trade_deadline is not None and trade_deadline <= now:
+                    raise ValueError("trade deadline must be in the future")
                 cursor = conn.execute(
                     """
                     UPDATE orders SET buyer_id=?,buyer_name=?,state='matched',
-                      matched_at=?,updated_at=?
+                      matched_at=?,trade_deadline=?,updated_at=?
                     WHERE order_id=? AND side='sell' AND state='open'
                       AND buyer_id IS NULL AND buyer_name IS NULL AND maker_id!=?
                     """,
-                    (actor_id, actor_name, now, now, order_id, actor_id),
+                    (
+                        actor_id,
+                        actor_name,
+                        now,
+                        trade_deadline,
+                        now,
+                        order_id,
+                        actor_id,
+                    ),
                 )
             else:
                 if preallocated_deposit_addr is None or deposit_deadline is None:
@@ -1154,6 +1226,8 @@ class Store:
                     )
                 if deposit_deadline <= now:
                     raise ValueError("deposit deadline must be in the future")
+                if trade_deadline is not None:
+                    raise ValueError("WTB trade deadline starts after deposit funding")
                 cursor = conn.execute(
                     """
                     UPDATE orders SET seller_id=?,seller_name=?,deposit_addr=?,
@@ -1293,6 +1367,368 @@ class Store:
             )
             conn.execute("COMMIT")
             return ConfirmationMutation(dict(updated), True, role, second)
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def cancel_order(
+        self, *, order_id: int, actor_id: int, now: int
+    ) -> Mapping[str, Any]:
+        """Apply the side/state cancellation matrix in one writer transaction."""
+
+        self._require_integer(order_id, "order ID")
+        self._require_integer(actor_id, "actor ID")
+        self._require_integer(now, "cancellation time")
+        if order_id <= 0 or actor_id <= 0:
+            raise ValueError("order and actor IDs must be positive")
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            order = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            if order is None:
+                raise ValueError("order does not exist")
+            if actor_id not in {order["buyer_id"], order["seller_id"]}:
+                raise PermissionError("only an order participant may cancel")
+
+            if order["state"] in {
+                "cancelled",
+                "deposit_expired",
+                "recovery_hold",
+                "refund_reserved",
+                "refunded",
+            }:
+                conn.execute("COMMIT")
+                return dict(order)
+            if order["state"] in {
+                "disputed",
+                "release_reserved",
+                "broadcast",
+                "completed",
+                "transfer_failed_safe",
+                "transfer_uncertain",
+            }:
+                raise AccountingInvariantError(
+                    "order state requires dispute or transfer reconciliation"
+                )
+            if order["buyer_confirmed"] or order["seller_confirmed"]:
+                raise AccountingInvariantError(
+                    "payment movement requires dispute resolution"
+                )
+
+            old_state = order["state"]
+            if order["side"] == "sell" and old_state == "matched":
+                if actor_id == order["buyer_id"]:
+                    conn.execute(
+                        """
+                        UPDATE orders SET buyer_id=NULL,buyer_name=NULL,state='open',
+                          matched_at=NULL,trade_deadline=NULL,updated_at=?
+                        WHERE order_id=? AND side='sell' AND state='matched'
+                          AND buyer_confirmed=0 AND seller_confirmed=0
+                        """,
+                        (now, order_id),
+                    )
+                    self._append_audit_conn(
+                        conn,
+                        order_id=order_id,
+                        actor_id=actor_id,
+                        event_type="buyer_left_order",
+                        old_state="matched",
+                        new_state="open",
+                        detail={},
+                        created_at=now,
+                    )
+                else:
+                    self._queue_order_transfer_conn(
+                        conn,
+                        order=order,
+                        kind="refund",
+                        now=now,
+                        actor_id=actor_id,
+                        allow_release=False,
+                        transition_order=True,
+                    )
+            elif order["side"] == "sell" and old_state == "open":
+                if actor_id != order["seller_id"]:
+                    raise PermissionError("only the seller may cancel an open sell")
+                self._queue_order_transfer_conn(
+                    conn,
+                    order=order,
+                    kind="refund",
+                    now=now,
+                    actor_id=actor_id,
+                    allow_release=False,
+                    transition_order=True,
+                )
+            elif order["side"] == "buy" and old_state == "open":
+                if actor_id != order["buyer_id"]:
+                    raise PermissionError("only the buyer may cancel an open buy")
+                conn.execute(
+                    "UPDATE orders SET state='cancelled',updated_at=? "
+                    "WHERE order_id=? AND state='open'",
+                    (now, order_id),
+                )
+                self._append_audit_conn(
+                    conn,
+                    order_id=order_id,
+                    actor_id=actor_id,
+                    event_type="order_cancelled",
+                    old_state="open",
+                    new_state="cancelled",
+                    detail={},
+                    created_at=now,
+                )
+            elif old_state == "awaiting_deposit":
+                accounting = self._deposit_accounting_conn(
+                    conn, order_id=order_id, network=self.network
+                )
+                credited = accounting["credited_units"]
+                if credited == 0:
+                    conn.execute(
+                        "UPDATE orders SET state='cancelled',updated_at=? "
+                        "WHERE order_id=? AND state='awaiting_deposit'",
+                        (now, order_id),
+                    )
+                    self._append_audit_conn(
+                        conn,
+                        order_id=order_id,
+                        actor_id=actor_id,
+                        event_type="order_cancelled",
+                        old_state="awaiting_deposit",
+                        new_state="cancelled",
+                        detail={},
+                        created_at=now,
+                    )
+                elif credited < order["deposit_required_units"]:
+                    self._queue_recovery_transfer_conn(
+                        conn, order=order, now=now, actor_id=actor_id
+                    )
+                else:
+                    self._advance_funded_order_conn(
+                        conn,
+                        order_id=order_id,
+                        network=self.network,
+                        now=now,
+                    )
+                    funded = conn.execute(
+                        "SELECT * FROM orders WHERE order_id=?", (order_id,)
+                    ).fetchone()
+                    if funded["state"] not in {"open", "matched"}:
+                        raise AccountingInvariantError(
+                            "fully credited cancellation could not advance"
+                        )
+                    self._queue_order_transfer_conn(
+                        conn,
+                        order=funded,
+                        kind="refund",
+                        now=now,
+                        actor_id=actor_id,
+                        allow_release=False,
+                        transition_order=True,
+                    )
+            elif order["side"] == "buy" and old_state == "matched":
+                self._queue_order_transfer_conn(
+                    conn,
+                    order=order,
+                    kind="refund",
+                    now=now,
+                    actor_id=actor_id,
+                    allow_release=False,
+                    transition_order=True,
+                )
+            else:
+                raise AccountingInvariantError("order is not cancellable")
+
+            updated = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            conn.execute("COMMIT")
+            return dict(updated)
+        except sqlite3.IntegrityError as exc:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise AccountingInvariantError(
+                "cancellation violated durable order accounting"
+            ) from exc
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def open_order_dispute(
+        self, *, order_id: int, actor_id: int, reason: str, now: int
+    ) -> Mapping[str, Any]:
+        self._require_integer(order_id, "order ID")
+        self._require_integer(actor_id, "actor ID")
+        self._require_integer(now, "dispute time")
+        if order_id <= 0 or actor_id <= 0:
+            raise ValueError("order and actor IDs must be positive")
+        reason = self._private_reason(reason)
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            order = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            if order is None:
+                raise ValueError("order does not exist")
+            if actor_id not in {order["buyer_id"], order["seller_id"]}:
+                raise PermissionError("only an order participant may dispute")
+            if order["state"] == "disputed":
+                conn.execute("COMMIT")
+                return dict(order)
+            if order["state"] != "matched":
+                raise AccountingInvariantError("only a matched order may be disputed")
+            cursor = conn.execute(
+                """
+                UPDATE orders SET state='disputed',disputed_at=COALESCE(disputed_at,?),
+                  updated_at=? WHERE order_id=? AND state='matched'
+                """,
+                (now, now, order_id),
+            )
+            if cursor.rowcount != 1:
+                raise AccountingInvariantError("dispute transition lost its state race")
+            self._append_audit_conn(
+                conn,
+                order_id=order_id,
+                actor_id=actor_id,
+                event_type="dispute_opened",
+                old_state="matched",
+                new_state="disputed",
+                detail={"reason": reason},
+                created_at=now,
+            )
+            updated = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            conn.execute("COMMIT")
+            return dict(updated)
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def resolve_order_dispute(
+        self,
+        *,
+        order_id: int,
+        actor_id: int,
+        winner: str,
+        reason: str,
+        now: int,
+    ) -> Mapping[str, Any]:
+        self._require_integer(order_id, "order ID")
+        self._require_integer(actor_id, "actor ID")
+        self._require_integer(now, "resolution time")
+        if order_id <= 0 or actor_id <= 0:
+            raise ValueError("order and actor IDs must be positive")
+        if winner not in {"buyer", "seller"}:
+            raise ValueError("winner must be buyer or seller")
+        reason = self._private_reason(reason)
+        conn = self.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            order = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            if order is None:
+                raise ValueError("order does not exist")
+            existing = conn.execute(
+                "SELECT * FROM transfers WHERE order_id=? AND is_main_outcome=1",
+                (order_id,),
+            ).fetchone()
+            if existing is not None:
+                conn.execute("COMMIT")
+                return dict(order)
+            if order["state"] != "disputed":
+                raise AccountingInvariantError("admin resolution requires a dispute")
+            kind = "resolve_buyer" if winner == "buyer" else "resolve_seller"
+            transfer = self._queue_order_transfer_conn(
+                conn,
+                order=order,
+                kind=kind,
+                now=now,
+                actor_id=actor_id,
+                allow_release=False,
+                transition_order=True,
+            )
+            if transfer is None:
+                raise AccountingInvariantError("resolution was not durably queued")
+            new_state = "release_reserved" if winner == "buyer" else "refund_reserved"
+            self._append_audit_conn(
+                conn,
+                order_id=order_id,
+                actor_id=actor_id,
+                event_type="dispute_resolved",
+                old_state="disputed",
+                new_state=new_state,
+                detail={"winner": winner, "reason": reason},
+                created_at=now,
+            )
+            updated = conn.execute(
+                "SELECT * FROM orders WHERE order_id=?", (order_id,)
+            ).fetchone()
+            conn.execute("COMMIT")
+            return dict(updated)
+        except sqlite3.IntegrityError as exc:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise AccountingInvariantError(
+                "resolution violated durable order accounting"
+            ) from exc
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def expire_matched_orders(self, *, now: int) -> tuple[int, ...]:
+        self._require_integer(now, "expiry time")
+        conn = self.connect()
+        expired: list[int] = []
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """
+                SELECT order_id,trade_deadline FROM orders
+                WHERE state='matched' AND trade_deadline IS NOT NULL
+                  AND trade_deadline < ? ORDER BY order_id
+                """,
+                (now,),
+            ).fetchall()
+            for row in rows:
+                cursor = conn.execute(
+                    """
+                    UPDATE orders SET state='disputed',
+                      disputed_at=COALESCE(disputed_at,?),updated_at=?
+                    WHERE order_id=? AND state='matched' AND trade_deadline < ?
+                    """,
+                    (now, now, row["order_id"], now),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                expired.append(row["order_id"])
+                self._append_audit_conn(
+                    conn,
+                    order_id=row["order_id"],
+                    actor_id=None,
+                    event_type="trade_timeout_disputed",
+                    old_state="matched",
+                    new_state="disputed",
+                    detail={"trade_deadline": row["trade_deadline"]},
+                    created_at=now,
+                )
+            conn.execute("COMMIT")
+            return tuple(expired)
         except BaseException:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
@@ -1717,15 +2153,19 @@ class Store:
         observed_txid: str,
         observed_status: str,
         now: int,
+        expected_tip_hash: str,
+        expected_tip_height: int,
     ) -> Mapping[str, Any]:
         self._require_integer(transfer_id, "transfer ID")
         self._require_integer(now, "broadcast observation time")
         observed_txid = self._hash_text(observed_txid, "observed transaction ID")
         if observed_status not in ("mempool", "confirmed"):
             raise ValueError("trusted observation must be mempool or confirmed")
+        expected_tip = self._expected_tip(expected_tip_hash, expected_tip_height)
         conn = self.connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            self._require_observation_tip_conn(conn, expected_tip)
             row = self._transfer_row_conn(conn, transfer_id=transfer_id)
             if row["txid"] != observed_txid:
                 raise AccountingInvariantError(
@@ -1794,6 +2234,8 @@ class Store:
         expected_txid: str,
         invoke: Callable[[Mapping[str, Any]], tuple[str, str]],
         now: int,
+        expected_tip_hash: str,
+        expected_tip_height: int,
     ) -> BroadcastAuthorizationResult:
         """Serialize uncertainty writes and the exact prepared wallet call.
 
@@ -1808,9 +2250,11 @@ class Store:
         if transfer_id <= 0 or now <= 0 or not callable(invoke):
             raise ValueError("broadcast authorization input is invalid")
         expected_txid = self._hash_text(expected_txid, "expected transaction ID")
+        expected_tip = self._expected_tip(expected_tip_hash, expected_tip_height)
         conn = self.connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            self._require_observation_tip_conn(conn, expected_tip)
             row = self._transfer_row_conn(conn, transfer_id=transfer_id)
             if row["txid"] != expected_txid:
                 raise AccountingInvariantError(
@@ -2003,6 +2447,8 @@ class Store:
         expected_txid: str,
         error_text: str,
         now: int,
+        expected_tip_hash: str,
+        expected_tip_height: int,
     ) -> Mapping[str, Any]:
         self._require_integer(transfer_id, "transfer ID")
         self._require_integer(now, "uncertainty time")
@@ -2010,10 +2456,23 @@ class Store:
             raise ValueError("expected uncertainty source state is invalid")
         expected_txid = self._hash_text(expected_txid, "expected transaction ID")
         error_text = self._bounded_error(error_text)
+        expected_tip = self._expected_tip(expected_tip_hash, expected_tip_height)
         conn = self.connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            self._require_observation_tip_conn(conn, expected_tip)
             row = self._transfer_row_conn(conn, transfer_id=transfer_id)
+            if row["state"] == "uncertain":
+                if (
+                    row["txid"] == expected_txid
+                    and row["error_text"] == error_text
+                    and row["result_class"] == "uncertain"
+                ):
+                    conn.execute("COMMIT")
+                    return dict(row)
+                raise AccountingInvariantError(
+                    "uncertainty callback differs from durable evidence"
+                )
             if row["state"] != expected_state or row["txid"] != expected_txid:
                 raise AccountingInvariantError(
                     "uncertainty callback is stale or identifies another transaction"
@@ -2061,6 +2520,8 @@ class Store:
         confirmed_block_height: int,
         confirmations: int,
         now: int,
+        expected_tip_hash: str,
+        expected_tip_height: int,
     ) -> Mapping[str, Any]:
         self._require_integer(transfer_id, "transfer ID")
         self._require_integer(confirmed_block_height, "confirmed block height")
@@ -2072,9 +2533,11 @@ class Store:
         confirmed_block_hash = self._hash_text(
             confirmed_block_hash, "confirmed block hash"
         )
+        expected_tip = self._expected_tip(expected_tip_hash, expected_tip_height)
         conn = self.connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            self._require_observation_tip_conn(conn, expected_tip)
             row = self._transfer_row_conn(conn, transfer_id=transfer_id)
             if row["txid"] != observed_txid:
                 raise AccountingInvariantError(
@@ -2958,6 +3421,7 @@ class Store:
         final_tip_height: int,
         credit_depth: int,
         now: int,
+        trade_timeout_seconds: int | None = None,
     ) -> ReconciliationResult:
         """Apply one complete all-address observation at a single live tip.
 
@@ -2974,6 +3438,10 @@ class Store:
             raise ValueError("tip heights must be non-negative")
         if credit_depth < 1:
             raise ValueError("credit depth must be positive")
+        if trade_timeout_seconds is not None and (
+            type(trade_timeout_seconds) is not int or trade_timeout_seconds < 1
+        ):
+            raise ValueError("trade timeout must be a positive integer")
         network = self._network(network)
         if network != self.network:
             raise ValueError(
@@ -3071,9 +3539,13 @@ class Store:
                         conn, order_id=order_id, network=network
                     )
                     deadline_ready = health_clear_before_evidence and deadline_due
-                    if deadline_ready or funding_ready or (
-                        after_order["state"] != before_order["state"]
-                        or after_accounting != before_accounting
+                    if (
+                        deadline_ready
+                        or funding_ready
+                        or (
+                            after_order["state"] != before_order["state"]
+                            or after_accounting != before_accounting
+                        )
                     ):
                         before_changes[order_id] = (
                             before_order["state"],
@@ -3196,18 +3668,27 @@ class Store:
                         raise AccountingInvariantError("reconciled order disappeared")
                     if refreshed["state"] == "awaiting_deposit":
                         self._advance_funded_order_conn(
-                            conn, order_id=order_id, network=self.network, now=now
+                            conn,
+                            order_id=order_id,
+                            network=self.network,
+                            now=now,
+                            trade_timeout_seconds=trade_timeout_seconds,
                         )
                 refreshed = conn.execute(
                     "SELECT * FROM orders WHERE order_id=?", (order_id,)
                 ).fetchone()
-                if progress_allowed and refreshed["state"] in {
-                    "recovery_hold",
-                    "completed",
-                    "refunded",
-                    "cancelled",
-                    "deposit_expired",
-                } and self._can_auto_queue_recovery_conn(conn, order=refreshed):
+                if (
+                    progress_allowed
+                    and refreshed["state"]
+                    in {
+                        "recovery_hold",
+                        "completed",
+                        "refunded",
+                        "cancelled",
+                        "deposit_expired",
+                    }
+                    and self._can_auto_queue_recovery_conn(conn, order=refreshed)
+                ):
                     self._queue_recovery_transfer_conn(
                         conn, order=refreshed, now=now, actor_id=None
                     )
@@ -3882,6 +4363,7 @@ class Store:
         order_id: int,
         network: str,
         now: int,
+        trade_timeout_seconds: int | None = None,
     ) -> None:
         order = conn.execute(
             "SELECT * FROM orders WHERE order_id=?", (order_id,)
@@ -3898,13 +4380,23 @@ class Store:
         if main_units < order["deposit_required_units"]:
             return
         new_state = "open" if order["side"] == "sell" else "matched"
-        conn.execute(
-            """
-            UPDATE orders SET state=?,funded_at=COALESCE(funded_at,?),updated_at=?
-            WHERE order_id=? AND state='awaiting_deposit'
-            """,
-            (new_state, now, now, order_id),
-        )
+        if new_state == "matched" and trade_timeout_seconds is not None:
+            conn.execute(
+                """
+                UPDATE orders SET state='matched',funded_at=COALESCE(funded_at,?),
+                  matched_at=?,trade_deadline=?,updated_at=?
+                WHERE order_id=? AND state='awaiting_deposit'
+                """,
+                (now, now, now + trade_timeout_seconds, now, order_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE orders SET state=?,funded_at=COALESCE(funded_at,?),updated_at=?
+                WHERE order_id=? AND state='awaiting_deposit'
+                """,
+                (new_state, now, now, order_id),
+            )
 
     @classmethod
     def _order_liability_conn(
@@ -4161,9 +4653,7 @@ class Store:
             expected_tip_hash=expected_tip_hash,
             expected_tip_height=expected_tip_height,
         ):
-            raise AccountingInvariantError(
-                "watched addresses lack a common latest tip"
-            )
+            raise AccountingInvariantError("watched addresses lack a common latest tip")
 
     @classmethod
     def _common_tip_precondition_drift_conn(
@@ -4222,7 +4712,7 @@ class Store:
             dict(detail),
             sort_keys=True,
             separators=(",", ":"),
-            ensure_ascii=True,
+            ensure_ascii=False,
             allow_nan=False,
         )
         cursor = conn.execute(
@@ -4260,6 +4750,27 @@ class Store:
     @classmethod
     def _hash_text(cls, value: object, label: str) -> str:
         return cls._machine_text(value, label, 64, re.compile(r"[0-9a-f]{64}\Z"))
+
+    def _expected_tip(
+        self, expected_tip_hash: object, expected_tip_height: object
+    ) -> tuple[str, int]:
+        tip_hash = self._hash_text(expected_tip_hash, "expected observation tip hash")
+        self._require_integer(expected_tip_height, "expected observation tip height")
+        if expected_tip_height < 0:
+            raise ValueError("expected observation tip height must be non-negative")
+        return tip_hash, expected_tip_height
+
+    def _require_observation_tip_conn(
+        self,
+        conn: sqlite3.Connection,
+        expected_tip: tuple[str, int],
+    ) -> None:
+        self._require_common_tip_conn(
+            conn,
+            network=self.network,
+            expected_tip_hash=expected_tip[0],
+            expected_tip_height=expected_tip[1],
+        )
 
     @classmethod
     def _outpoint_text(cls, value: object) -> str:
@@ -4669,6 +5180,19 @@ class Store:
         value = value.strip()
         if not value or "\x00" in value or len(value.encode("utf-8")) > max_bytes:
             raise ValueError(f"{label} must be 1-{max_bytes} bytes without NUL")
+        return value
+
+    @staticmethod
+    def _private_reason(value: object) -> str:
+        if type(value) is not str:
+            raise ValueError("reason must be 10-500 characters")
+        value = value.strip()
+        if not 10 <= len(value) <= 500 or any(
+            unicodedata.category(character) == "Cc" for character in value
+        ):
+            raise ValueError(
+                "reason must be 10-500 characters without control characters"
+            )
         return value
 
     @classmethod

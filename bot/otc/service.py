@@ -21,6 +21,7 @@ from bot.otc.explorer import (
     ExplorerError,
     ExplorerProtocolError,
     Tip,
+    TransactionStatus,
     _address_text as _canonical_09c_address,
 )
 from bot.otc.store import (
@@ -95,6 +96,16 @@ class TransferResult:
     operation_key: str
 
 
+@dataclass(frozen=True, slots=True)
+class SystemHealth:
+    accepting_orders: bool
+    issues: tuple[str, ...]
+    checked_at: int
+    wallet_spendable_units: int | None
+    customer_liability_units: int | None
+    pending_platform_outflow_units: int | None
+
+
 class TradeService:
     """Application service for two-sided 09C-only escrow trades.
 
@@ -114,7 +125,9 @@ class TradeService:
         network_fee_units: int = 0,
         fee_bps: int = 0,
         deposit_timeout_seconds: int = 86_400,
+        trade_timeout_seconds: int | None = None,
         prepare_child_is_dead: Callable[[Mapping[str, Any]], bool] | None = None,
+        transfer_reconciliation_deadline_seconds: int = 600,
     ) -> None:
         if not isinstance(store, Store):
             raise ValueError("store must be a Store")
@@ -133,8 +146,17 @@ class TradeService:
             raise ValueError("service fee basis points are out of range")
         if type(deposit_timeout_seconds) is not int or deposit_timeout_seconds < 1:
             raise ValueError("deposit timeout must be positive")
+        if trade_timeout_seconds is None:
+            trade_timeout_seconds = deposit_timeout_seconds
+        if type(trade_timeout_seconds) is not int or trade_timeout_seconds < 1:
+            raise ValueError("trade timeout must be positive")
         if prepare_child_is_dead is not None and not callable(prepare_child_is_dead):
             raise ValueError("prepare child liveness boundary must be callable")
+        if (
+            type(transfer_reconciliation_deadline_seconds) is not int
+            or transfer_reconciliation_deadline_seconds < 1
+        ):
+            raise ValueError("transfer reconciliation deadline must be positive")
         self.store = store
         self.explorer = explorer
         self.wallet = wallet
@@ -144,8 +166,13 @@ class TradeService:
         self._network_fee_units = network_fee_units
         self._fee_bps = fee_bps
         self._deposit_timeout_seconds = deposit_timeout_seconds
+        self._trade_timeout_seconds = trade_timeout_seconds
         self._prepare_child_is_dead = prepare_child_is_dead or (lambda _row: False)
+        self._transfer_reconciliation_deadline_seconds = (
+            transfer_reconciliation_deadline_seconds
+        )
         self._mine_lock = threading.Lock()
+        self._broadcast_tip_context: Tip | None = None
 
     def create_sell(
         self,
@@ -278,6 +305,11 @@ class TradeService:
             actor_wallet=receive_address,
             preallocated_deposit_addr=preallocated,
             deposit_deadline=deadline,
+            trade_deadline=(
+                now + self._trade_timeout_seconds
+                if initial["side"] == OrderSide.SELL.value
+                else None
+            ),
             now=now,
         )
         if accepted is None:
@@ -341,9 +373,7 @@ class TradeService:
                 if change.new_state in {"open", "matched", "disputed"}
                 else "late_payment_recovery"
             )
-            events.append(
-                ServiceEvent(kind, order_id, {"units": recovery_event_units})
-            )
+            events.append(ServiceEvent(kind, order_id, {"units": recovery_event_units}))
         return self._order_result(after, events=tuple(events))
 
     def confirm_sent(self, order_id: int, *, actor_id: int) -> OrderResult:
@@ -355,38 +385,221 @@ class TradeService:
     def list_open(self) -> tuple[OrderResult, ...]:
         return tuple(self._order_result(row) for row in self.store.list_open_orders())
 
+    def cancel(self, order_id: int, *, actor_id: int) -> OrderResult:
+        self._positive_order(order_id)
+        self._positive_actor(actor_id)
+        try:
+            row = self.store.cancel_order(
+                order_id=order_id, actor_id=actor_id, now=self._now()
+            )
+        except PermissionError as exc:
+            raise AuthorizationError(str(exc)) from None
+        except AccountingInvariantError as exc:
+            raise OrderConflict(str(exc)) from None
+        return self._order_result(row)
+
+    def open_dispute(self, order_id: int, *, actor_id: int, reason: str) -> OrderResult:
+        self._positive_order(order_id)
+        self._positive_actor(actor_id)
+        try:
+            row = self.store.open_order_dispute(
+                order_id=order_id,
+                actor_id=actor_id,
+                reason=reason,
+                now=self._now(),
+            )
+        except PermissionError as exc:
+            raise AuthorizationError(str(exc)) from None
+        except AccountingInvariantError as exc:
+            raise OrderConflict(str(exc)) from None
+        return self._order_result(row)
+
+    def resolve_dispute(
+        self,
+        order_id: int,
+        *,
+        admin_id: int,
+        winner: str,
+        reason: str,
+    ) -> OrderResult:
+        self._positive_order(order_id)
+        self._positive_actor(admin_id)
+        row = self.store.resolve_order_dispute(
+            order_id=order_id,
+            actor_id=admin_id,
+            winner=winner,
+            reason=reason,
+            now=self._now(),
+        )
+        return self._order_result(row)
+
+    def expire_orders(self) -> tuple[int, ...]:
+        return self.store.expire_matched_orders(now=self._now())
+
+    def cancel_fee_withdrawal(
+        self, transfer_id: int, *, admin_id: int
+    ) -> TransferResult:
+        self._positive_order(transfer_id)
+        self._positive_actor(admin_id)
+        row = self.store.cancel_failed_safe_fee_withdrawal(
+            transfer_id=transfer_id, actor_id=admin_id, now=self._now()
+        )
+        return self._transfer_result(row)
+
+    def reconcile_transfers(self) -> tuple[TransferResult, ...]:
+        """Reconcile durable transfer identities; safe at startup or on a timer."""
+
+        with self._mine_lock:
+            return self._reconcile_transfers_locked()
+
+    def _reconcile_transfers_locked(self) -> tuple[TransferResult, ...]:
+        batch, _ = self._reconcile_all_deposits()
+        results: list[TransferResult] = []
+        active = self.store.active_wallet_transfer()
+        if active is not None and active["state"] == "reserved":
+            if not self._prepare_child_is_dead(active):
+                return (self._transfer_result(active),)
+            failed = self.store.mark_transfer_failed_safe(
+                transfer_id=active["transfer_id"],
+                expected_attempt_count=active["attempt_count"],
+                expected_reserved_at=active["reserved_at"],
+                error_text="prior prepare child confirmed stopped",
+                now=self._now(),
+            )
+            self.store.requeue_failed_safe(
+                transfer_id=failed["transfer_id"], now=self._now()
+            )
+
+        for transfer in self.store.list_reconcilable_transfers():
+            current = self._reconcile_transfer(transfer, batch.tip)
+            results.append(self._transfer_result(current))
+
+        if (
+            self.store.active_wallet_transfer() is None
+            and not self.store.health_issues()
+        ):
+            mined = self._mine_once(expected_tip=batch.tip)
+            if mined is not None:
+                results.append(mined)
+        return tuple(results)
+
+    def system_health(self) -> SystemHealth:
+        now = self._now()
+        issues: set[str] = set()
+        spendable: int | None = None
+        liability: int | None = None
+        pending: int | None = None
+        try:
+            if self.store.integrity_check().lower() != "ok":
+                issues.add("database_integrity")
+        except Exception:
+            return SystemHealth(False, ("database_failure",), now, None, None, None)
+        try:
+            batch, reconciliation = self._reconcile_all_deposits()
+        except ExplorerError:
+            return SystemHealth(False, ("explorer_failure",), now, None, None, None)
+        except Exception:
+            return SystemHealth(False, ("database_failure",), now, None, None, None)
+        issues.update(reconciliation.health_issues)
+        try:
+            issues.update(self.store.health_issues())
+            liability = self.store.customer_liability_units()
+            pending = self.store.pending_platform_outflow_units()
+        except Exception:
+            issues.add("database_failure")
+            return SystemHealth(
+                False,
+                tuple(sorted(issues)),
+                now,
+                spendable,
+                liability,
+                pending,
+            )
+        try:
+            for transfer in self.store.list_reconcilable_transfers():
+                txid = transfer["txid"]
+                if not isinstance(txid, str):
+                    issues.add("malformed_transfer_identity")
+                    continue
+                status = self.explorer.transaction(txid)
+                if not isinstance(status, TransactionStatus) or status.txid != txid:
+                    issues.add("explorer_failure")
+                    continue
+                if status.tip != batch.tip:
+                    issues.add("explorer_failure")
+                    continue
+                if transfer["state"] == "confirmed":
+                    if (
+                        status.status != "confirmed"
+                        or status.block is None
+                        or status.block.hash != transfer["confirmed_block_hash"]
+                        or status.block.height != transfer["confirmed_block_height"]
+                        or status.confirmations < transfer["confirmations"]
+                    ):
+                        issues.add("transfer_reorg")
+                elif transfer["state"] == "broadcast" and status.status == "unknown":
+                    anchor = transfer["broadcast_at"] or transfer["updated_at"]
+                    if now - anchor > self._transfer_reconciliation_deadline_seconds:
+                        issues.add("uncertain_transfer")
+        except ExplorerError:
+            issues.add("explorer_failure")
+        except Exception:
+            issues.add("database_failure")
+        try:
+            snapshot = self.wallet.snapshot(batch.tip)
+            self._require_wallet_snapshot(snapshot, batch.tip)
+            spendable = snapshot.spendable_units
+            if not issues:
+                outpoints = {
+                    item.outpoint: item.amount_units for item in snapshot.outpoints
+                }
+                if len(outpoints) != len(snapshot.outpoints):
+                    raise AccountingInvariantError(
+                        "wallet snapshot contains duplicate outpoints"
+                    )
+                self.store.wallet_solvency_snapshot(
+                    expected_tip_hash=batch.tip.hash,
+                    expected_tip_height=batch.tip.height,
+                    wallet_spendable_units=snapshot.spendable_units,
+                    wallet_outpoints=outpoints,
+                    wallet_snapshot_hash=snapshot.wallet_snapshot_hash,
+                )
+        except AccountingInvariantError:
+            if not issues:
+                issues.add("wallet_insolvent")
+        except Exception:
+            issues.add("wallet_failure")
+        return SystemHealth(
+            not issues,
+            tuple(sorted(issues)),
+            now,
+            spendable,
+            liability,
+            pending,
+        )
+
     def mine(self) -> TransferResult | None:
         """Run at most one globally serialized wallet operation."""
         with self._mine_lock:
-            return self._mine_once()
+            reconciled = self._reconcile_transfers_locked()
+            return None if not reconciled else reconciled[-1]
 
-    def _mine_once(self) -> TransferResult | None:
+    def _mine_once(self, *, expected_tip: Tip) -> TransferResult | None:
+        if not isinstance(expected_tip, Tip):
+            raise ValueError("expected tip must be a canonical tip")
         active = self.store.active_wallet_transfer()
         if active is not None:
-            if active["state"] == "reserved":
-                if not self._prepare_child_is_dead(active):
-                    return self._transfer_result(active)
-                failed = self.store.mark_transfer_failed_safe(
-                    transfer_id=active["transfer_id"],
-                    expected_attempt_count=active["attempt_count"],
-                    expected_reserved_at=active["reserved_at"],
-                    error_text="prior prepare child confirmed stopped",
-                    now=self._now(),
-                )
-                self.store.requeue_failed_safe(
-                    transfer_id=failed["transfer_id"], now=self._now()
-                )
-            elif active["state"] == "prepared":
-                return self._broadcast_stored(active)
-            else:
-                # A broadcast row remains in the global wallet lane until
-                # trusted-chain reconciliation (Task 6).  Repeated workers do
-                # not submit it again merely because they polled the queue.
-                return self._transfer_result(active)
+            # Active operations are recovered by the transfer reconciler.  This
+            # primitive only owns the post-reconciliation queued claim.
+            return self._transfer_result(active)
 
-        batch, _ = self._reconcile_all_deposits()
-        wallet_snapshot = self.wallet.snapshot(batch.tip)
-        self._require_wallet_snapshot(wallet_snapshot, batch.tip)
+        barrier, _ = self._reconcile_all_deposits()
+        if barrier.tip != expected_tip:
+            raise AccountingInvariantError(
+                "watched deposit barrier changed after transfer reconciliation"
+            )
+        wallet_snapshot = self.wallet.snapshot(expected_tip)
+        self._require_wallet_snapshot(wallet_snapshot, expected_tip)
         wallet_outpoints = {
             item.outpoint: item.amount_units for item in wallet_snapshot.outpoints
         }
@@ -395,15 +608,15 @@ class TradeService:
                 "wallet snapshot contains duplicate outpoints"
             )
         solvency = self.store.wallet_solvency_snapshot(
-            expected_tip_hash=batch.tip.hash,
-            expected_tip_height=batch.tip.height,
+            expected_tip_hash=expected_tip.hash,
+            expected_tip_height=expected_tip.height,
             wallet_spendable_units=wallet_snapshot.spendable_units,
             wallet_outpoints=wallet_outpoints,
             wallet_snapshot_hash=wallet_snapshot.wallet_snapshot_hash,
         )
         claimed = self.store.claim_next_transfer(
-            expected_tip_hash=batch.tip.hash,
-            expected_tip_height=batch.tip.height,
+            expected_tip_hash=expected_tip.hash,
+            expected_tip_height=expected_tip.height,
             wallet_spendable_units=wallet_snapshot.spendable_units,
             now=self._now(),
         )
@@ -422,7 +635,7 @@ class TradeService:
                 claimed.destination,
                 claimed.amount_units,
                 claimed.network_fee_units,
-                batch.tip,
+                expected_tip,
                 restricted,
                 wallet_snapshot,
             )
@@ -476,7 +689,7 @@ class TradeService:
             return self._transfer_result(failed)
         if attached.classification in {"broadcast", "confirmed", "uncertain"}:
             return self._transfer_result(attached.transfer)
-        return self._broadcast_stored(attached.transfer)
+        return self._broadcast_with_tip(attached.transfer, expected_tip)
 
     def _confirm(self, order_id: int, *, actor_id: int, role: str) -> OrderResult:
         self._positive_order(order_id)
@@ -502,6 +715,94 @@ class TradeService:
         )
         return self._order_result(mutation.order, events=events)
 
+    def _reconcile_transfer(
+        self, transfer: Mapping[str, Any], expected_tip: Tip
+    ) -> Mapping[str, Any]:
+        txid = transfer["txid"]
+        if not isinstance(txid, str):
+            raise AccountingInvariantError("reconcilable transfer has no transaction")
+        status = self.explorer.transaction(txid)
+        if not isinstance(status, TransactionStatus) or status.txid != txid:
+            raise AccountingInvariantError("explorer returned another transaction")
+        if status.tip != expected_tip:
+            raise AccountingInvariantError(
+                "transaction observation tip differs from deposit barrier"
+            )
+        now = self._now()
+
+        if transfer["state"] == "prepared":
+            if status.status == "unknown":
+                self._broadcast_with_tip(transfer, expected_tip)
+                return self.store.get_transfer(transfer_id=transfer["transfer_id"])
+            transfer = self.store.mark_transfer_broadcast(
+                transfer_id=transfer["transfer_id"],
+                observed_txid=txid,
+                observed_status=status.status,
+                now=now,
+                expected_tip_hash=expected_tip.hash,
+                expected_tip_height=expected_tip.height,
+            )
+        elif transfer["state"] == "broadcast" and status.status == "unknown":
+            anchor = transfer["broadcast_at"] or transfer["updated_at"]
+            if now - anchor > self._transfer_reconciliation_deadline_seconds:
+                return self.store.mark_transfer_uncertain(
+                    transfer_id=transfer["transfer_id"],
+                    expected_state="broadcast",
+                    expected_txid=txid,
+                    error_text="broadcast transaction missed reconciliation deadline",
+                    now=now,
+                    expected_tip_hash=expected_tip.hash,
+                    expected_tip_height=expected_tip.height,
+                )
+            return transfer
+        elif transfer["state"] == "confirmed":
+            same_anchor = bool(
+                status.status == "confirmed"
+                and status.block is not None
+                and status.block.hash == transfer["confirmed_block_hash"]
+                and status.block.height == transfer["confirmed_block_height"]
+                and status.confirmations >= transfer["confirmations"]
+            )
+            if not same_anchor:
+                return self.store.mark_transfer_uncertain(
+                    transfer_id=transfer["transfer_id"],
+                    expected_state="confirmed",
+                    expected_txid=txid,
+                    error_text="confirmed transaction lost its canonical anchor",
+                    now=now,
+                    expected_tip_hash=expected_tip.hash,
+                    expected_tip_height=expected_tip.height,
+                )
+        elif transfer["state"] == "uncertain":
+            if status.status == "unknown":
+                return transfer
+            if status.status == "mempool":
+                return self.store.mark_transfer_broadcast(
+                    transfer_id=transfer["transfer_id"],
+                    observed_txid=txid,
+                    observed_status="mempool",
+                    now=now,
+                    expected_tip_hash=expected_tip.hash,
+                    expected_tip_height=expected_tip.height,
+                )
+
+        if status.status != "confirmed":
+            return transfer
+        if status.block is None:
+            raise AccountingInvariantError("confirmed transaction has no block anchor")
+        if status.confirmations < self._confirmation_depth:
+            return transfer
+        return self.store.mark_transfer_confirmed(
+            transfer_id=transfer["transfer_id"],
+            observed_txid=txid,
+            confirmed_block_hash=status.block.hash,
+            confirmed_block_height=status.block.height,
+            confirmations=status.confirmations,
+            now=now,
+            expected_tip_hash=expected_tip.hash,
+            expected_tip_height=expected_tip.height,
+        )
+
     def _reconcile_all_deposits(
         self,
     ) -> tuple[AddressBatch, ReconciliationResult]:
@@ -521,6 +822,7 @@ class TradeService:
             final_tip_hash=batch.tip.hash,
             final_tip_height=batch.tip.height,
             credit_depth=self._confirmation_depth,
+            trade_timeout_seconds=self._trade_timeout_seconds,
             now=now,
         )
         return batch, reconciliation
@@ -551,7 +853,21 @@ class TradeService:
             now=self._now(),
         )
 
+    def _broadcast_with_tip(
+        self, transfer: Mapping[str, Any], expected_tip: Tip
+    ) -> TransferResult:
+        if self._broadcast_tip_context is not None:
+            raise AccountingInvariantError("broadcast tip context is already active")
+        self._broadcast_tip_context = expected_tip
+        try:
+            return self._broadcast_stored(transfer)
+        finally:
+            self._broadcast_tip_context = None
+
     def _broadcast_stored(self, transfer: Mapping[str, Any]) -> TransferResult:
+        expected_tip = self._broadcast_tip_context
+        if expected_tip is None:
+            raise AccountingInvariantError("broadcast lacks a common-tip barrier")
         state = transfer["state"]
         if state not in {"prepared", "broadcast"}:
             raise AccountingInvariantError("stored transfer is not broadcastable")
@@ -572,6 +888,10 @@ class TradeService:
                 "confirmed",
             }:
                 raise UncertainSendFailure("trusted broadcast identity is ambiguous")
+            if result.observed_tip != expected_tip:
+                raise UncertainSendFailure(
+                    "trusted broadcast tip differs from deposit barrier"
+                )
             return result.txid, result.status
 
         try:
@@ -580,6 +900,8 @@ class TradeService:
                 expected_txid=txid,
                 invoke=invoke,
                 now=self._now(),
+                expected_tip_hash=expected_tip.hash,
+                expected_tip_height=expected_tip.height,
             )
         except BaseException as exc:
             if not wallet_invoked:
@@ -590,6 +912,8 @@ class TradeService:
                 expected_txid=txid,
                 error_text=str(exc) or "wallet broadcast outcome is uncertain",
                 now=self._now(),
+                expected_tip_hash=expected_tip.hash,
+                expected_tip_height=expected_tip.height,
             )
             if not isinstance(exc, Exception):
                 raise
