@@ -10,6 +10,9 @@ AMOUNT_09C_RE = re.compile(r"(?P<whole>[0-9]+)(?:\.(?P<fraction>[0-9]{1,8}))?\Z"
 ASSET_RE = re.compile(r"[A-Z0-9._-]{2,12}\Z")
 METHOD_RE = re.compile(r"[A-Za-z0-9 ._+/-]{2,32}\Z")
 METHOD_INPUT_RE = re.compile(r"[A-Za-z0-9 ._+/-]*\Z")
+TOTAL_PRICE_RE = re.compile(
+    r"(?:0\.[0-9]{1,18}|[1-9][0-9]{0,17}(?:\.[0-9]{1,18})?)\Z"
+)
 
 
 class OrderSide(StrEnum):
@@ -29,16 +32,20 @@ class OrderState(StrEnum):
     REFUNDED = "refunded"
     CANCELLED = "cancelled"
     DEPOSIT_EXPIRED = "deposit_expired"
+    RECOVERY_HOLD = "recovery_hold"
     TRANSFER_FAILED_SAFE = "transfer_failed_safe"
     TRANSFER_UNCERTAIN = "transfer_uncertain"
 
 
 class TransferState(StrEnum):
+    QUEUED = "queued"
     RESERVED = "reserved"
+    PREPARED = "prepared"
     BROADCAST = "broadcast"
     CONFIRMED = "confirmed"
     FAILED_SAFE = "failed_safe"
     UNCERTAIN = "uncertain"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True)
@@ -120,6 +127,20 @@ def parse_method(value: str) -> str:
     if not METHOD_RE.fullmatch(method):
         raise ValueError("payment method must be 2-32 plain characters")
     return method
+
+
+def parse_total_price(value: str) -> str:
+    if type(value) is not str:
+        raise ValueError("total price must be a positive plain decimal")
+    price = value.strip()
+    if not TOTAL_PRICE_RE.fullmatch(price) or not any(
+        digit in price for digit in "123456789"
+    ):
+        raise ValueError(
+            "total price must be a positive plain decimal with at most "
+            "18 integer and 18 fractional digits"
+        )
+    return price
 
 
 def quote_deposit(*, net_amount: int, network_fee: int, fee_bps: int) -> FeeQuote:

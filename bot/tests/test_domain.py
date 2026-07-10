@@ -6,10 +6,12 @@ from bot.otc.domain import (
     Money,
     OrderSide,
     OrderState,
+    TransferState,
     _decimal_text_to_units,
     parse_09c,
     parse_asset,
     parse_method,
+    parse_total_price,
     quote_deposit,
 )
 
@@ -123,6 +125,39 @@ class DomainTests(unittest.TestCase):
     def test_order_states_are_explicit(self):
         self.assertEqual(OrderSide.BUY.value, "buy")
         self.assertEqual(OrderState.TRANSFER_UNCERTAIN.value, "transfer_uncertain")
+        self.assertEqual(OrderState.RECOVERY_HOLD.value, "recovery_hold")
+        self.assertEqual(TransferState.QUEUED.value, "queued")
+        self.assertEqual(TransferState.PREPARED.value, "prepared")
+        self.assertEqual(TransferState.CANCELLED.value, "cancelled")
+
+    def test_total_price_is_canonical_plain_decimal(self):
+        self.assertEqual(parse_total_price(" 100 "), "100")
+        self.assertEqual(parse_total_price("0.00000001"), "0.00000001")
+        self.assertEqual(
+            parse_total_price("123456789012345678.123456789012345678"),
+            "123456789012345678.123456789012345678",
+        )
+        for bad in (
+            "",
+            "0",
+            "0.0",
+            "00.1",
+            ".1",
+            "1.",
+            "+1",
+            "-1",
+            "1e2",
+            "1,000",
+            "1..2",
+            "1234567890123456789",
+            "1.1234567890123456789",
+            "１",
+            "1\x00.5",
+            True,
+            1.0,
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_total_price(bad)
 
 
 if __name__ == "__main__":
