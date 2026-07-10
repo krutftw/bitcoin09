@@ -1,10 +1,12 @@
 import unittest
+from decimal import localcontext
 
 from bot.otc.domain import (
     FeeQuote,
     Money,
     OrderSide,
     OrderState,
+    _decimal_text_to_units,
     parse_09c,
     parse_asset,
     parse_method,
@@ -28,9 +30,38 @@ class DomainTests(unittest.TestCase):
 
     def test_amount_is_exact_integer_units(self):
         self.assertEqual(parse_09c("1.00000001"), 100_000_001)
-        for bad in ("0", "-1", "1.000000001", "nan", "inf"):
+        for bad in ("0", "-1", "1.000000001", "nan", "inf", True, 1.0):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 parse_09c(bad)
+
+    def test_large_amount_digit_conversion_does_not_round(self):
+        self.assertEqual(
+            _decimal_text_to_units("123456789012345678901.12345678"),
+            12_345_678_901_234_567_890_112_345_678,
+        )
+        with self.assertRaises(ValueError):
+            parse_09c("123456789012345678901.12345678")
+
+    def test_public_amount_conversion_ignores_decimal_context(self):
+        with localcontext() as context:
+            context.prec = 1
+            self.assertEqual(parse_09c("21000000.00000000"), 2_100_000_000_000_000)
+
+    def test_amount_requires_plain_ascii_decimal_text(self):
+        for bad in ("+1", ".1", "1.", "1E2", "１"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_09c(bad)
+
+    def test_amount_rejects_scientific_notation_and_huge_exponents(self):
+        with self.assertRaises(ValueError):
+            parse_09c("1e2")
+        with self.assertRaises(ValueError):
+            parse_09c("1e1000000000")
+
+    def test_amount_enforces_protocol_max_supply(self):
+        self.assertEqual(parse_09c("21000000"), 2_100_000_000_000_000)
+        with self.assertRaises(ValueError):
+            parse_09c("21000000.00000001")
 
     def test_asset_and_method_validation(self):
         self.assertEqual(parse_asset(" usdt "), "USDT")

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 
 UNITS_PER_09C = 100_000_000
+MAX_09C_UNITS = 21_000_000 * UNITS_PER_09C
+AMOUNT_09C_RE = re.compile(r"(?P<whole>[0-9]+)(?:\.(?P<fraction>[0-9]{1,8}))?\Z")
 ASSET_RE = re.compile(r"[A-Z0-9._-]{2,12}\Z")
 METHOD_RE = re.compile(r"[A-Za-z0-9 ._+/-]{2,32}\Z")
 METHOD_INPUT_RE = re.compile(r"[A-Za-z0-9 ._+/-]*\Z")
@@ -77,14 +78,32 @@ class SettlementTerms:
     network: str | None
 
 
+def _decimal_text_to_units(value: str, *, max_units: int | None = None) -> int:
+    match = AMOUNT_09C_RE.fullmatch(value)
+    if match is None:
+        raise ValueError("09C amount must be a positive plain decimal with at most 8 decimals")
+
+    units = 0
+    whole = match.group("whole").lstrip("0")
+    fraction = (match.group("fraction") or "").ljust(8, "0")
+    for digit in whole:
+        units = units * 10 + ord(digit) - ord("0")
+        if max_units is not None and units > max_units:
+            raise ValueError("09C amount must not exceed 21,000,000 09C")
+    for digit in fraction:
+        units = units * 10 + ord(digit) - ord("0")
+        if max_units is not None and units > max_units:
+            raise ValueError("09C amount must not exceed 21,000,000 09C")
+    return units
+
+
 def parse_09c(value: str) -> int:
-    try:
-        amount = Decimal(value.strip())
-    except (InvalidOperation, AttributeError):
-        raise ValueError("invalid 09C amount")
-    if not amount.is_finite() or amount <= 0 or amount.as_tuple().exponent < -8:
-        raise ValueError("09C amount must be positive with at most 8 decimals")
-    return int(amount * UNITS_PER_09C)
+    if type(value) is not str:
+        raise ValueError("09C amount must be a positive plain decimal with at most 8 decimals")
+    units = _decimal_text_to_units(value.strip(), max_units=MAX_09C_UNITS)
+    if units == 0:
+        raise ValueError("09C amount must be positive")
+    return units
 
 
 def parse_asset(value: str) -> str:
