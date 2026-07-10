@@ -250,6 +250,9 @@ Expected: four passing tests.
 **Interfaces:**
 - Consumes: enums and integer-unit rules from `bot.otc.domain`.
 - Produces: `Store(path)`, `Store.initialize()`, `Store.integrity_check()`, `Store.create_order(...)`, `Store.get_order(order_id)`, `Store.append_audit(...)`.
+- `python -m bot.otc.store` requires an explicit `DB_PATH`, initializes that
+  exact database, verifies integrity, and prints bounded JSON containing schema
+  version/integrity. Import-only execution or a missing path exits nonzero.
 
 - [ ] **Step 1: Write migration and schema tests**
 
@@ -321,8 +324,13 @@ persistent mutation before WAL activation. After WAL succeeds, repeat the full
 validation under `BEGIN IMMEDIATE`, perform all migration/schema work, validate
 the resulting catalog, stamp v4, and commit last. A denied WAL activation,
 newer schema, malformed required object, or blocked migration must not stamp or
-partially rewrite the database. If an existing `orders` table lacks `side`,
-require it to contain zero rows, rename it to `orders_v2_archive`, and create
+partially rewrite the database. An already-v4 database is validation-only and
+does not upsert its version row. Validate the complete catalog, not only required
+object presence: allow exactly the 49 active v4 objects plus exact recognized
+empty archive/withdrawal/index evidence for its migration origin, and reject
+every other table, view, index, or trigger. If the exact live-prototype `orders`
+table lacks `side`, require it to contain zero rows and no sequence history,
+rename it to `orders_v2_archive`, and create
 the v4 table. A non-empty prototype table must raise `MigrationBlocked` instead
 of guessing how to transform live funds. Keep the existing `users` and
 `withdrawals` rows. An exact empty v3 database may be archived and rebuilt; any
@@ -1231,6 +1239,17 @@ WHEN NEW.state IS NOT OLD.state AND NOT (
 BEGIN
   SELECT RAISE(ABORT, 'invalid transfer state transition');
 END;
+CREATE TRIGGER IF NOT EXISTS uncertain_blocks_prebroadcast_progress
+BEFORE UPDATE OF state ON transfers
+WHEN (
+  (OLD.state = 'reserved' AND NEW.state = 'prepared') OR
+  (OLD.state = 'prepared' AND NEW.state = 'broadcast')
+) AND EXISTS (
+  SELECT 1 FROM transfers t WHERE t.state = 'uncertain'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'uncertain transfer blocks pre-broadcast progress');
+END;
 CREATE TRIGGER IF NOT EXISTS allocation_insert_guard
 BEFORE INSERT ON transfer_credit_allocations
 BEGIN
@@ -1404,6 +1423,10 @@ keys, a second main order outcome, and two in-flight wallet operations including
 `order_id IS NULL` fee withdrawals. They prove a `queued` or `failed_safe` row
 does not use the unique send lane, `reserved`/`prepared`/`broadcast` do, and application
 claim logic separately refuses every claim while any `uncertain` row exists.
+They reserve an operation, reorg a different confirmed earning transfer to
+`uncertain`, and prove the reserved operation cannot attach signed bytes and a
+prepared operation cannot enter broadcast until uncertainty clears; truthful
+confirmation and exact uncertain-row recovery remain legal.
 Every Store connection asserts `foreign_keys=ON`, `recursive_triggers=ON`, WAL,
 and `synchronous=FULL`; tests use `INSERT OR REPLACE` to prove neither an
 operation key nor an append-only row can be replaced through SQLite conflict
@@ -1446,7 +1469,11 @@ empty legacy orders plus its four named indexes, empty withdrawals, WAL mode,
 and no `schema_meta`; and (b) databases created by the actual committed v3 Store,
 both with and without an existing empty `orders_v2_archive`. Require legacy
 withdrawals to be empty; nonempty withdrawals have no trustworthy opening
-revenue provenance and block migration. For every success assert exact v4
+revenue provenance and block migration. Require absent/zero `sqlite_sequence`
+history for prototype orders/withdrawals and v3 orders/transfers/audits,
+withdrawals, and any prior order archive; insert-then-delete fixtures must block
+without mutation. Add populated shadow-liability tables and rogue triggers to
+v3/v4 fixtures and prove complete-catalog validation rejects them. For every success assert exact v4
 catalog, preserved user/archive evidence, `integrity_check`, and
 `foreign_key_check`. For every blocked/fault-injected phase assert catalog,
 rows, version, and journal mode are unchanged.
@@ -1456,6 +1483,8 @@ rows, version, and journal mode are unchanged.
 ```powershell
 python -m unittest bot.tests.test_store_schema -v
 python -m unittest discover -s bot/tests -p "test_*.py" -v
+$env:DB_PATH = Join-Path $env:TEMP "btc09-otc-migrate-proof.db"
+python -m bot.otc.store
 ```
 
 Expected: all tests pass and `PRAGMA integrity_check` returns `ok`.
@@ -1463,7 +1492,7 @@ Expected: all tests pass and `PRAGMA integrity_check` returns `ok`.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add bot/otc/domain.py bot/otc/store.py bot/tests/test_domain.py bot/tests/test_store_schema.py
+git add bot/otc/domain.py bot/otc/schema_v4.sql bot/otc/store.py bot/tests/test_domain.py bot/tests/test_store_schema.py
 git commit -m "Upgrade OTC schema for durable accounting"
 ```
 

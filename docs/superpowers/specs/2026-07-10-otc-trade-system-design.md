@@ -290,6 +290,10 @@ transaction without duplicate payment. Reserved/prepared/broadcast occupy one
 global send lane, while any uncertain row blocks all claims. A structured
 pre-sign failure may requeue the same immutable row; it never creates a
 replacement operation with a new amount, kind, destination, or transaction.
+If uncertainty appears after a different operation was claimed, that operation
+may not attach signed bytes or advance from prepared to broadcast until the
+uncertainty is reconciled. Truthful confirmation and exact recovery of the
+uncertain transaction remain allowed.
 
 The second valid party confirmation and creation of the buyer release operation
 occur in one `BEGIN IMMEDIATE` transaction. WTS and WTB acceptance also use one

@@ -877,6 +877,17 @@ WHEN NEW.state IS NOT OLD.state AND NOT (
 BEGIN
   SELECT RAISE(ABORT, 'invalid transfer state transition');
 END;
+CREATE TRIGGER IF NOT EXISTS uncertain_blocks_prebroadcast_progress
+BEFORE UPDATE OF state ON transfers
+WHEN (
+  (OLD.state = 'reserved' AND NEW.state = 'prepared') OR
+  (OLD.state = 'prepared' AND NEW.state = 'broadcast')
+) AND EXISTS (
+  SELECT 1 FROM transfers t WHERE t.state = 'uncertain'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'uncertain transfer blocks pre-broadcast progress');
+END;
 CREATE TRIGGER IF NOT EXISTS allocation_insert_guard
 BEFORE INSERT ON transfer_credit_allocations
 BEGIN
