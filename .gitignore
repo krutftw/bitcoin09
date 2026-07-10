@@ -8,5 +8,6 @@ tools/discord/.env
 tools/discord/*.local.*
 tools/discord/*.log
 logs/
+.worktrees/
 __pycache__/
 *.pyc
