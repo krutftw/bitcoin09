@@ -11,3 +11,5 @@ logs/
 .worktrees/
 __pycache__/
 *.pyc
+bot/**/__pycache__/
+bot/.coverage
