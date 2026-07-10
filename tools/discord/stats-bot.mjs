@@ -3,6 +3,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { redactDiscordPath } from "./discord-api.mjs";
+import { DiscordGatewayWatcher, fetchGatewayWithRetry } from "./gateway-watcher.mjs";
 
 const API_BASE = "https://discord.com/api/v10";
 const POOL_ID = "09c";
@@ -36,7 +38,7 @@ if (args.has("--help")) {
 
 main().catch((error) => {
   console.error(error.message || error);
-  process.exitCode = 1;
+  process.exitCode = error.exitCode ?? 1;
 });
 
 async function main() {
@@ -115,86 +117,32 @@ async function postOrUpdateStatsMessage() {
 }
 
 async function watchGateway() {
-  requireDiscordEnv();
+  requireDiscordEnv({ terminal: true });
   if (typeof WebSocket !== "function") {
-    throw new Error("This Node runtime does not provide WebSocket. Use Node 22+ or install a websocket client.");
+    throw terminalStartupError("This Node runtime does not provide WebSocket. Use Node 22+ or install a websocket client.");
   }
 
-  const gateway = await discord("GET", "/gateway/bot");
-  const url = gateway.url + "/?v=10&encoding=json";
+  const gateway = await fetchGatewayWithRetry(
+    () => discord("GET", "/gateway/bot"),
+    { logger: console },
+  );
   console.log("Connecting Discord gateway for role buttons...");
-
-  let sequence = null;
-  let heartbeatTimer = null;
-  const socket = new WebSocket(url);
-
-  socket.addEventListener("open", () => {
-    console.log("Gateway socket open.");
-  });
-
-  socket.addEventListener("message", async (event) => {
-    let packet;
-    try {
-      packet = JSON.parse(event.data);
-    } catch {
-      return;
-    }
-
-    if (packet.s != null) sequence = packet.s;
-
-    if (packet.op === 10) {
-      heartbeatTimer = setInterval(() => {
-        socket.send(JSON.stringify({ op: 1, d: sequence }));
-      }, packet.d.heartbeat_interval);
-
-      socket.send(JSON.stringify({
-        op: 2,
-        d: {
-          token: process.env.DISCORD_BOT_TOKEN,
-          intents: 1,
-          properties: {
-            os: process.platform,
-            browser: "bitcoin09-stats-bot",
-            device: "bitcoin09-stats-bot",
-          },
-        },
-      }));
-      return;
-    }
-
-    if (packet.op === 1) {
-      socket.send(JSON.stringify({ op: 1, d: sequence }));
-      return;
-    }
-
-    if (packet.op === 7 || packet.op === 9) {
-      console.error("Discord gateway requested reconnect; restart stats-bot.mjs --watch.");
-      socket.close();
-      return;
-    }
-
-    if (packet.t === "READY") {
-      console.log(`Ready as ${packet.d.user.username}#${packet.d.user.discriminator ?? "0"}.`);
-      return;
-    }
-
-    if (packet.t === "INTERACTION_CREATE") {
+  const watcher = new DiscordGatewayWatcher({
+    gatewayUrl: gateway.url,
+    token: process.env.DISCORD_BOT_TOKEN,
+    WebSocketCtor: WebSocket,
+    logger: console,
+    onDispatch: async (packet) => {
+      if (packet.t !== "INTERACTION_CREATE") return;
       await handleInteraction(packet.d).catch((error) => {
         console.error("Interaction failed:", error.message || error);
       });
-    }
+    },
+    onFatal: (decision) => {
+      process.exitCode = decision.exitCode;
+    },
   });
-
-  socket.addEventListener("close", (event) => {
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
-    console.log(`Gateway closed: ${event.code} ${event.reason || ""}`.trim());
-    process.exitCode = 1;
-  });
-
-  socket.addEventListener("error", (event) => {
-    console.error("Gateway error:", event.message || event.error || event);
-    process.exitCode = 1;
-  });
+  watcher.start();
 }
 
 async function handleInteraction(interaction) {
@@ -374,14 +322,20 @@ async function discord(method, path, body, options = {}, attempt = 0) {
   if (response.status === 429) {
     const rateLimit = await response.json().catch(() => ({}));
     const retryAfterMs = Math.ceil(Number(rateLimit.retry_after ?? 1) * 1000) + 250;
-    if (attempt > 5) throw new Error(`Discord rate limit did not clear for ${method} ${path}`);
+    if (attempt > 5) {
+      const error = new Error(`Discord rate limit did not clear for ${method} ${redactDiscordPath(path)}`);
+      error.status = 429;
+      throw error;
+    }
     await sleep(retryAfterMs);
     return discord(method, path, body, options, attempt + 1);
   }
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`${method} ${path} failed with ${response.status}: ${text}`);
+    const error = new Error(`${method} ${redactDiscordPath(path)} failed with ${response.status}: ${text}`);
+    error.status = response.status;
+    throw error;
   }
 
   if (response.status === 204) return null;
@@ -437,12 +391,20 @@ function formatNumber(value, digits) {
   });
 }
 
-function requireDiscordEnv() {
+function requireDiscordEnv({ terminal = false } = {}) {
   const missing = ["DISCORD_CLIENT_ID", "DISCORD_GUILD_ID", "DISCORD_BOT_TOKEN"]
     .filter((key) => !process.env[key]);
   if (missing.length) {
-    throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+    const message = `Missing required environment variables: ${missing.join(", ")}`;
+    throw terminal ? terminalStartupError(message) : new Error(message);
   }
+}
+
+function terminalStartupError(message) {
+  const error = new Error(message);
+  error.terminal = true;
+  error.exitCode = 0;
+  return error;
 }
 
 function loadLocalEnv() {
