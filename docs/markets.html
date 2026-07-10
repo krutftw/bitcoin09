@@ -368,7 +368,7 @@ code {
 <img src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
 <div>
 <h1>09C OTC Board</h1>
-<p class="tag">Use the Discord bot for escrow. Use this board for public offers, receipts, and price discovery.</p>
+<p class="tag">Public WTB/WTS records are open. New Discord bot escrow orders are paused during controlled safety testing.</p>
 </div>
 </div>
 <div class="wrap nav">
@@ -379,12 +379,12 @@ code {
 <main>
 <div class="wrap">
 <div class="notice">
-<strong>Not an exchange.</strong> This page is a public noticeboard. The Discord escrow bot can hold the seller's 09C and release after both sides confirm. It does not verify USDT/BTC/fiat payment, set an official price, or guarantee any trade.
+<strong>Escrow pilot paused.</strong> This page is a public noticeboard, not an exchange or escrow. Do not send 09C to an old bot deposit address. The replacement will be announced after funded testing; it will hold 09C only, while fiat, stablecoins, BTC, ETH, and other payment funds move directly between buyer and seller.
 </div>
 
 <section class="tape" aria-live="polite">
 <div class="ticker"><b id="open-count">-</b><span>open offers</span></div>
-<div class="ticker"><b id="escrow-count">-</b><span>escrow bot orders</span></div>
+<div class="ticker"><b id="escrow-count">-</b><span>escrow pilot orders (paused)</span></div>
 <div class="ticker"><b id="receipt-count">-</b><span>completed records</span></div>
 <div class="ticker"><b id="last-record">loading</b><span>latest public record</span></div>
 <div class="ticker"><b id="data-age">loading</b><span>board snapshot</span></div>
@@ -413,7 +413,14 @@ Total price
 </label>
 <label>
 Payment asset
-<input id="payment-asset" placeholder="USDT">
+<input id="payment-asset" list="common-assets" maxlength="12" pattern="[A-Za-z0-9._-]{2,12}" placeholder="AUD, CNY, USDT, BTC, or custom">
+<datalist id="common-assets">
+<option value="AUD"><option value="USD"><option value="EUR"><option value="GBP">
+<option value="CNY"><option value="JPY"><option value="USDT"><option value="USDC">
+<option value="BTC"><option value="ETH"><option value="SOL"><option value="LTC">
+<option value="DOGE"><option value="BNB">
+</datalist>
+<small class="muted">Use a 2-12 character English asset code. Custom codes are allowed.</small>
 </label>
 <label>
 Public contact or parties
@@ -425,7 +432,7 @@ Public proof or 09C tx
 </label>
 <label class="wide">
 Terms or public notes
-<textarea id="notes" placeholder="Trade small first. Use public records or the Discord escrow bot if needed."></textarea>
+<textarea id="notes" placeholder="Trade small first. State the payment network/method clearly. Bot escrow is currently paused."></textarea>
 </label>
 </div>
 
@@ -439,16 +446,17 @@ Terms or public notes
 <p class="muted" id="copy-status" aria-live="polite"></p>
 <pre class="preview" id="discord-preview">WTB 09C for USDT
 Contact: Discord @name
-Notes: Trade small first. Public record or Discord escrow bot preferred.</pre>
+Notes: Trade small first. Bot escrow is currently paused.</pre>
 </section>
 
 <section class="panel">
 <h2>How It Works</h2>
+<p class="muted">Write public records in English. Asset codes use English letters, numbers, dot, underscore, or hyphen.</p>
 <ol>
 <li>Draft the trade record on this page.</li>
 <li>Use the copied text in Discord <code>#💱-otc-trading</code> if you want quick negotiation.</li>
-<li>For escrow, the seller starts with <code>/sell</code> in Discord, deposits 09C, then the buyer accepts with <code>/buy</code>.</li>
-<li>After off-chain payment, both sides use <code>/confirm</code>. If it gets stuck, use <code>/dispute</code>.</li>
+<li>Community posts and DMs are not bot escrow. New escrow orders stay paused until the controlled pilot is announced in Discord.</li>
+<li>When launched, the bot will create a fresh order-specific 09C address. Never send to an address copied from an old message.</li>
 <li>Open the public GitHub record when the offer or completed trade should be visible on the board.</li>
 <li>Add only public proof: 09C tx link, redacted screenshot, or short note. Do not upload private payment account details.</li>
 </ol>
@@ -457,8 +465,8 @@ Notes: Trade small first. Public record or Discord escrow bot preferred.</pre>
 <section class="panel">
 <div class="board-head">
 <div>
-<h2>Live Escrow Bot</h2>
-<p class="muted" id="bot-feed-note">Loading Discord escrow orders...</p>
+<h2>Escrow Pilot Status</h2>
+<p class="muted" id="bot-feed-note">Loading sanitized historical order status. New orders are paused.</p>
 </div>
 <p class="muted"><a href="https://discord.gg/fUuGzwRTzP">open Discord</a></p>
 </div>
@@ -524,7 +532,8 @@ btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds seed.btc09.org:9009</pre>
 <ul>
 <li>Trade small first.</li>
 <li>Never share seed phrases, private keys, wallet files, Discord tokens, or remote access.</li>
-<li>Staff will not DM you first. Use slash commands with the Bitcoin 09 bot for escrow.</li>
+<li>Staff will not DM you first. A community post or DM is not bot escrow.</li>
+<li>Do not send 09C until the verified pilot creates a fresh order-specific address.</li>
 <li>No fake volume, wash trades, pump groups, price promises, or impersonation.</li>
 <li>Use public completed-trade records for factual price discovery, not hype.</li>
 </ul>
@@ -707,8 +716,8 @@ function renderBotFeed(data) {
   document.getElementById('escrow-count').textContent = active.length.toLocaleString();
   note.className = 'muted';
   note.textContent = botRows.length
-    ? 'Showing sanitized Discord escrow orders. No user IDs, wallet addresses, or payment details are published.' + (generated ? ' Last sync: ' + generated + '.' : '')
-    : 'No public escrow bot orders yet. Create one in Discord with /sell.';
+    ? 'Showing sanitized historical Discord escrow orders. New orders are paused; no user IDs, wallet addresses, or payment details are published.' + (generated ? ' Last sync: ' + generated + '.' : '')
+    : 'No public escrow orders. New bot orders are paused during controlled safety testing.';
   list.innerHTML = botRows.slice(0, 20).map(renderBotRow).join('');
 }
 
@@ -759,11 +768,15 @@ function renderMarket() {
 }
 
 function draft() {
+  const paymentAsset = (draftFields.paymentAsset.value.trim() || 'USDT').toUpperCase();
+  const publicText = [draftFields.contact.value, draftFields.proof.value, draftFields.notes.value];
   return {
     type: draftFields.type.value,
     amount: draftFields.amount.value.trim(),
     totalPrice: draftFields.totalPrice.value.trim(),
-    paymentAsset: draftFields.paymentAsset.value.trim() || 'USDT',
+    paymentAsset,
+    assetValid: /^[A-Z0-9._-]{2,12}$/.test(paymentAsset),
+    publicTextValid: publicText.every((value) => !/[^\x20-\x7E]/.test(value)),
     contact: draftFields.contact.value.trim(),
     proof: draftFields.proof.value.trim(),
     notes: draftFields.notes.value.trim(),
@@ -789,6 +802,7 @@ function discordPost(item) {
   if (item.proof) lines.push('Proof: ' + item.proof);
   if (item.notes) lines.push('Notes: ' + item.notes);
   lines.push('Public record goes on the 09C OTC board.');
+  lines.push('Community post only. Not bot escrow. New escrow orders are paused.');
   return lines.join('\n');
 }
 
@@ -825,6 +839,17 @@ function githubUrl(item) {
 
 function updateDraft() {
   const item = draft();
+  const githubLink = document.getElementById('github-link');
+  if (!item.assetValid || !item.publicTextValid) {
+    document.getElementById('price-line').textContent = item.assetValid
+      ? 'Write public contact, proof, and notes in English/ASCII.'
+      : 'Payment asset must be a 2-12 character English code using letters, numbers, dot, underscore, or hyphen.';
+    document.getElementById('discord-preview').textContent = 'Fix the highlighted public record fields before copying a post.';
+    githubLink.removeAttribute('href');
+    githubLink.setAttribute('aria-disabled', 'true');
+    return;
+  }
+  githubLink.removeAttribute('aria-disabled');
   const amount = numeric(item.amount);
   const total = numeric(item.totalPrice);
   const priceLine = document.getElementById('price-line');
@@ -834,8 +859,8 @@ function updateDraft() {
     priceLine.textContent = 'Enter an amount and total price to see price per 09C.';
   }
   document.getElementById('discord-preview').textContent = discordPost(item);
-  document.getElementById('github-link').href = githubUrl(item);
-  document.getElementById('github-link').className = item.type === 'sell' ? 'button sell' : item.type === 'completed' ? 'button record' : 'button';
+  githubLink.href = githubUrl(item);
+  githubLink.className = item.type === 'sell' ? 'button sell' : item.type === 'completed' ? 'button record' : 'button';
 }
 
 async function copyDiscordPost() {
@@ -876,7 +901,7 @@ async function loadBotFeed() {
   } catch (error) {
     document.getElementById('escrow-count').textContent = '-';
     document.getElementById('bot-feed-note').className = 'error';
-    document.getElementById('bot-feed-note').textContent = 'Could not load escrow bot feed right now. Use Discord /orders.';
+    document.getElementById('bot-feed-note').textContent = 'Could not load the escrow status feed. New bot orders remain paused; check Discord announcements.';
     document.getElementById('bot-feed-list').innerHTML = '';
   }
 }
