@@ -124,6 +124,7 @@ export class GatewaySessionPolicy {
   }
 
   heartbeatRequested() {
+    if (!this.heartbeatAcked) return null;
     this.heartbeatAcked = false;
     return this.heartbeatPayload();
   }

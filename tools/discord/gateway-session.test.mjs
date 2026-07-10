@@ -247,6 +247,7 @@ test("server heartbeat requests receive the latest sequence immediately", () => 
   policy.observe({ op: 0, s: 9, t: "GUILD_CREATE", d: {} });
 
   assert.deepEqual(policy.heartbeatRequested(), { op: 1, d: 9 });
+  assert.equal(policy.heartbeatRequested(), null);
 });
 
 test("abnormal failures back off to a cap and READY or RESUMED resets retries", () => {
@@ -486,6 +487,30 @@ test("server-requested heartbeat resets the ACK deadline to a full interval", as
   await sockets[0].packet({ op: 11, d: null });
   await timers.runNext();
   assert.equal(sockets[0].closed, null);
+});
+
+test("second server heartbeat request before ACK reconnects without sending again", async () => {
+  const { watcher, timers, sockets } = createWatcher();
+  watcher.start();
+  await sockets[0].packet({ op: 10, d: { heartbeat_interval: 40_000 } });
+  await sockets[0].packet({
+    op: 0,
+    s: 42,
+    t: "READY",
+    d: {
+      session_id: "session-123",
+      resume_gateway_url: "wss://resume.discord.gg",
+      user: { username: "btc09", discriminator: "0" },
+    },
+  });
+
+  await sockets[0].packet({ op: 1, d: null });
+  const sentAfterFirstRequest = sockets[0].sent.length;
+  await sockets[0].packet({ op: 1, d: null });
+
+  assert.equal(sockets[0].sent.length, sentAfterFirstRequest);
+  assert.deepEqual(sockets[0].closed, { code: 4000, reason: "reconnect" });
+  assert.deepEqual(timers.delays(), [0]);
 });
 
 test("watcher stops retrying only for terminal gateway close codes", async () => {

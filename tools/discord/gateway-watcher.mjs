@@ -140,7 +140,16 @@ export class DiscordGatewayWatcher {
     }
 
     if (packet.op === 1) {
-      if (this.send(context, this.policy.heartbeatRequested()) && context.heartbeatInterval != null) {
+      const heartbeat = this.policy.heartbeatRequested();
+      if (heartbeat == null) {
+        this.logger.error(
+          `Gateway requested another heartbeat before ACK; reconnecting sequence=${stateValue(this.policy.sequence)} ` +
+          `session=${this.policy.canResume ? "resumable" : "fresh"}.`,
+        );
+        this.scheduleReconnect(context, this.policy.transportFailure("heartbeat_ack_timeout"));
+        return;
+      }
+      if (this.send(context, heartbeat) && context.heartbeatInterval != null) {
         this.scheduleHeartbeat(context, context.heartbeatInterval);
       }
       return;
