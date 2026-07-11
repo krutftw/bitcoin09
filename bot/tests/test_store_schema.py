@@ -74,6 +74,55 @@ CREATE INDEX idx_orders_seller ON orders(seller_id);
 CREATE INDEX idx_orders_buyer ON orders(buyer_id);
 """
 
+LIVE_INCREMENTAL_PROTOTYPE_SCHEMA = """
+CREATE TABLE users (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT,
+    wallet_addr TEXT,
+    created_at INTEGER,
+    updated_at INTEGER
+);
+CREATE TABLE orders (
+    order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    seller_id INTEGER NOT NULL,
+    seller_name TEXT,
+    amount TEXT NOT NULL,
+    price TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending_deposit',
+    escrow_bal_before TEXT,
+    buyer_id INTEGER,
+    buyer_name TEXT,
+    seller_confirmed INTEGER DEFAULT 0,
+    buyer_confirmed INTEGER DEFAULT 0,
+    release_txid TEXT,
+    fee TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE withdrawals (
+    withdrawal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_id INTEGER NOT NULL,
+    amount TEXT NOT NULL,
+    address TEXT NOT NULL,
+    txid TEXT,
+    status TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+ALTER TABLE orders ADD COLUMN deposit_addr TEXT;
+ALTER TABLE orders ADD COLUMN deposit_expected TEXT;
+ALTER TABLE orders ADD COLUMN deposit_confirmed_balance TEXT;
+ALTER TABLE orders ADD COLUMN refund_txid TEXT;
+ALTER TABLE orders ADD COLUMN cancel_reason TEXT;
+ALTER TABLE orders ADD COLUMN matched_at INTEGER;
+ALTER TABLE orders ADD COLUMN disputed_at INTEGER;
+ALTER TABLE orders ADD COLUMN completed_at INTEGER;
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_deposit_addr ON orders(deposit_addr);
+CREATE INDEX idx_orders_seller ON orders(seller_id);
+CREATE INDEX idx_orders_buyer ON orders(buyer_id);
+"""
+
 
 @lru_cache(maxsize=1)
 def committed_v3_store_class():
@@ -568,6 +617,85 @@ class StoreSchemaTests(unittest.TestCase):
                     "orders_v2_archive",
                 )
             self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    def test_exact_incremental_prototype_migrates_one_compatible_user(self):
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            conn.executescript(LIVE_INCREMENTAL_PROTOTYPE_SCHEMA)
+            conn.execute("INSERT INTO users VALUES(7, 'Pilot', NULL, 1, 2)")
+
+        Store(self.path).initialize()
+        Store(self.path).initialize()
+
+        with managed_connection(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(
+                conn.execute("SELECT * FROM users WHERE user_id=7").fetchone(),
+                (7, "Pilot", None, 1, 2),
+            )
+            self.assertEqual(
+                conn.execute("SELECT origin FROM schema_meta WHERE id=1").fetchone(),
+                ("live_prototype",),
+            )
+            self.assertEqual(
+                tuple(row[1] for row in conn.execute("PRAGMA table_info(orders_v2_archive)")),
+                (
+                    "order_id", "seller_id", "seller_name", "amount", "price",
+                    "currency", "status", "escrow_bal_before", "buyer_id",
+                    "buyer_name", "seller_confirmed", "buyer_confirmed",
+                    "release_txid", "fee", "created_at", "updated_at",
+                    "deposit_addr", "deposit_expected", "deposit_confirmed_balance",
+                    "refund_txid", "cancel_reason", "matched_at", "disputed_at",
+                    "completed_at",
+                ),
+            )
+
+    def test_incremental_prototype_near_miss_catalogs_are_rejected(self):
+        variants = {
+            "column_order": LIVE_INCREMENTAL_PROTOTYPE_SCHEMA.replace(
+                "ALTER TABLE orders ADD COLUMN deposit_addr TEXT;\n"
+                "ALTER TABLE orders ADD COLUMN deposit_expected TEXT;",
+                "ALTER TABLE orders ADD COLUMN deposit_expected TEXT;\n"
+                "ALTER TABLE orders ADD COLUMN deposit_addr TEXT;",
+            ),
+            "column_definition": LIVE_INCREMENTAL_PROTOTYPE_SCHEMA.replace(
+                "ALTER TABLE orders ADD COLUMN deposit_addr TEXT;",
+                "ALTER TABLE orders ADD COLUMN deposit_addr BLOB;",
+            ),
+            "extra_index": LIVE_INCREMENTAL_PROTOTYPE_SCHEMA
+            + "CREATE INDEX private_extra_index ON orders(currency);\n",
+            "missing_index": LIVE_INCREMENTAL_PROTOTYPE_SCHEMA.replace(
+                "CREATE INDEX idx_orders_buyer ON orders(buyer_id);", ""
+            ),
+        }
+        for name, source in variants.items():
+            with self.subTest(name=name):
+                path = Path(self.tmp.name) / f"incremental-near-miss-{name}.db"
+                with managed_connection(sqlite3.connect(path)) as conn:
+                    conn.executescript(source)
+                before = self.database_dump(path)
+                with self.assertRaises(MigrationBlocked):
+                    Store(path).initialize()
+                self.assertEqual(self.database_dump(path), before)
+
+    def test_both_prototype_archive_variants_restart_with_unchanged_origin(self):
+        for name, source in (
+            ("fresh-columns", LIVE_PROTOTYPE_SCHEMA),
+            ("historical-incremental", LIVE_INCREMENTAL_PROTOTYPE_SCHEMA),
+        ):
+            with self.subTest(name=name):
+                path = Path(self.tmp.name) / f"prototype-restart-{name}.db"
+                with managed_connection(sqlite3.connect(path)) as conn:
+                    conn.executescript(source)
+                Store(path).initialize()
+                before = self.database_dump(path)
+                Store(path).initialize()
+                self.assertEqual(self.database_dump(path), before)
+                with managed_connection(sqlite3.connect(path)) as conn:
+                    self.assertEqual(
+                        conn.execute(
+                            "SELECT version,origin FROM schema_meta WHERE id=1"
+                        ).fetchone(),
+                        (4, "live_prototype"),
+                    )
 
     def test_nonempty_prototype_financial_tables_block_without_mutation(self):
         cases = ("orders", "withdrawals")

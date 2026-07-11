@@ -274,6 +274,55 @@ CREATE INDEX idx_orders_seller ON orders(seller_id);
 CREATE INDEX idx_orders_buyer ON orders(buyer_id);
 """
 
+_LIVE_INCREMENTAL_PROTOTYPE_SOURCE = """
+CREATE TABLE users (
+  user_id INTEGER PRIMARY KEY,
+  username TEXT,
+  wallet_addr TEXT,
+  created_at INTEGER,
+  updated_at INTEGER
+);
+CREATE TABLE orders (
+  order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  seller_id INTEGER NOT NULL,
+  seller_name TEXT,
+  amount TEXT NOT NULL,
+  price TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending_deposit',
+  escrow_bal_before TEXT,
+  buyer_id INTEGER,
+  buyer_name TEXT,
+  seller_confirmed INTEGER DEFAULT 0,
+  buyer_confirmed INTEGER DEFAULT 0,
+  release_txid TEXT,
+  fee TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE withdrawals (
+  withdrawal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  admin_id INTEGER NOT NULL,
+  amount TEXT NOT NULL,
+  address TEXT NOT NULL,
+  txid TEXT,
+  status TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+ALTER TABLE orders ADD COLUMN deposit_addr TEXT;
+ALTER TABLE orders ADD COLUMN deposit_expected TEXT;
+ALTER TABLE orders ADD COLUMN deposit_confirmed_balance TEXT;
+ALTER TABLE orders ADD COLUMN refund_txid TEXT;
+ALTER TABLE orders ADD COLUMN cancel_reason TEXT;
+ALTER TABLE orders ADD COLUMN matched_at INTEGER;
+ALTER TABLE orders ADD COLUMN disputed_at INTEGER;
+ALTER TABLE orders ADD COLUMN completed_at INTEGER;
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_deposit_addr ON orders(deposit_addr);
+CREATE INDEX idx_orders_seller ON orders(seller_id);
+CREATE INDEX idx_orders_buyer ON orders(buyer_id);
+"""
+
 _LIVE_PROTOTYPE_INDEXES = {
     "idx_orders_status": "CREATE INDEX idx_orders_status ON orders(status)",
     "idx_orders_deposit_addr": (
@@ -384,10 +433,10 @@ def _catalog_from_connection(
     return catalog
 
 
-def _prototype_evidence_catalog() -> dict[str, tuple[str, str]]:
+def _prototype_evidence_catalog(source: str) -> dict[str, tuple[str, str]]:
     conn = sqlite3.connect(":memory:")
     try:
-        conn.executescript(_LIVE_PROTOTYPE_SOURCE)
+        conn.executescript(source)
         conn.execute("ALTER TABLE orders RENAME TO orders_v2_archive")
         evidence_names = {
             "orders_v2_archive",
@@ -450,9 +499,19 @@ def _merged_catalog(
 _EXPECTED_V4_OBJECTS = _catalog_from_script(_SCHEMA_SOURCE)
 _EXPECTED_V3_OBJECTS = _catalog_from_script(_V3_SCHEMA_SOURCE)
 _EXPECTED_LIVE_PROTOTYPE_OBJECTS = _catalog_from_script(_LIVE_PROTOTYPE_SOURCE)
-_EXPECTED_PROTOTYPE_EVIDENCE = _prototype_evidence_catalog()
+_EXPECTED_INCREMENTAL_LIVE_PROTOTYPE_OBJECTS = _catalog_from_script(
+    _LIVE_INCREMENTAL_PROTOTYPE_SOURCE
+)
+_EXPECTED_PROTOTYPE_EVIDENCE = _prototype_evidence_catalog(_LIVE_PROTOTYPE_SOURCE)
+_EXPECTED_INCREMENTAL_PROTOTYPE_EVIDENCE = _prototype_evidence_catalog(
+    _LIVE_INCREMENTAL_PROTOTYPE_SOURCE
+)
 _EXPECTED_V3_ARCHIVES = _v3_archive_catalog()
 _EXPECTED_WITHDRAWALS = {"withdrawals": _EXPECTED_LIVE_PROTOTYPE_OBJECTS["withdrawals"]}
+_EXPECTED_LIVE_PROTOTYPE_VARIANTS = (
+    ("fresh-columns", _EXPECTED_LIVE_PROTOTYPE_OBJECTS),
+    ("historical-incremental", _EXPECTED_INCREMENTAL_LIVE_PROTOTYPE_OBJECTS),
+)
 _EXPECTED_V3_CATALOG_VARIANTS = (
     ("fresh-v3", _EXPECTED_V3_OBJECTS),
     (
@@ -486,6 +545,19 @@ _EXPECTED_V4_CATALOG_BY_ORIGIN = {
         _EXPECTED_PROTOTYPE_EVIDENCE,
     ),
 }
+_EXPECTED_V4_CATALOG_VARIANTS_BY_ORIGIN = {
+    origin: ((origin, catalog),)
+    for origin, catalog in _EXPECTED_V4_CATALOG_BY_ORIGIN.items()
+}
+_EXPECTED_V4_CATALOG_VARIANTS_BY_ORIGIN["live_prototype"] += (
+    (
+        "historical-incremental",
+        _merged_catalog(
+            _EXPECTED_V4_OBJECTS,
+            _EXPECTED_INCREMENTAL_PROTOTYPE_EVIDENCE,
+        ),
+    ),
+)
 _V3_INDEX_NAMES = (
     "orders_by_state",
     "orders_by_deposit",
@@ -572,9 +644,9 @@ class Store:
             for statement in _V4_SCHEMA_STATEMENTS:
                 conn.execute(statement)
             self._migration_checkpoint("schema")
-            self._validate_exact_catalog(
-                self._read_catalog(conn),
-                _EXPECTED_V4_CATALOG_BY_ORIGIN[plan.origin],
+            self._validate_catalog_variants(
+                conn,
+                _EXPECTED_V4_CATALOG_VARIANTS_BY_ORIGIN[plan.origin],
                 f"v4 origin {plan.origin}",
             )
             self._validate_v4_evidence_rows(conn)
@@ -5354,6 +5426,47 @@ class Store:
             self._migration_checkpoint("users")
 
     @classmethod
+    def validate_migration_preflight(cls, conn: sqlite3.Connection) -> str:
+        """Strictly validate a read-only migration source and zero obligations."""
+        original_row_factory = conn.row_factory
+        conn.row_factory = sqlite3.Row
+        try:
+            plan = cls._preflight_initialization(conn)
+
+            def count(sql: str) -> int:
+                row = conn.execute(sql).fetchone()
+                if row is None or type(row[0]) is not int or row[0] < 0:
+                    raise MigrationBlocked("migration preflight count is invalid")
+                return row[0]
+
+            if cls._schema_object(conn, "orders") is not None and count(
+                "SELECT COUNT(*) FROM orders"
+            ) != 0:
+                raise MigrationBlocked("orders must be zero before migration")
+            if cls._schema_object(conn, "withdrawals") is not None and count(
+                "SELECT COUNT(*) FROM withdrawals"
+            ) != 0:
+                raise MigrationBlocked("legacy withdrawals must be zero before migration")
+            if cls._schema_object(conn, "transfers") is not None:
+                if count(
+                    "SELECT COUNT(*) FROM transfers WHERE state IN "
+                    "('queued','reserved','prepared','broadcast','uncertain')"
+                ) != 0:
+                    raise MigrationBlocked("unresolved transfers must be zero before migration")
+                if count(
+                    "SELECT COUNT(*) FROM transfers WHERE kind='fee_withdrawal'"
+                ) != 0:
+                    raise MigrationBlocked("fee withdrawals must be zero before migration")
+            return {
+                "fresh": "fresh",
+                "prototype": "legacy_prototype",
+                "v3": "v3",
+                "v4": "v4",
+            }[plan.kind]
+        finally:
+            conn.row_factory = original_row_factory
+
+    @classmethod
     def _preflight_initialization(cls, conn: sqlite3.Connection) -> _MigrationPlan:
         schema_meta = cls._schema_object(conn, "schema_meta")
         if schema_meta is not None:
@@ -5367,14 +5480,14 @@ class Store:
                 )
             if version == SCHEMA_VERSION:
                 origin = cls._read_schema_origin(conn)
-                expected = _EXPECTED_V4_CATALOG_BY_ORIGIN.get(origin)
-                if expected is None:
+                variants = _EXPECTED_V4_CATALOG_VARIANTS_BY_ORIGIN.get(origin)
+                if variants is None:
                     raise MigrationBlocked(
                         f"schema_meta contains unsupported migration origin {origin!r}"
                     )
-                cls._validate_exact_catalog(
-                    cls._read_catalog(conn),
-                    expected,
+                cls._validate_catalog_variants(
+                    conn,
+                    variants,
                     f"v4 origin {origin}",
                 )
                 cls._validate_v4_evidence_rows(conn)
@@ -5408,9 +5521,9 @@ class Store:
             cls._require_zero_sequences(conn, None)
             return _MigrationPlan("fresh", "fresh")
 
-        cls._validate_exact_catalog(
-            actual,
-            _EXPECTED_LIVE_PROTOTYPE_OBJECTS,
+        cls._validate_catalog_variants(
+            conn,
+            _EXPECTED_LIVE_PROTOTYPE_VARIANTS,
             "live prototype",
         )
         cls._validate_compatible_users(conn)

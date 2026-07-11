@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import stat
 import time
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
@@ -14,7 +15,7 @@ from bot.otc.domain import (
     parse_total_price,
 )
 
-DEFAULT_PUBLIC_FEED_PATH = Path("/var/lib/btc09-otc/public/otc-bot-feed.json")
+DEFAULT_PUBLIC_FEED_PATH = Path("/var/lib/btc09-otc-public/otc-bot-feed.json")
 UNITS_PER_09C = 100_000_000
 MAX_FEED_BYTES = 4 * 1024 * 1024
 _DIRECTORY_FSYNC_SUPPORTED = os.name != "nt"
@@ -544,19 +545,48 @@ def health_is_operational(payload: Mapping[str, object]) -> bool:
     return type(health) is dict and health["accepting_orders"] is True
 
 
-def _fsync_parent_directory(path: Path) -> None:
+def _open_public_directory(path: Path) -> int | None:
+    entry = os.lstat(path)
+    if not stat.S_ISDIR(entry.st_mode) or stat.S_ISLNK(entry.st_mode):
+        raise ValueError("public feed parent must be a real directory")
+    if not _DIRECTORY_FSYNC_SUPPORTED:
+        return None
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    directory_fd = os.open(path, flags)
+    opened = os.fstat(directory_fd)
+    if not stat.S_ISDIR(opened.st_mode) or (opened.st_dev, opened.st_ino) != (
+        entry.st_dev,
+        entry.st_ino,
+    ):
+        os.close(directory_fd)
+        raise ValueError("public feed parent changed while opening")
+    return directory_fd
+
+
+def _fsync_parent_directory(path: Path, directory_fd: int | None = None) -> None:
     if not _DIRECTORY_FSYNC_SUPPORTED:
         return
-    directory = os.open(path, os.O_RDONLY)
+    directory = directory_fd
+    close_directory = False
+    if directory is None:
+        directory = _open_public_directory(path)
+        close_directory = True
+    if directory is None:
+        return
     try:
         os.fsync(directory)
     finally:
-        os.close(directory)
+        if close_directory:
+            os.close(directory)
 
 
 def write_public_feed(path: str | os.PathLike[str], payload: Mapping[str, object]) -> None:
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
     encoded = (
         json.dumps(
             payload,
@@ -569,41 +599,71 @@ def write_public_feed(path: str | os.PathLike[str], payload: Mapping[str, object
     ).encode("utf-8")
     if len(encoded) > MAX_FEED_BYTES:
         raise ValueError("public feed exceeds the maximum size")
-    temporary = target.parent / f".{target.name}.{secrets.token_hex(8)}.tmp"
+    temporary_name = f".{target.name}.{secrets.token_hex(8)}.tmp"
+    directory_fd = _open_public_directory(target.parent)
     descriptor: int | None = None
     try:
-        descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
-        )
+        if directory_fd is None:
+            descriptor = os.open(
+                target.parent / temporary_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+        else:
+            descriptor = os.open(
+                temporary_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=directory_fd,
+            )
         with os.fdopen(descriptor, "wb", closefd=True) as handle:
             descriptor = None
             handle.write(encoded)
             handle.flush()
+            os.fchmod(handle.fileno(), 0o644)
             os.fsync(handle.fileno())
         for attempt in range(100):
             try:
-                os.replace(temporary, target)
+                if directory_fd is None:
+                    os.replace(target.parent / temporary_name, target)
+                else:
+                    os.replace(
+                        temporary_name,
+                        target.name,
+                        src_dir_fd=directory_fd,
+                        dst_dir_fd=directory_fd,
+                    )
                 break
             except PermissionError:
                 if os.name != "nt" or attempt == 99:
                     raise
                 time.sleep(0.001)
-        _fsync_parent_directory(target.parent)
+        _fsync_parent_directory(target.parent, directory_fd)
     finally:
         if descriptor is not None:
             os.close(descriptor)
         try:
-            temporary.unlink()
+            if directory_fd is None:
+                (target.parent / temporary_name).unlink()
+            else:
+                os.unlink(temporary_name, dir_fd=directory_fd)
         except FileNotFoundError:
             pass
+        if directory_fd is not None:
+            os.close(directory_fd)
 
 
 def invalidate_public_feed(path: str | os.PathLike[str]) -> None:
     target = Path(path)
+    directory_fd = _open_public_directory(target.parent)
     try:
-        target.unlink()
+        if directory_fd is None:
+            target.unlink()
+        else:
+            os.unlink(target.name, dir_fd=directory_fd)
+        _fsync_parent_directory(target.parent, directory_fd)
     except FileNotFoundError:
         return
-    _fsync_parent_directory(target.parent)
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)

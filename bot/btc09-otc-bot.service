@@ -2,22 +2,63 @@
 Description=BTC09 OTC Escrow Discord Bot
 After=network-online.target btc09-seed.service
 Wants=network-online.target
+ConditionPathExists=!/var/lib/btc09-otc-maintenance/active
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/btc09
-EnvironmentFile=/etc/btc09/discord.env
-Environment=FEE_PERCENT=0
-Environment=OTC_TRADING_ENABLED=0
+User=btc09-otc
+Group=btc09-otc
+WorkingDirectory=/opt/btc09/bitcoin09
+StateDirectory=btc09-otc
+StateDirectoryMode=0700
+LoadCredential=otc-secrets:/etc/btc09/otc-secrets.env
+Environment=OTC_SECRETS_FILE=%d/otc-secrets
+Environment=OTC_FEE_BPS=0
+Environment=OTC_ACCEPTING_ORDERS=0
 Environment=BTC09_BIN=/opt/btc09/btc09
 Environment=BTC09_DATADIR=/opt/btc09/data
-Environment=EXPLORER_URL=http://localhost:8009
-Environment=DB_PATH=/opt/btc09/otc_bot.db
-Environment=PUBLIC_FEED_PATH=/opt/btc09/public/otc-bot-feed.json
+Environment=BTC09_NETWORK=btc09-mainnet
+Environment=BTC09_WALLET_PATH=/var/lib/btc09-otc/wallet-mainnet.json
+Environment=EXPLORER_URL=http://127.0.0.1:8009
+Environment=DB_PATH=/var/lib/btc09-otc/otc_bot.db
+Environment=PUBLIC_FEED_PATH=/var/lib/btc09-otc-public/otc-bot-feed.json
+Environment=OTC_MAX_ACTIVE_ORDERS_TOTAL=500
+Environment=OTC_MAX_ACTIVE_ORDERS_PER_MAKER=20
+Environment=OTC_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL=5000
+Environment=OTC_DEPOSIT_ALLOCATIONS_LIFETIME_PER_SELLER=250
+Environment=OTC_DEPOSIT_ALLOCATIONS_DAILY_TOTAL=100
+Environment=OTC_DEPOSIT_ALLOCATIONS_DAILY_PER_SELLER=10
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/btc09/venv/bin/python /opt/btc09/btc09_otc_bot.py
+ExecStart=/opt/btc09/venv/bin/python -m bot.btc09_otc_bot
 Restart=always
 RestartSec=10
+KillMode=control-group
+TimeoutStopSec=15
+UMask=0077
+
+# systemd copies the root-owned allowlisted credential into a private read-only mount.
+CapabilityBoundingSet=
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/btc09-otc /var/lib/btc09-otc-public /opt/btc09/data/blocks-mainnet.dat.lock
+ReadOnlyPaths=/opt/btc09/data
+InaccessiblePaths=-/opt/btc09/data/wallet-mainnet.json
 
 [Install]
 WantedBy=multi-user.target

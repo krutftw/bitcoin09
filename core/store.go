@@ -21,6 +21,7 @@ type canonicalSnapshotSource interface {
 
 type storeFileOps struct {
 	createTemp func(string, string) (*os.File, error)
+	prepare    func(string, *os.File) error
 	write      func(*bufio.Writer, []byte) (int, error)
 	flush      func(*bufio.Writer) error
 	syncFile   func(*os.File) error
@@ -34,6 +35,7 @@ type storeFileOps struct {
 func defaultStoreFileOps() storeFileOps {
 	return storeFileOps{
 		createTemp: os.CreateTemp,
+		prepare:    prepareStoreReplacement,
 		write: func(writer *bufio.Writer, data []byte) (int, error) {
 			return writer.Write(data)
 		},
@@ -442,9 +444,6 @@ func (s *Store) durableReplace(data []byte) (err error) {
 	if filepath.Dir(filepath.Clean(tempAbs)) != directory {
 		return errors.New("temporary snapshot is outside destination directory")
 	}
-	if err := file.Chmod(0600); err != nil {
-		return err
-	}
 	writer := bufio.NewWriterSize(file, 1<<20)
 	written, err := s.ops.write(writer, data)
 	if err != nil {
@@ -454,6 +453,9 @@ func (s *Store) durableReplace(data []byte) (err error) {
 		return io.ErrShortWrite
 	}
 	if err := s.ops.flush(writer); err != nil {
+		return err
+	}
+	if err := s.ops.prepare(s.path, file); err != nil {
 		return err
 	}
 	if err := s.ops.syncFile(file); err != nil {

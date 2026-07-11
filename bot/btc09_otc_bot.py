@@ -6,8 +6,11 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import os
+import posixpath
+import stat
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,6 +49,20 @@ from bot.otc.wallet import Wallet
 from bot.otc.translation import translation_provider_from_environment
 
 BOT_VERSION = "otc-trade-v1"
+MAX_OTC_SECRETS_BYTES = 16_384
+MAX_OTC_SECRET_LINES = 32
+MAX_OTC_SECRET_VALUE_BYTES = 4_096
+OTC_SECRET_KEYS = frozenset(
+    {
+        "BOT_TOKEN",
+        "DISCORD_BOT_TOKEN",
+        "DISCORD_GUILD_ID",
+        "ADMIN_IDS",
+        "TRANSLATION_API_URL",
+        "TRANSLATION_API_TOKEN",
+        "OTC_ADMIN_FEE_DESTINATION",
+    }
+)
 
 
 def _publish_feed(store: Store, path: str, checked_at: int, runtime_health) -> None:
@@ -106,27 +123,180 @@ def _probe_explorer_anchors(explorer: object, read_watched_addresses) -> dict[st
     }
 
 
-def _enabled(name: str, default: str = "0") -> bool:
-    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
+def _is_private_systemd_credential_copy(
+    path: str,
+    credential_directory: str | None,
+    path_entry: os.stat_result,
+) -> bool:
+    if (
+        os.name == "nt"
+        or credential_directory is None
+        or posixpath.dirname(credential_directory) != "/run/credentials"
+        or posixpath.dirname(path) != credential_directory
+        or not posixpath.basename(path)
+        or stat.S_IMODE(path_entry.st_mode) != 0o440
+        or path_entry.st_uid != 0
+        or path_entry.st_gid != 0
+    ):
+        return False
+    try:
+        directory_entry = os.lstat(credential_directory)
+        parent_entry = os.lstat("/run/credentials")
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(directory_entry.st_mode)
+        and directory_entry.st_nlink == 2
+        and stat.S_IMODE(directory_entry.st_mode) == 0o550
+        and directory_entry.st_uid == 0
+        and directory_entry.st_gid == 0
+        and directory_entry.st_dev == path_entry.st_dev
+        and stat.S_ISDIR(parent_entry.st_mode)
+        and stat.S_IMODE(parent_entry.st_mode) == 0o755
+        and parent_entry.st_uid == 0
+        and parent_entry.st_gid == 0
+        and directory_entry.st_dev != parent_entry.st_dev
+    )
 
 
-def _positive_int(name: str, default: int) -> int:
-    raw = os.environ.get(name, str(default)).strip()
+def load_otc_secrets(
+    path: str, *, credential_directory: str | None = None
+) -> dict[str, str]:
+    path_module = os.path if os.name == "nt" else posixpath
+    if (
+        type(path) is not str
+        or not path
+        or not path_module.isabs(path)
+        or "\x00" in path
+        or path_module.normpath(path) != path
+    ):
+        raise ValueError("OTC credential path is invalid")
+    if credential_directory is not None and (
+        type(credential_directory) is not str
+        or not credential_directory
+        or not path_module.isabs(credential_directory)
+        or "\x00" in credential_directory
+        or path_module.normpath(credential_directory) != credential_directory
+    ):
+        raise ValueError("OTC credential directory is invalid")
+    try:
+        path_entry = os.lstat(path)
+    except OSError:
+        raise ValueError("OTC credential file is unavailable") from None
+    if not stat.S_ISREG(path_entry.st_mode) or path_entry.st_nlink != 1:
+        raise ValueError("OTC credential file is unsafe")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        raise ValueError("OTC credential file is unavailable") from None
+    try:
+        before = os.fstat(descriptor)
+        same_path_entry = (
+            path_entry.st_dev,
+            path_entry.st_ino,
+            path_entry.st_mode,
+            path_entry.st_nlink,
+            path_entry.st_size,
+            path_entry.st_mtime_ns,
+        ) == (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_nlink,
+            before.st_size,
+            before.st_mtime_ns,
+        )
+        owner_only = stat.S_IMODE(before.st_mode) & 0o077 == 0
+        systemd_credential_copy = _is_private_systemd_credential_copy(
+            path, credential_directory, before
+        )
+        if (
+            not same_path_entry
+            or not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or (os.name != "nt" and not (owner_only or systemd_credential_copy))
+        ):
+            raise ValueError("OTC credential file is unsafe")
+        encoded = os.read(descriptor, MAX_OTC_SECRETS_BYTES + 1)
+        after = os.fstat(descriptor)
+        if (
+            len(encoded) > MAX_OTC_SECRETS_BYTES
+            or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            or len(encoded) != after.st_size
+        ):
+            raise ValueError("OTC credential file is oversized or changed while reading")
+    finally:
+        os.close(descriptor)
+    try:
+        text = encoded.decode("utf-8", "strict")
+    except UnicodeDecodeError:
+        raise ValueError("OTC credential file is not strict UTF-8") from None
+    if "\r" in text or "\x00" in text or text.startswith("\ufeff"):
+        raise ValueError("OTC credential file contains invalid characters")
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    if not lines or len(lines) > MAX_OTC_SECRET_LINES or any(not line for line in lines):
+        raise ValueError("OTC credential file has an invalid line count")
+    result: dict[str, str] = {}
+    for line in lines:
+        if "=" not in line:
+            raise ValueError("OTC credential line is malformed")
+        key, value = line.split("=", 1)
+        if key not in OTC_SECRET_KEYS:
+            raise ValueError("OTC credential key is not allowlisted")
+        if key in result:
+            raise ValueError("OTC credential key is duplicated")
+        if (
+            not value
+            or value != value.strip()
+            or len(value.encode("utf-8")) > MAX_OTC_SECRET_VALUE_BYTES
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        ):
+            raise ValueError("OTC credential value is invalid")
+        result[key] = value
+    if "BOT_TOKEN" in result and "DISCORD_BOT_TOKEN" in result:
+        raise ValueError("OTC credential token aliases are ambiguous")
+    return result
+
+
+def _enabled(
+    name: str, default: str = "0", environment: Mapping[str, str] | None = None
+) -> bool:
+    values = os.environ if environment is None else environment
+    return values.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _positive_int(
+    name: str, default: int, environment: Mapping[str, str] | None = None
+) -> int:
+    values = os.environ if environment is None else environment
+    raw = values.get(name, str(default)).strip()
     value = int(raw)
     if value <= 0:
         raise ValueError(f"{name} must be positive")
     return value
 
 
-def _bounded_positive_int(name: str, default: int, maximum: int) -> int:
-    value = _positive_int(name, default)
+def _bounded_positive_int(
+    name: str,
+    default: int,
+    maximum: int,
+    environment: Mapping[str, str] | None = None,
+) -> int:
+    value = _positive_int(name, default, environment)
     if value > maximum:
         raise ValueError(f"{name} must not exceed {maximum}")
     return value
 
 
-def _nonnegative_units(name: str, default: str) -> int:
-    raw = os.environ.get(name, default).strip()
+def _nonnegative_units(
+    name: str, default: str, environment: Mapping[str, str] | None = None
+) -> int:
+    values = os.environ if environment is None else environment
+    raw = values.get(name, default).strip()
     if raw == "0":
         return 0
     return parse_09c(raw)
@@ -164,7 +334,9 @@ class Config:
     deposit_timeout_seconds: int
     trade_timeout_seconds: int
     reconciliation_interval_seconds: int
-    admin_fee_destination: str | None
+    admin_fee_destination: str | None = field(repr=False)
+    translation_api_url: str = field(repr=False)
+    translation_api_token: str = field(repr=False)
     fee_withdrawal_network_fee_units: int
     public_feed_path: str
     max_active_orders_total: int
@@ -175,69 +347,90 @@ class Config:
     max_deposit_allocations_daily_per_seller: int
 
     @classmethod
-    def from_environment(cls) -> "Config":
-        token = (os.environ.get("BOT_TOKEN") or os.environ.get("DISCORD_BOT_TOKEN") or "").strip()
-        guild_id = int(os.environ.get("DISCORD_GUILD_ID", "0") or "0")
+    def from_environment(
+        cls, environment: Mapping[str, str] | None = None
+    ) -> "Config":
+        values = os.environ if environment is None else environment
+        secrets_path = values.get("OTC_SECRETS_FILE", "").strip()
+        credential_directory = values.get("CREDENTIALS_DIRECTORY", "").strip()
+        secrets = (
+            load_otc_secrets(
+                secrets_path,
+                credential_directory=credential_directory or None,
+            )
+            if secrets_path
+            else {}
+        )
+        token = (secrets.get("BOT_TOKEN") or secrets.get("DISCORD_BOT_TOKEN") or "").strip()
+        guild_id = int(secrets.get("DISCORD_GUILD_ID", "0") or "0")
         if guild_id < 0:
             raise ValueError("DISCORD_GUILD_ID must not be negative")
-        network = os.environ.get("BTC09_NETWORK", "btc09-mainnet").strip()
+        network = values.get("BTC09_NETWORK", "btc09-mainnet").strip()
         if network not in {"btc09-mainnet", "btc09-regtest"}:
             raise ValueError("BTC09_NETWORK must be btc09-mainnet or btc09-regtest")
-        fee_bps = int(os.environ.get("OTC_FEE_BPS", "0"))
+        fee_bps = int(values.get("OTC_FEE_BPS", "0"))
         if not 0 <= fee_bps <= 10_000:
             raise ValueError("OTC_FEE_BPS is out of range")
-        admin_destination = os.environ.get("OTC_ADMIN_FEE_DESTINATION", "").strip() or None
+        admin_destination = secrets.get("OTC_ADMIN_FEE_DESTINATION", "").strip() or None
         max_active_orders_total = _bounded_positive_int(
             "OTC_MAX_ACTIVE_ORDERS_TOTAL",
             DEFAULT_MAX_ACTIVE_ORDERS_TOTAL,
             MAX_CONFIGURABLE_ACTIVE_ORDERS_TOTAL,
+            values,
         )
         max_active_orders_per_maker = _bounded_positive_int(
             "OTC_MAX_ACTIVE_ORDERS_PER_MAKER",
             DEFAULT_MAX_ACTIVE_ORDERS_PER_MAKER,
             max_active_orders_total,
+            values,
         )
         allocation_lifetime_total = _bounded_positive_int(
             "OTC_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL",
             DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL,
             MAX_DEPOSIT_ALLOCATIONS_LIFETIME_TOTAL,
+            values,
         )
         allocation_lifetime_seller = _bounded_positive_int(
             "OTC_DEPOSIT_ALLOCATIONS_LIFETIME_PER_SELLER",
             DEFAULT_DEPOSIT_ALLOCATIONS_LIFETIME_PER_SELLER,
             allocation_lifetime_total,
+            values,
         )
         allocation_daily_total = _bounded_positive_int(
             "OTC_DEPOSIT_ALLOCATIONS_DAILY_TOTAL",
             DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_TOTAL,
             allocation_lifetime_total,
+            values,
         )
         allocation_daily_seller = _bounded_positive_int(
             "OTC_DEPOSIT_ALLOCATIONS_DAILY_PER_SELLER",
             DEFAULT_DEPOSIT_ALLOCATIONS_DAILY_PER_SELLER,
             min(allocation_lifetime_seller, allocation_daily_total),
+            values,
         )
         return cls(
             token=token,
             guild_id=guild_id,
-            admin_ids=_admin_ids(os.environ.get("ADMIN_IDS", "")),
-            accepting_orders_requested=_enabled("OTC_ACCEPTING_ORDERS", "0"),
-            db_path=os.environ.get("DB_PATH", "/var/lib/btc09-otc/otc_bot.db"),
-            explorer_url=os.environ.get("EXPLORER_URL", "http://127.0.0.1:8009").rstrip("/"),
+            admin_ids=_admin_ids(secrets.get("ADMIN_IDS", "")),
+            accepting_orders_requested=_enabled("OTC_ACCEPTING_ORDERS", "0", values),
+            db_path=values.get("DB_PATH", "/var/lib/btc09-otc/otc_bot.db"),
+            explorer_url=values.get("EXPLORER_URL", "http://127.0.0.1:8009").rstrip("/"),
             network=network,
-            binary_path=os.environ.get("BTC09_BIN", "/opt/btc09/btc09"),
-            data_dir=os.environ.get("BTC09_DATADIR", "/opt/btc09/data"),
-            wallet_path=os.environ.get("BTC09_WALLET_PATH", "/var/lib/btc09-otc/wallet-mainnet.json"),
-            seeds=os.environ.get("BTC09_SEEDS", "127.0.0.1:9009").strip(),
-            confirmation_depth=_positive_int("OTC_CONFIRMATION_DEPTH", 6),
-            network_fee_units=_nonnegative_units("BTC09_TX_FEE", "0.0001"),
+            binary_path=values.get("BTC09_BIN", "/opt/btc09/btc09"),
+            data_dir=values.get("BTC09_DATADIR", "/opt/btc09/data"),
+            wallet_path=values.get("BTC09_WALLET_PATH", "/var/lib/btc09-otc/wallet-mainnet.json"),
+            seeds=values.get("BTC09_SEEDS", "127.0.0.1:9009").strip(),
+            confirmation_depth=_positive_int("OTC_CONFIRMATION_DEPTH", 6, values),
+            network_fee_units=_nonnegative_units("BTC09_TX_FEE", "0.0001", values),
             fee_bps=fee_bps,
-            deposit_timeout_seconds=_positive_int("ORDER_TIMEOUT_SECONDS", 86_400),
-            trade_timeout_seconds=_positive_int("TRADE_TIMEOUT_SECONDS", 86_400),
-            reconciliation_interval_seconds=_positive_int("OTC_RECONCILE_INTERVAL", 30),
+            deposit_timeout_seconds=_positive_int("ORDER_TIMEOUT_SECONDS", 86_400, values),
+            trade_timeout_seconds=_positive_int("TRADE_TIMEOUT_SECONDS", 86_400, values),
+            reconciliation_interval_seconds=_positive_int("OTC_RECONCILE_INTERVAL", 30, values),
             admin_fee_destination=admin_destination,
-            fee_withdrawal_network_fee_units=_nonnegative_units("OTC_FEE_WITHDRAWAL_NETWORK_FEE", "0.0001"),
-            public_feed_path=os.environ.get(
+            translation_api_url=secrets.get("TRANSLATION_API_URL", ""),
+            translation_api_token=secrets.get("TRANSLATION_API_TOKEN", ""),
+            fee_withdrawal_network_fee_units=_nonnegative_units("OTC_FEE_WITHDRAWAL_NETWORK_FEE", "0.0001", values),
+            public_feed_path=values.get(
                 "PUBLIC_FEED_PATH", str(DEFAULT_PUBLIC_FEED_PATH)
             ),
             max_active_orders_total=max_active_orders_total,
@@ -293,7 +486,12 @@ def build_runtime(config: Config) -> Runtime:
         accepting_orders=False,
         admin_fee_destination=config.admin_fee_destination,
         fee_withdrawal_network_fee_units=config.fee_withdrawal_network_fee_units,
-        translation_provider=translation_provider_from_environment(),
+        translation_provider=translation_provider_from_environment(
+            {
+                "TRANSLATION_API_URL": config.translation_api_url,
+                "TRANSLATION_API_TOKEN": config.translation_api_token,
+            }
+        ),
     )
     return Runtime(service, controller, config.public_feed_path)
 

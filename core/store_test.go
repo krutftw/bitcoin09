@@ -47,6 +47,34 @@ func TestStoreRejectsTrailingSnapshotData(t *testing.T) {
 	}
 }
 
+func TestStoreMetadataPreparationFailurePreservesDurableSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir, RegTest.Name)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	chain := testChain(t)
+	_, pkh := keyAndPKH(t)
+	mineOne(t, chain, pkh)
+	if err := store.SaveSnapshot(chain); err != nil {
+		t.Fatalf("initial SaveSnapshot: %v", err)
+	}
+	before := mustReadFile(t, store.path)
+	mineOne(t, chain, pkh)
+	sentinel := errors.New("metadata preparation failed")
+	ops := store.ops
+	ops.prepare = func(string, *os.File) error {
+		return sentinel
+	}
+	store.ops = ops
+	if err := store.SaveSnapshot(chain); !errors.Is(err, sentinel) {
+		t.Fatalf("SaveSnapshot error = %v, want %v", err, sentinel)
+	}
+	if after := mustReadFile(t, store.path); !bytes.Equal(after, before) {
+		t.Fatal("metadata failure replaced the durable snapshot")
+	}
+}
+
 func TestStoreTwoInstancesCannotRegressDurableTip(t *testing.T) {
 	dir := t.TempDir()
 	staleStore, err := NewStore(dir, RegTest.Name)

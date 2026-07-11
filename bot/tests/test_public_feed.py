@@ -6,6 +6,7 @@ import json
 import os
 import re
 import socket
+import stat
 import tempfile
 import threading
 import time
@@ -601,24 +602,31 @@ class PublicFeedTests(unittest.TestCase):
 
     def test_atomic_write_fsyncs_file_replaces_in_same_directory_and_fsyncs_directory(self) -> None:
         target = Path(self.temporary.name) / "public" / "feed.json"
+        target.parent.mkdir(mode=0o700)
         payload = {"schema_version": 1, "health_timestamp": 123, "health": {}, "orders": []}
         real_replace = os.replace
         calls: list[tuple[str, str]] = []
 
-        def recording_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+        def recording_replace(
+            source: str | os.PathLike[str],
+            destination: str | os.PathLike[str],
+            **kwargs: object,
+        ) -> None:
             calls.append((os.fspath(source), os.fspath(destination)))
-            real_replace(source, destination)
+            real_replace(source, destination, **kwargs)
 
         with patch("bot.otc.public_feed.os.replace", side_effect=recording_replace), patch(
             "bot.otc.public_feed.os.fsync", wraps=os.fsync
         ) as fsync:
             write_public_feed(target, payload)
         self.assertEqual(len(calls), 1)
-        self.assertEqual(Path(calls[0][0]).parent, target.parent)
-        self.assertEqual(Path(calls[0][1]), target)
+        self.assertEqual(Path(calls[0][0]).name.startswith(".feed.json."), True)
+        self.assertEqual(Path(calls[0][1]).name, target.name)
         self.assertGreaterEqual(fsync.call_count, 1)
         if os.name != "nt":
             self.assertGreaterEqual(fsync.call_count, 2)
+            self.assertEqual(stat.S_IMODE(target.parent.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644)
         self.assertEqual(json.loads(target.read_text(encoding="utf-8")), payload)
         self.assertEqual(list(target.parent.glob(f".{target.name}.*.tmp")), [])
 
@@ -658,10 +666,10 @@ class PublicFeedTests(unittest.TestCase):
         payload = {"generation": 1}
         real_open = os.open
 
-        def fail_directory_open(path, flags, mode=0o777):
+        def fail_directory_open(path, flags, mode=0o777, **kwargs: object):
             if Path(path) == target.parent:
                 raise OSError("directory open failed")
-            return real_open(path, flags, mode)
+            return real_open(path, flags, mode, **kwargs)
 
         with patch("bot.otc.public_feed._DIRECTORY_FSYNC_SUPPORTED", True), patch(
             "bot.otc.public_feed.os.open", side_effect=fail_directory_open
@@ -673,6 +681,21 @@ class PublicFeedTests(unittest.TestCase):
             side_effect=OSError("directory fsync failed"),
         ), self.assertRaises(OSError):
             write_public_feed(target, payload)
+
+    def test_symlink_or_missing_parent_is_rejected_without_writing(self) -> None:
+        missing = Path(self.temporary.name) / "missing" / "feed.json"
+        with self.assertRaises((FileNotFoundError, ValueError, OSError)):
+            write_public_feed(missing, {"generation": 1})
+        real_parent = Path(self.temporary.name) / "real-public"
+        real_parent.mkdir()
+        linked_parent = Path(self.temporary.name) / "linked-public"
+        try:
+            linked_parent.symlink_to(real_parent, target_is_directory=True)
+        except OSError:
+            self.skipTest("directory symlinks are unavailable")
+        with self.assertRaises((ValueError, OSError)):
+            write_public_feed(linked_parent / "feed.json", {"generation": 1})
+        self.assertFalse((real_parent / "feed.json").exists())
 
     def test_invalidate_removes_stale_feed_durably(self) -> None:
         target = Path(self.temporary.name) / "feed.json"
@@ -857,12 +880,20 @@ class PublicFeedTests(unittest.TestCase):
         self.assertIn("WHERE state IN", aggregate_query)
 
     def test_nginx_has_edge_limits_without_duplicate_cache_or_cors_headers(self) -> None:
-        config = Path("deploy/nginx/bitcoin09.conf").read_text(encoding="utf-8")
-        for required in ("limit_req_zone", "limit_conn_zone", "limit_req ", "limit_conn "):
-            self.assertIn(required, config)
-        self.assertIn("X-Content-Type-Options nosniff always", config)
-        self.assertNotIn("add_header Cache-Control", config)
-        self.assertNotIn("add_header Access-Control-Allow-Origin", config)
+        http_config = Path("deploy/nginx/bitcoin09-otc-http.conf").read_text(
+            encoding="utf-8"
+        )
+        server_config = Path("deploy/nginx/bitcoin09-otc-server.conf").read_text(
+            encoding="utf-8"
+        )
+        for required in ("limit_req_zone", "limit_conn_zone"):
+            self.assertIn(required, http_config)
+        for required in ("limit_req ", "limit_conn "):
+            self.assertIn(required, server_config)
+        combined = http_config + server_config
+        self.assertNotIn("add_header", server_config)
+        self.assertNotIn("proxy_hide_header", server_config)
+        self.assertNotIn("healthz", combined)
         expected_cloudflare_ranges = {
             "173.245.48.0/20",
             "103.21.244.0/22",
@@ -888,11 +919,11 @@ class PublicFeedTests(unittest.TestCase):
             "2c0f:f248::/32",
         }
         configured_ranges = set(
-            re.findall(r"^set_real_ip_from\s+([^;]+);$", config, re.MULTILINE)
+            re.findall(r"^set_real_ip_from\s+([^;]+);$", http_config, re.MULTILINE)
         )
         self.assertEqual(configured_ranges, expected_cloudflare_ranges)
-        self.assertIn("real_ip_header CF-Connecting-IP;", config)
-        self.assertIn("real_ip_recursive on;", config)
+        self.assertIn("real_ip_header CF-Connecting-IP;", http_config)
+        self.assertIn("real_ip_recursive on;", http_config)
 
     def test_max_configured_feed_capacity_has_conservative_size_headroom(self) -> None:
         worst_public_order = {
@@ -924,7 +955,7 @@ class PublicFeedTests(unittest.TestCase):
     def test_default_path_is_not_under_opt(self) -> None:
         self.assertEqual(
             DEFAULT_PUBLIC_FEED_PATH,
-            Path("/var/lib/btc09-otc/public/otc-bot-feed.json"),
+            Path("/var/lib/btc09-otc-public/otc-bot-feed.json"),
         )
 
 
