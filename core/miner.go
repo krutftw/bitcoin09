@@ -21,6 +21,7 @@ func BuildBlockTemplate(c *Chain, rewardPKH [20]byte, tag string) *Block {
 	txs := []*Tx{nil} // coinbase placeholder
 	size := 88 + 256
 	var fees int64
+	subsidy := SubsidyAt(height)
 	for _, tx := range c.MempoolTxs() {
 		b := tx.Bytes()
 		if size+len(b) > MaxBlockBytes {
@@ -31,11 +32,25 @@ func BuildBlockTemplate(c *Chain, rewardPKH [20]byte, tag string) *Block {
 		if err != nil {
 			continue
 		}
-		fees += fee
+		nextFees, ok := checkedAddMoney(fees, fee)
+		if !ok {
+			continue
+		}
+		if _, ok := checkedAddMoney(subsidy, nextFees); !ok {
+			continue
+		}
+		fees = nextFees
 		txs = append(txs, tx)
 		size += len(b)
 	}
-	txs[0] = NewCoinbase(height, SubsidyAt(height)+fees, rewardPKH, tag)
+	reward, ok := checkedAddMoney(subsidy, fees)
+	if !ok {
+		// Every accepted fee update above proves this cannot happen. Keep the
+		// template valid even if that invariant is broken by a future change.
+		reward = subsidy
+		txs = txs[:1]
+	}
+	txs[0] = NewCoinbase(height, reward, rewardPKH, tag)
 	hdr := Header{
 		Version:   1,
 		PrevBlock: tipID,

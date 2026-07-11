@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"errors"
 	"fmt"
@@ -25,6 +26,94 @@ type blockIndex struct {
 	id      Hash32
 }
 
+// Transaction lookup status values are stable machine-facing identifiers.
+const (
+	TransactionStatusUnknown   = "unknown"
+	TransactionStatusMempool   = "mempool"
+	TransactionStatusConfirmed = "confirmed"
+)
+
+// ChainTipSnapshot is a detached, atomic view of the canonical chain tip.
+type ChainTipSnapshot struct {
+	Network string
+	Hash    Hash32
+	Height  int64
+}
+
+// BlockLookupSnapshot reports whether a block is known and whether it belongs
+// to the canonical chain anchored by Tip. Height is -1 when Found is false.
+type BlockLookupSnapshot struct {
+	Network   string
+	Tip       ChainTipSnapshot
+	Found     bool
+	Hash      Hash32
+	Height    int64
+	Canonical bool
+}
+
+// TransactionLookupSnapshot reports canonical confirmation state anchored by
+// Tip. BlockHeight is -1 for mempool and unknown transactions.
+type TransactionLookupSnapshot struct {
+	Network       string
+	Tip           ChainTipSnapshot
+	TxID          Hash32
+	Status        string
+	BlockHash     Hash32
+	BlockHeight   int64
+	Confirmations int64
+}
+
+// ConfirmedSpend identifies the canonical transaction input that spent an
+// address output.
+type ConfirmedSpend struct {
+	TxID        Hash32
+	InputIndex  uint32
+	BlockHash   Hash32
+	BlockHeight int64
+}
+
+// ConfirmedAddressOutput is one output created on the canonical chain. Spent
+// outputs remain present and carry their confirmed spender.
+type ConfirmedAddressOutput struct {
+	TxID             Hash32
+	TransactionIndex uint32
+	Vout             uint32
+	AmountUnits      int64
+	BlockHash        Hash32
+	BlockHeight      int64
+	Confirmations    int64
+	Coinbase         bool
+	Mature           bool
+	SpentBy          *ConfirmedSpend
+}
+
+// AddressOutputSnapshot is the complete canonical output history for one PKH
+// at the exact Tip anchor.
+type AddressOutputSnapshot struct {
+	Network  string
+	Complete bool
+	Tip      ChainTipSnapshot
+	Outputs  []ConfirmedAddressOutput
+}
+
+// SpendableOutputSnapshot is one mature, canonically unspent output owned by
+// an entry in the caller's PKH list. OwnerIndex refers to that input list.
+type SpendableOutputSnapshot struct {
+	OutPoint    OutPoint
+	AmountUnits int64
+	OwnerPKH    [20]byte
+	OwnerIndex  uint32
+}
+
+// SpendableOutputsSnapshot is one immutable multi-owner view derived under a
+// single Chain read lock and anchored to one exact canonical tip.
+type SpendableOutputsSnapshot struct {
+	Network  string
+	Complete bool
+	Tip      ChainTipSnapshot
+	Outputs  []SpendableOutputSnapshot
+}
+
 // Chain holds consensus state: every valid block ever seen, the best chain
 // selected by cumulative work, the UTXO set of that chain, and a mempool.
 type Chain struct {
@@ -43,14 +132,18 @@ type Chain struct {
 
 // NewChain creates a chain initialized with the network's genesis block.
 func NewChain(p *Params) (*Chain, error) {
+	if p == nil {
+		return nil, errors.New("nil chain params")
+	}
+	params := *p
 	c := &Chain{
-		params:  p,
+		params:  &params,
 		index:   make(map[Hash32]*blockIndex),
 		utxo:    make(map[OutPoint]UTXOEntry),
 		mempool: make(map[Hash32]*Tx),
 	}
-	g := GenesisBlock(p)
-	if !g.Header.CheckPow(p) {
+	g := GenesisBlock(c.params)
+	if !g.Header.CheckPow(c.params) {
 		return nil, errors.New("genesis block fails PoW: params/nonce mismatch")
 	}
 	bi := &blockIndex{block: g, height: 0, cumWork: WorkFromTarget(CompactToTarget(g.Header.Bits)), id: g.Header.ID()}
@@ -63,12 +156,358 @@ func NewChain(p *Params) (*Chain, error) {
 
 // ---- accessors ----
 
-func (c *Chain) Params() *Params { return c.params }
+func (c *Chain) Params() *Params {
+	params := *c.params
+	return &params
+}
 
 func (c *Chain) Tip() (Hash32, int64) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.tip.id, c.tip.height
+}
+
+// CanonicalTipSnapshot returns the canonical machine-network identity and tip
+// as one detached read snapshot.
+func (c *Chain) CanonicalTipSnapshot() (ChainTipSnapshot, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.canonicalTipSnapshotLocked()
+}
+
+// LookupBlock returns canonical membership for a known block, including a
+// side-chain block whose height may exceed the current canonical tip.
+func (c *Chain) LookupBlock(id Hash32) (BlockLookupSnapshot, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	tip, err := c.canonicalTipSnapshotLocked()
+	if err != nil {
+		return BlockLookupSnapshot{}, err
+	}
+	result := BlockLookupSnapshot{
+		Network: tip.Network,
+		Tip:     tip,
+		Hash:    id,
+		Height:  -1,
+	}
+	canonical, err := c.validatedCanonicalSequenceLocked()
+	if err != nil {
+		return BlockLookupSnapshot{}, err
+	}
+	bi, ok := c.index[id]
+	if !ok {
+		return result, nil
+	}
+	if bi == nil || bi.block == nil || bi.height < 0 || bi.id != id || bi.block.Header.ID() != id {
+		return BlockLookupSnapshot{}, errors.New("block index entry is inconsistent")
+	}
+	result.Found = true
+	result.Height = bi.height
+	result.Canonical = bi.height < int64(len(canonical)) && canonical[bi.height].id == id
+	return result, nil
+}
+
+// LookupTransaction applies canonical-confirmed, mempool, then unknown
+// precedence under one chain read snapshot. Side-chain-only transactions are
+// intentionally unknown.
+func (c *Chain) LookupTransaction(id Hash32) (TransactionLookupSnapshot, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	tip, err := c.canonicalTipSnapshotLocked()
+	if err != nil {
+		return TransactionLookupSnapshot{}, err
+	}
+	result := TransactionLookupSnapshot{
+		Network:     tip.Network,
+		Tip:         tip,
+		TxID:        id,
+		Status:      TransactionStatusUnknown,
+		BlockHeight: -1,
+	}
+	canonical, err := c.validatedCanonicalSequenceLocked()
+	if err != nil {
+		return TransactionLookupSnapshot{}, err
+	}
+	for height, bi := range canonical {
+		blockID := bi.id
+		for _, tx := range bi.block.Txs {
+			if tx == nil {
+				return TransactionLookupSnapshot{}, errors.New("nil transaction in canonical block")
+			}
+			if tx.ID() != id {
+				continue
+			}
+			result.Status = TransactionStatusConfirmed
+			result.BlockHash = blockID
+			result.BlockHeight = int64(height)
+			result.Confirmations = tip.Height - int64(height) + 1
+			return result, nil
+		}
+	}
+	if tx, ok := c.mempool[id]; ok {
+		if tx == nil || tx.ID() != id {
+			return TransactionLookupSnapshot{}, errors.New("mempool transaction index is inconsistent")
+		}
+		result.Status = TransactionStatusMempool
+	}
+	return result, nil
+}
+
+// ConfirmedOutputsForPKH scans the canonical blocks rather than the UTXO set,
+// retaining spent history and excluding mempool-only outputs. Creation order
+// is block height, transaction index, then vout.
+func (c *Chain) ConfirmedOutputsForPKH(pkh [20]byte) (AddressOutputSnapshot, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	tip, err := c.canonicalTipSnapshotLocked()
+	if err != nil {
+		return AddressOutputSnapshot{}, err
+	}
+	result := AddressOutputSnapshot{
+		Network:  tip.Network,
+		Complete: true,
+		Tip:      tip,
+		Outputs:  make([]ConfirmedAddressOutput, 0),
+	}
+	canonical, err := c.validatedCanonicalSequenceLocked()
+	if err != nil {
+		return AddressOutputSnapshot{}, err
+	}
+	created := make(map[OutPoint]int)
+	for height, bi := range canonical {
+		blockID := bi.id
+		confirmations := tip.Height - int64(height) + 1
+		for txIndex, tx := range bi.block.Txs {
+			if tx == nil {
+				return AddressOutputSnapshot{}, errors.New("nil transaction in canonical block")
+			}
+			txID := tx.ID()
+			for inputIndex, input := range tx.Ins {
+				outputIndex, ok := created[input.Prev]
+				if !ok {
+					continue
+				}
+				if result.Outputs[outputIndex].SpentBy != nil {
+					return AddressOutputSnapshot{}, errors.New("canonical output has multiple confirmed spenders")
+				}
+				spend := ConfirmedSpend{
+					TxID:        txID,
+					InputIndex:  uint32(inputIndex),
+					BlockHash:   blockID,
+					BlockHeight: int64(height),
+				}
+				result.Outputs[outputIndex].SpentBy = &spend
+			}
+			coinbase := tx.IsCoinbase()
+			for vout, output := range tx.Outs {
+				if output.PubKeyHash != pkh {
+					continue
+				}
+				outpoint := OutPoint{TxID: txID, Idx: uint32(vout)}
+				if _, duplicate := created[outpoint]; duplicate {
+					return AddressOutputSnapshot{}, errors.New("duplicate canonical address outpoint")
+				}
+				created[outpoint] = len(result.Outputs)
+				result.Outputs = append(result.Outputs, ConfirmedAddressOutput{
+					TxID:             txID,
+					TransactionIndex: uint32(txIndex),
+					Vout:             uint32(vout),
+					AmountUnits:      output.Value,
+					BlockHash:        blockID,
+					BlockHeight:      int64(height),
+					Confirmations:    confirmations,
+					Coinbase:         coinbase,
+					Mature:           !coinbase || confirmations >= c.params.CoinbaseMaturity,
+				})
+			}
+		}
+	}
+	return result, nil
+}
+
+// SpendableOutputsForPKHs derives all mature canonical UTXOs for every owner
+// under one Chain RLock. The canonical sequence is validated exactly once and
+// outputs are sorted by raw transaction ID followed by numeric vout.
+func (c *Chain) SpendableOutputsForPKHs(pkhs [][20]byte) (SpendableOutputsSnapshot, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	tip, err := c.canonicalTipSnapshotLocked()
+	if err != nil {
+		return SpendableOutputsSnapshot{}, err
+	}
+	result := SpendableOutputsSnapshot{
+		Network: tip.Network, Complete: true, Tip: tip,
+		Outputs: make([]SpendableOutputSnapshot, 0),
+	}
+	if uint64(len(pkhs)) > uint64(^uint32(0)) {
+		return SpendableOutputsSnapshot{}, errors.New("too many spendable-output owners")
+	}
+	owners := make(map[[20]byte]uint32, len(pkhs))
+	for index, pkh := range pkhs {
+		if _, duplicate := owners[pkh]; duplicate {
+			return SpendableOutputsSnapshot{}, errors.New("duplicate spendable-output owner")
+		}
+		owners[pkh] = uint32(index)
+	}
+	canonical, err := c.validatedCanonicalSequenceLocked()
+	if err != nil {
+		return SpendableOutputsSnapshot{}, err
+	}
+	type createdOutput struct {
+		output   SpendableOutputSnapshot
+		height   int64
+		coinbase bool
+		spent    bool
+	}
+	created := make(map[OutPoint]int)
+	matched := make([]createdOutput, 0)
+	for height, blockIndex := range canonical {
+		for _, tx := range blockIndex.block.Txs {
+			if tx == nil {
+				return SpendableOutputsSnapshot{}, errors.New("nil transaction in canonical spendable snapshot")
+			}
+			for _, input := range tx.Ins {
+				if index, ok := created[input.Prev]; ok {
+					if matched[index].spent {
+						return SpendableOutputsSnapshot{}, errors.New("canonical output has multiple spenders")
+					}
+					matched[index].spent = true
+				}
+			}
+			txID := tx.ID()
+			for vout, output := range tx.Outs {
+				ownerIndex, owned := owners[output.PubKeyHash]
+				if !owned {
+					continue
+				}
+				if output.Value <= 0 || !MoneyRange(output.Value) {
+					return SpendableOutputsSnapshot{}, errors.New("canonical owned output amount out of range")
+				}
+				outpoint := OutPoint{TxID: txID, Idx: uint32(vout)}
+				if _, duplicate := created[outpoint]; duplicate {
+					return SpendableOutputsSnapshot{}, errors.New("duplicate canonical owned outpoint")
+				}
+				created[outpoint] = len(matched)
+				matched = append(matched, createdOutput{
+					output: SpendableOutputSnapshot{
+						OutPoint: outpoint, AmountUnits: output.Value,
+						OwnerPKH: output.PubKeyHash, OwnerIndex: ownerIndex,
+					},
+					height: int64(height), coinbase: tx.IsCoinbase(),
+				})
+			}
+		}
+	}
+	for _, candidate := range matched {
+		if candidate.spent || (candidate.coinbase && tip.Height-candidate.height+1 < c.params.CoinbaseMaturity) {
+			continue
+		}
+		result.Outputs = append(result.Outputs, candidate.output)
+	}
+	sort.Slice(result.Outputs, func(i, j int) bool {
+		left, right := result.Outputs[i].OutPoint, result.Outputs[j].OutPoint
+		if comparison := bytes.Compare(left.TxID[:], right.TxID[:]); comparison != 0 {
+			return comparison < 0
+		}
+		return left.Idx < right.Idx
+	})
+	return result, nil
+}
+
+func (c *Chain) canonicalTipSnapshotLocked() (ChainTipSnapshot, error) {
+	network, err := CanonicalNetworkID(c.params)
+	if err != nil {
+		return ChainTipSnapshot{}, err
+	}
+	if c.tip == nil || c.tip.block == nil || c.tip.height < 0 ||
+		int64(len(c.mainIDs)) != c.tip.height+1 || len(c.mainIDs) == 0 ||
+		c.mainIDs[len(c.mainIDs)-1] != c.tip.id {
+		return ChainTipSnapshot{}, errors.New("canonical tip is inconsistent")
+	}
+	indexed, ok := c.index[c.tip.id]
+	if !ok || indexed != c.tip || c.tip.block.Header.ID() != c.tip.id {
+		return ChainTipSnapshot{}, errors.New("canonical tip index is inconsistent")
+	}
+	genesisID := c.mainIDs[0]
+	genesis, err := c.canonicalBlockIndexLocked(0, genesisID)
+	if err != nil || genesisID != GenesisBlock(c.params).Header.ID() {
+		return ChainTipSnapshot{}, errors.New("canonical genesis index is inconsistent")
+	}
+	if c.tip.height == 0 {
+		if c.tip != genesis {
+			return ChainTipSnapshot{}, errors.New("canonical genesis tip is inconsistent")
+		}
+	} else if c.tip.block.Header.PrevBlock != c.mainIDs[len(c.mainIDs)-2] {
+		return ChainTipSnapshot{}, errors.New("canonical tip parent linkage is inconsistent")
+	}
+	return ChainTipSnapshot{Network: network, Hash: c.tip.id, Height: c.tip.height}, nil
+}
+
+func (c *Chain) canonicalBlockIndexLocked(height int64, id Hash32) (*blockIndex, error) {
+	bi, ok := c.index[id]
+	if !ok || bi == nil || bi.block == nil || bi.height != height || bi.id != id ||
+		bi.block.Header.ID() != id {
+		return nil, fmt.Errorf("canonical block index is inconsistent at height %d", height)
+	}
+	return bi, nil
+}
+
+// validatedCanonicalSequenceLocked validates the complete canonical sequence
+// without copying it. Callers must hold c.mu for reading and must not retain
+// the returned internal pointers after releasing that lock.
+func (c *Chain) validatedCanonicalSequenceLocked() ([]*blockIndex, error) {
+	if c.params == nil || c.tip == nil || c.tip.block == nil || c.tip.cumWork == nil ||
+		c.tip.cumWork.Sign() <= 0 || c.tip.height < 0 || len(c.mainIDs) == 0 ||
+		int64(len(c.mainIDs)) != c.tip.height+1 || c.mainIDs[len(c.mainIDs)-1] != c.tip.id {
+		return nil, errors.New("canonical sequence metadata is inconsistent")
+	}
+	indexedTip, ok := c.index[c.tip.id]
+	if !ok || indexedTip != c.tip {
+		return nil, errors.New("canonical tip metadata is detached")
+	}
+
+	sequence := make([]*blockIndex, len(c.mainIDs))
+	expectedGenesis := GenesisBlock(c.params)
+	var previousID Hash32
+	var expectedWork *big.Int
+	for height, id := range c.mainIDs {
+		bi, ok := c.index[id]
+		if !ok || bi == nil || bi.block == nil || bi.cumWork == nil {
+			return nil, fmt.Errorf("canonical block %d is incomplete", height)
+		}
+		if bi.id != id || bi.height != int64(height) || bi.block.Header.ID() != id {
+			return nil, fmt.Errorf("canonical block %d identity mismatch", height)
+		}
+		blockWork := WorkFromTarget(CompactToTarget(bi.block.Header.Bits))
+		if expectedWork == nil {
+			expectedWork = new(big.Int).Set(blockWork)
+		} else {
+			expectedWork = new(big.Int).Add(expectedWork, blockWork)
+		}
+		if bi.cumWork.Sign() <= 0 || bi.cumWork.Cmp(expectedWork) != 0 {
+			return nil, fmt.Errorf("canonical block %d work mismatch", height)
+		}
+		if height == 0 && !bytes.Equal(bi.block.Bytes(), expectedGenesis.Bytes()) {
+			return nil, errors.New("canonical genesis mismatch")
+		}
+		if height > 0 && bi.block.Header.PrevBlock != previousID {
+			return nil, fmt.Errorf("canonical block %d parent mismatch", height)
+		}
+		if MerkleRoot(bi.block.Txs) != bi.block.Header.MerkleRoot {
+			return nil, fmt.Errorf("canonical block %d merkle mismatch", height)
+		}
+		sequence[height] = bi
+		previousID = id
+	}
+	if sequence[len(sequence)-1] != c.tip || previousID != c.tip.id ||
+		expectedWork == nil || expectedWork.Cmp(c.tip.cumWork) != 0 {
+		return nil, errors.New("canonical tip does not match the validated sequence")
+	}
+	return sequence, nil
 }
 
 func (c *Chain) Height() int64 { _, h := c.Tip(); return h }
@@ -80,7 +519,7 @@ func (c *Chain) BlockAt(h int64) *Block {
 	if h < 0 || h >= int64(len(c.mainIDs)) {
 		return nil
 	}
-	return c.index[c.mainIDs[h]].block
+	return cloneBlock(c.index[c.mainIDs[h]].block)
 }
 
 // HasBlock reports whether the id is known (any chain).
@@ -115,7 +554,7 @@ func (c *Chain) MempoolTxs() []*Tx {
 	defer c.mu.RUnlock()
 	txs := make([]*Tx, 0, len(c.mempool))
 	for _, t := range c.mempool {
-		txs = append(txs, t)
+		txs = append(txs, cloneTx(t))
 	}
 	sort.Slice(txs, func(i, j int) bool {
 		a, b := txs[i].ID(), txs[j].ID()
@@ -141,17 +580,38 @@ func (c *Chain) nextBitsAtLocked(height int64) uint32 {
 
 // ---- mempool ----
 
+// TxAcceptanceResult distinguishes a newly admitted transaction from an
+// exact idempotent replay. The result is decided under the same chain lock as
+// validation and admission, so concurrent callers cannot both report added.
+type TxAcceptanceResult string
+
+const (
+	TxAcceptanceAdded        TxAcceptanceResult = "added"
+	TxAcceptanceAlreadyKnown TxAcceptanceResult = "already_known"
+)
+
 // AcceptTx validates a transaction against the current UTXO set + mempool
 // and admits it to the mempool.
 func (c *Chain) AcceptTx(tx *Tx) error {
+	_, err := c.AcceptTxWithResult(tx)
+	return err
+}
+
+// AcceptTxWithResult validates and atomically admits a transaction, while
+// reporting whether this call added it or observed an exact prior admission.
+func (c *Chain) AcceptTxWithResult(tx *Tx) (TxAcceptanceResult, error) {
+	tx = cloneTx(tx)
+	if tx == nil {
+		return "", errors.New("nil transaction")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if tx.IsCoinbase() {
-		return errors.New("coinbase cannot enter mempool")
+		return "", errors.New("coinbase cannot enter mempool")
 	}
 	id := tx.ID()
 	if _, ok := c.mempool[id]; ok {
-		return nil
+		return TxAcceptanceAlreadyKnown, nil
 	}
 	// reject double-spends against mempool
 	spent := make(map[OutPoint]bool)
@@ -162,14 +622,14 @@ func (c *Chain) AcceptTx(tx *Tx) error {
 	}
 	for _, in := range tx.Ins {
 		if spent[in.Prev] {
-			return errors.New("input already spent in mempool")
+			return "", errors.New("input already spent in mempool")
 		}
 	}
 	if _, err := c.checkTxLocked(tx, c.tip.height+1); err != nil {
-		return err
+		return "", err
 	}
 	c.mempool[id] = tx
-	return nil
+	return TxAcceptanceAdded, nil
 }
 
 // ---- validation ----
@@ -192,6 +652,9 @@ func (c *Chain) checkTxLocked(tx *Tx, height int64) (int64, error) {
 		if !ok {
 			return 0, errors.New("input not found or already spent")
 		}
+		if !MoneyRange(entry.Value) {
+			return 0, moneyRangeError("input value")
+		}
 		if entry.Coinbase && height-entry.Height < c.params.CoinbaseMaturity {
 			return 0, errors.New("coinbase not mature")
 		}
@@ -204,29 +667,51 @@ func (c *Chain) checkTxLocked(tx *Tx, height int64) (int64, error) {
 		if !ed25519.Verify(ed25519.PublicKey(in.PubKey), digest[:], in.Sig) {
 			return 0, errors.New("bad signature")
 		}
-		inSum += entry.Value
+		var sumOK bool
+		inSum, sumOK = checkedAddMoney(inSum, entry.Value)
+		if !sumOK {
+			return 0, moneyRangeError("input total")
+		}
 	}
 	for _, out := range tx.Outs {
-		if out.Value <= 0 {
+		if out.Value < 0 {
+			return 0, moneyRangeError("negative output value")
+		}
+		if out.Value == 0 {
 			return 0, errors.New("non-positive output")
 		}
-		outSum += out.Value
+		if !MoneyRange(out.Value) {
+			return 0, moneyRangeError("output value")
+		}
+		var sumOK bool
+		outSum, sumOK = checkedAddMoney(outSum, out.Value)
+		if !sumOK {
+			return 0, moneyRangeError("output total")
+		}
 	}
 	if outSum > inSum {
 		return 0, fmt.Errorf("outputs %d exceed inputs %d", outSum, inSum)
 	}
-	return inSum - outSum, nil
+	fee := inSum - outSum
+	if !MoneyRange(fee) {
+		return 0, moneyRangeError("transaction fee")
+	}
+	return fee, nil
 }
 
 // AcceptBlock fully validates a block and, if it creates a heavier chain,
 // makes it the new tip (handling reorgs). Non-tip-extending valid blocks
 // are stored for future fork choice.
 func (c *Chain) AcceptBlock(b *Block) error {
+	b = cloneBlock(b)
+	if b == nil {
+		return errors.New("nil block")
+	}
 	c.mu.Lock()
 	newTip, err := c.acceptBlockLocked(b, true)
 	c.mu.Unlock()
 	if err == nil && newTip != nil && c.OnNewTip != nil {
-		c.OnNewTip(newTip.block, newTip.height)
+		c.OnNewTip(cloneBlock(newTip.block), newTip.height)
 	}
 	return err
 }
@@ -236,11 +721,15 @@ func (c *Chain) AcceptBlock(b *Block) error {
 // the expensive Argon2id PoW check while still validating structure, chain
 // links, difficulty bits, merkle root, and transaction economics.
 func (c *Chain) acceptStoredBlock(b *Block) error {
+	b = cloneBlock(b)
+	if b == nil {
+		return errors.New("nil stored block")
+	}
 	c.mu.Lock()
 	newTip, err := c.acceptBlockLocked(b, false)
 	c.mu.Unlock()
 	if err == nil && newTip != nil && c.OnNewTip != nil {
-		c.OnNewTip(newTip.block, newTip.height)
+		c.OnNewTip(cloneBlock(newTip.block), newTip.height)
 	}
 	return err
 }
@@ -253,6 +742,9 @@ func (c *Chain) acceptBlockLocked(b *Block, checkPow bool) (*blockIndex, error) 
 	parent, ok := c.index[b.Header.PrevBlock]
 	if !ok {
 		return nil, errors.New("orphan: unknown parent")
+	}
+	if err := checkBlockSanity(b); err != nil {
+		return nil, err
 	}
 	if len(b.Bytes()) > MaxBlockBytes {
 		return nil, errors.New("block too large")
@@ -276,15 +768,6 @@ func (c *Chain) acceptBlockLocked(b *Block, checkPow bool) (*blockIndex, error) 
 	if MerkleRoot(b.Txs) != b.Header.MerkleRoot {
 		return nil, errors.New("merkle root mismatch")
 	}
-	if len(b.Txs) == 0 || !b.Txs[0].IsCoinbase() {
-		return nil, errors.New("first tx must be coinbase")
-	}
-	for i := 1; i < len(b.Txs); i++ {
-		if b.Txs[i].IsCoinbase() {
-			return nil, errors.New("multiple coinbases")
-		}
-	}
-
 	bi := &blockIndex{
 		block:   b,
 		height:  height,
@@ -293,8 +776,11 @@ func (c *Chain) acceptBlockLocked(b *Block, checkPow bool) (*blockIndex, error) 
 	}
 
 	if bi.cumWork.Cmp(c.tip.cumWork) <= 0 {
-		// side-chain or non-extending: contextually validate txs only when
-		// it becomes the best chain (Bitcoin does the same).
+		// A side-chain block must still be fully valid before it enters the
+		// index. Replay its branch on scratch state without committing it.
+		if _, _, err := c.replayBranch(bi); err != nil {
+			return nil, err
+		}
 		c.index[id] = bi
 		return nil, nil
 	}
@@ -313,6 +799,60 @@ func (c *Chain) acceptBlockLocked(b *Block, checkPow bool) (*blockIndex, error) 
 	}
 	c.index[id] = bi
 	return bi, nil
+}
+
+// checkBlockSanity rejects context-free transaction and money corruption
+// before any block, including an equal/lower-work side branch, enters the
+// block index. UTXO ownership, signatures, maturity, and fees are then checked
+// by scratch branch replay before any side-branch candidate is indexed.
+func checkBlockSanity(b *Block) error {
+	if len(b.Txs) == 0 || b.Txs[0] == nil || !b.Txs[0].IsCoinbase() {
+		return errors.New("first tx must be coinbase")
+	}
+	txIDs := make(map[Hash32]struct{}, len(b.Txs))
+	spent := make(map[OutPoint]struct{})
+	for txIndex, tx := range b.Txs {
+		if tx == nil {
+			return errors.New("nil transaction in block")
+		}
+		if txIndex > 0 && tx.IsCoinbase() {
+			return errors.New("multiple coinbases")
+		}
+		if len(tx.Ins) == 0 || len(tx.Outs) == 0 {
+			return errors.New("empty ins or outs")
+		}
+		id := tx.ID()
+		if _, duplicate := txIDs[id]; duplicate {
+			return errors.New("duplicate transaction in block")
+		}
+		txIDs[id] = struct{}{}
+		if txIndex > 0 {
+			for _, input := range tx.Ins {
+				if _, duplicate := spent[input.Prev]; duplicate {
+					return errors.New("duplicate input in block")
+				}
+				spent[input.Prev] = struct{}{}
+			}
+		}
+		var outputTotal int64
+		for _, output := range tx.Outs {
+			if output.Value < 0 {
+				return moneyRangeError("negative block output")
+			}
+			if output.Value == 0 {
+				return errors.New("non-positive block output")
+			}
+			if !MoneyRange(output.Value) {
+				return moneyRangeError("block output value")
+			}
+			var sumOK bool
+			outputTotal, sumOK = checkedAddMoney(outputTotal, output.Value)
+			if !sumOK {
+				return moneyRangeError("block transaction output total")
+			}
+		}
+	}
+	return nil
 }
 
 // bitsOnBranch computes required bits for a block at `height` whose parent
@@ -362,19 +902,9 @@ func (c *Chain) connectTipLocked(newTip *blockIndex) error {
 // validating every block's transactions contextually. On success the main
 // chain, UTXO set and mempool are updated.
 func (c *Chain) connectBranch(newTip *blockIndex) error {
-	branch := c.branchTo(newTip)
-	utxo := make(map[OutPoint]UTXOEntry)
-	scratch := &Chain{params: c.params, utxo: utxo}
-	newMain := make([]Hash32, newTip.height+1)
-	for h := int64(0); h <= newTip.height; h++ {
-		bi, ok := branch[h]
-		if !ok {
-			return fmt.Errorf("branch missing height %d", h)
-		}
-		if err := scratch.validateAndApplyLocked(bi.block, h); err != nil {
-			return fmt.Errorf("block %d invalid: %w", h, err)
-		}
-		newMain[h] = bi.id
+	utxo, newMain, err := c.replayBranch(newTip)
+	if err != nil {
+		return err
 	}
 	// commit
 	c.utxo = utxo
@@ -382,6 +912,29 @@ func (c *Chain) connectBranch(newTip *blockIndex) error {
 	c.tip = newTip
 	c.evictMempoolLocked()
 	return nil
+}
+
+// replayBranch fully validates the branch ending at newTip on isolated UTXO
+// state and returns the resulting state without mutating the live chain.
+func (c *Chain) replayBranch(newTip *blockIndex) (map[OutPoint]UTXOEntry, []Hash32, error) {
+	branch := c.branchTo(newTip)
+	utxo := make(map[OutPoint]UTXOEntry)
+	scratch := &Chain{params: c.params, utxo: utxo}
+	newMain := make([]Hash32, newTip.height+1)
+	for h := int64(0); h <= newTip.height; h++ {
+		bi, ok := branch[h]
+		if !ok {
+			return nil, nil, fmt.Errorf("branch missing height %d", h)
+		}
+		if err := checkBlockSanity(bi.block); err != nil {
+			return nil, nil, fmt.Errorf("block %d invalid: %w", h, err)
+		}
+		if err := scratch.validateAndApplyLocked(bi.block, h); err != nil {
+			return nil, nil, fmt.Errorf("block %d invalid: %w", h, err)
+		}
+		newMain[h] = bi.id
+	}
+	return utxo, newMain, nil
 }
 
 func (c *Chain) evictMempoolLocked() {
@@ -420,19 +973,42 @@ func (c *Chain) validateAndApplyLocked(b *Block, height int64) error {
 			rollback()
 			return err
 		}
-		fees += fee
+		var sumOK bool
+		fees, sumOK = checkedAddMoney(fees, fee)
+		if !sumOK {
+			rollback()
+			return moneyRangeError("aggregate block fees")
+		}
 		c.spendAndCreateWithUndo(b.Txs[i], height, false, &undo)
 	}
 	cb := b.Txs[0]
 	var cbOut int64
 	for _, o := range cb.Outs {
-		if o.Value <= 0 {
+		if o.Value < 0 {
+			rollback()
+			return moneyRangeError("negative coinbase output")
+		}
+		if o.Value == 0 {
 			rollback()
 			return errors.New("non-positive coinbase output")
 		}
-		cbOut += o.Value
+		if !MoneyRange(o.Value) {
+			rollback()
+			return moneyRangeError("coinbase output")
+		}
+		var sumOK bool
+		cbOut, sumOK = checkedAddMoney(cbOut, o.Value)
+		if !sumOK {
+			rollback()
+			return moneyRangeError("coinbase total")
+		}
 	}
-	if cbOut > SubsidyAt(height)+fees {
+	allowed, sumOK := checkedAddMoney(SubsidyAt(height), fees)
+	if !sumOK {
+		rollback()
+		return moneyRangeError("subsidy plus fees")
+	}
+	if cbOut > allowed {
 		rollback()
 		return fmt.Errorf("coinbase pays %d > subsidy %d + fees %d", cbOut, SubsidyAt(height), fees)
 	}
@@ -481,4 +1057,67 @@ func (c *Chain) applyBlockToUTXO(b *Block, height int64) {
 	for i, tx := range b.Txs {
 		c.spendAndCreate(tx, height, i == 0)
 	}
+}
+
+type canonicalMainSnapshot struct {
+	params    Params
+	tipID     Hash32
+	tipHeight int64
+	cumWork   *big.Int
+	blocks    []*Block // canonical heights 1..tipHeight; genesis is derived
+}
+
+// canonicalMainSnapshot returns one internally consistent, deeply detached
+// view of the canonical chain. The chain lock is held only while validating
+// and copying consensus state; callers may serialize the result afterward.
+func (c *Chain) canonicalMainSnapshot() (canonicalMainSnapshot, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	canonical, err := c.validatedCanonicalSequenceLocked()
+	if err != nil {
+		return canonicalMainSnapshot{}, err
+	}
+
+	snapshot := canonicalMainSnapshot{
+		params:    *c.params,
+		tipID:     c.tip.id,
+		tipHeight: c.tip.height,
+		cumWork:   new(big.Int).Set(c.tip.cumWork),
+		blocks:    make([]*Block, 0, c.tip.height),
+	}
+	for height, bi := range canonical {
+		if height > 0 {
+			snapshot.blocks = append(snapshot.blocks, cloneBlock(bi.block))
+		}
+	}
+	return snapshot, nil
+}
+
+func cloneTx(tx *Tx) *Tx {
+	if tx == nil {
+		return nil
+	}
+	cloned := *tx
+	cloned.Ins = make([]TxIn, len(tx.Ins))
+	for i, input := range tx.Ins {
+		cloned.Ins[i] = input
+		cloned.Ins[i].PubKey = append([]byte(nil), input.PubKey...)
+		cloned.Ins[i].Sig = append([]byte(nil), input.Sig...)
+	}
+	cloned.Outs = append([]TxOut(nil), tx.Outs...)
+	cloned.LockTag = append([]byte(nil), tx.LockTag...)
+	return &cloned
+}
+
+func cloneBlock(block *Block) *Block {
+	if block == nil {
+		return nil
+	}
+	cloned := *block
+	cloned.Txs = make([]*Tx, len(block.Txs))
+	for i, tx := range block.Txs {
+		cloned.Txs[i] = cloneTx(tx)
+	}
+	return &cloned
 }

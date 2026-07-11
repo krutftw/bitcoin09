@@ -89,13 +89,20 @@ scaling custody.
 
 ### Cancellation and disputes
 
-- An unaccepted WTB offer can be cancelled without a transfer.
-- A WTS order awaiting deposit can be cancelled without a transfer.
+- An unaccepted WTB offer can be cancelled without a transfer. After a seller
+  accepts, WTB never reopens: zero-credit cancellation closes it, while any
+  partial/full seller credit is refunded before terminal closure when it exceeds
+  the disclosed network fee. A residual at or below that fee remains a visible
+  `recovery_hold` liability until topped up; it is never written off or paid from
+  another customer's escrow. A new seller requires a new WTB and deposit address.
+- A WTS order awaiting deposit can cancel without a transfer only at zero
+  credit; partial confirmed credit becomes a recovery refund when positive after
+  fee, otherwise it remains in `recovery_hold` until a top-up.
 - An open, funded WTS cancellation returns the buyer-net amount plus any
   service-fee reserve; the separately quoted network-fee buffer pays the
   refund transaction.
-- A buyer may leave a matched trade before claiming payment was sent; the
-  order can return to open only if the seller has not marked payment received.
+- A buyer may leave a matched WTS trade before either payment flag; the same
+  seller escrow can return to open. This rule never reopens an accepted WTB.
 - Once either side claims payment movement, cancellation becomes a dispute.
 - A matched trade times out into `disputed`; it never auto-pays or auto-refunds.
 - Admin resolution requires an explicit buyer/seller outcome and a reason.
@@ -114,8 +121,8 @@ awaiting_deposit -> open -> matched -> release_reserved -> broadcast -> complete
          +-> cancelled
 ```
 
-Additional failure states are `deposit_expired`, `transfer_failed_safe`, and
-`transfer_uncertain`. State changes that can lead to a wallet send use a
+Additional states are `deposit_expired`, `recovery_hold`,
+`transfer_failed_safe`, and `transfer_uncertain`. State changes that can lead to a wallet send use a
 single conditional SQL update inside `BEGIN IMMEDIATE`. Only the caller that
 successfully reserves the state may invoke the wallet.
 
@@ -136,17 +143,43 @@ Core tables:
 - `orders`: side, maker, buyer, seller, 09C amount, total price, settlement
   asset, network/payment method, state, confirmation flags, deadlines, fresh
   deposit address, and timestamps.
+- `deposit_scans`: durable evidence that one complete, validated address-history
+  snapshot was applied at a specific canonical tip. Scan rows are append-only.
+- `deposit_credits`: one immutable identity per canonical 09C output credited
+  to an order deposit address. Identity is `(network, txid, vout)` and includes
+  exact integer units, block anchor, confirmation/maturity state, first/last
+  observation, and whether the output is still canonical. Identity, amount,
+  credit time, and already-allocated bucket capacity can never be reduced or
+  deleted; newer chain observations are accepted only from a newer matching
+  scan record.
 - `transfers`: one row per release, refund, dispute resolution, or fee
-  withdrawal; includes amount, network fee, destination, operation state,
-  full transaction ID, command result classification, and timestamps.
+  withdrawal; includes a lifetime-unique operation key, immutable amount,
+  network fee and destination, operation state, full transaction ID, command
+  result classification, and timestamps.
+- `transfer_credit_allocations`: exact main/recovery credit units discharged by
+  a transfer only once that transfer is canonically confirmed.
 - `withdrawals`: retained for migration compatibility and replaced by transfer
   rows for new fee withdrawals.
 - `audit_events`: append-only state changes and admin actions without secrets.
 
-The liability calculation includes every funded order not conclusively paid
-or refunded. A send is refused unless wallet spendable balance covers all
-liabilities plus the new network fee. The network fee is never silently taken
-from another active order.
+Order quote economics and all credited/allocated accounting evidence are
+append-only or narrowly monotonic at the database boundary. A direct SQL
+writer cannot rewrite an old quote, outpoint, signed transfer, confirmation
+anchor, or audit event to change liability after the fact. All machine fields
+are canonical ASCII with byte-length and embedded-NUL checks, not only display
+length checks.
+
+Customer liability is derived from durable credits and confirmed allocations,
+not from an order-state list and never by adding an order balance to its transfer
+row. For each order it is `credited output units - credit units allocated to
+canonically confirmed transfers`. Release allocations include the payout,
+network fee, and earned service fee; refund/recovery allocations include only
+the payout and network fee. Partial, excess, and late credits therefore remain
+liabilities without special-case state filters. A post-credit
+reorg freezes the service and retains the obligation for reconciliation instead
+of silently reducing it. A customer send is refused unless that order covers its
+immutable payout plus fee and the aggregate wallet remains solvent for every
+other liability. The already-reserved outbound fee is not counted a second time.
 
 The public order amount is the net 09C the buyer receives. The seller's quoted
 deposit requirement is `net amount + outbound network fee + service fee`.
@@ -162,26 +195,111 @@ that arrives after cancellation or expiry becomes a recovery case and cannot
 silently reopen or match the order. Deposit addresses continue to be watched
 until any late or excess funds are reconciled.
 
+A recovery balance at or below its outbound network fee enters
+`recovery_hold`; it is not written off and no zero-value refund is attempted.
+The address remains watched until a depositor top-up makes a positive refund
+possible. The 0% pilot never takes the fee from another customer's escrow or
+silently invents an operator subsidy.
+
 ## Wallet Boundary and Idempotency
 
-The current CLI prints only a shortened transaction ID and does not prove a
-peer accepted the broadcast. The bot needs a structured wallet adapter:
+Address-balance polling is not an accounting source. The wallet selects UTXOs
+across all of its keys and confirmed spends remove outputs from the current
+address balance, so polling can miss a deposit that was spent between checks.
+The live node exposes a consistent current-best-chain snapshot at
+`GET /api/v1/address/{address}/outputs`. It returns all canonical outputs to the
+address, including spent outputs, with full `txid:vout`, integer units, block/tip
+anchors, confirmations, coinbase maturity, and confirmed spend identity. The
+bot treats a timeout, malformed response, incomplete snapshot, or non-200 as
+unknown and never as a zero balance. Pilot deposits require a configurable
+confirmation depth (default six) and coinbase maturity where applicable.
+
+Before every wallet claim and preparation, the service takes one live tip and
+fetches every watched deposit address against that exact expected tip. It applies
+the complete all-address batch in one database transaction only if the watched
+set is unchanged, then verifies every address's latest append-only scan has that
+same tip. A new order/address, timeout, mixed tip, or tip change invalidates the
+barrier and restarts reconciliation. This common-tip barrier is carried into
+`prepare-send`; per-address snapshots from different tips are never combined for
+solvency.
+
+Every best-chain output is recorded before it reaches credit depth. Spendable
+but not-yet-credited outpoints are provisional customer funds: their units are
+subtracted from usable wallet solvency and their outpoints are excluded from
+coin selection. They cannot mask a deficit or fund a payout/fee withdrawal.
+A post-credit reorg, unknown custodian spend, or failure to reconcile the full
+watched set at one tip blocks all claims.
+
+A locked structured wallet snapshot at that same tip enumerates every
+wallet-controlled address and spendable outpoint, including the internal primary
+change address and unused preallocations, and returns exact integer units plus a
+deterministic wallet/UTXO-set hash. Solvency uses this complete snapshot, never
+an order-address sum or human CLI text. Preparation must return the same snapshot
+hash; any intervening key/address or UTXO-set change is a safe retry before the
+signed transaction is attached.
+
+The current CLI uses binary floating-point amounts, prints only a shortened
+transaction ID, and does not prove a peer accepted the broadcast. It can also
+read a persisted chain snapshot that lags the running node. The bot replaces
+float parsing with exact plain-decimal integer conversion and splits the wallet
+boundary into live-tip verification, prepare, durable persist, exact broadcast,
+and trusted-node reconciliation:
 
 - full transaction ID;
 - exact amount and network fee in integer base units;
-- at least one successful peer write before returning `broadcast`;
+- a live tip hash/height supplied to preparation and an exact persisted-snapshot
+  match before signing;
+- a second live-tip read before attaching the signed bytes, plus a canonical
+  ancestor check before every broadcast/rebroadcast;
+- at least one successful peer write reported as `submitted`, followed by
+  trusted local-node observation before returning `broadcast`;
 - distinct errors for `safe_to_retry` and `uncertain`;
-- no automatic retry after a transaction may have been signed or broadcast;
+- no P2P/mempool side effect during preparation;
+- full signed transaction and txid committed to SQLite with FULL durability
+  before the first submit/peer write;
+- idempotent lookup/rebroadcast of only those stored bytes after a crash;
 - background reconciliation against the local chain/explorer before marking
   a transfer completed.
 
-The P2P node and CLI may be extended to return a successful broadcast count
-and machine-readable JSON. The Discord layer never parses human log prose.
+The P2P accept path distinguishes a newly added transaction from one already
+known and relays only the former, preventing exact rebroadcast from creating a
+gossip loop. The CLI returns successful peer-write counts and machine-readable
+JSON, but a socket write is only `submitted`, never proof of mempool acceptance.
+The live explorer exposes canonical tip, block ancestry, and transaction status;
+only that trusted local node may promote a submitted transfer to `broadcast`.
+The Discord layer never parses human log prose or sees signed transaction bytes.
 
-Every transfer has a unique operation row. A repeated Discord interaction,
-process restart, two admins, or two simultaneous confirmations can reserve at
-most one transfer. Restart recovery scans reserved/broadcast/uncertain rows
-and reconciles them before allowing new wallet operations.
+Escrow keys live in a dedicated `BTC09_WALLET_PATH` outside the node chain data
+directory. Every wallet reader/writer takes the same interprocess lock. Address
+creation re-reads under the lock, writes a mode-0600 temporary file in the same
+directory, fsyncs it, atomically replaces the wallet, fsyncs the directory, and
+returns the address only after durability succeeds. The bot service is the sole
+writer; operators do not use the escrow wallet with the general-purpose CLI.
+
+Every transfer has one lifetime-unique operation row. Business logic first
+creates a `queued` transfer atomically with the order transition. A worker may
+claim at most one global wallet operation by changing `queued` to `reserved`;
+only that winning caller may invoke the wallet. A repeated Discord interaction,
+process restart, two admins, or two simultaneous confirmations can therefore
+create and send at most one operation. A queued row is safe to claim after a
+restart because no wallet call was authorized. A `reserved` row has no signed
+transaction and cannot have reached the network. Preparation changes it to
+`prepared` only in the same durable commit that stores the exact txid/bytes;
+prepared and broadcast recovery can therefore query or rebroadcast the same
+transaction without duplicate payment. Reserved/prepared/broadcast occupy one
+global send lane, while any uncertain row blocks all claims. A structured
+pre-sign failure may requeue the same immutable row; it never creates a
+replacement operation with a new amount, kind, destination, or transaction.
+If uncertainty appears after a different operation was claimed, that operation
+may not attach signed bytes or advance from prepared to broadcast until the
+uncertainty is reconciled. Truthful confirmation and exact recovery of the
+uncertain transaction remain allowed.
+
+The second valid party confirmation and creation of the buyer release operation
+occur in one `BEGIN IMMEDIATE` transaction. WTS and WTB acceptance also use one
+conditional transaction; WTB preallocates a fresh address before attempting the
+claim so a losing caller can only orphan an unused address, never expose a
+shared deposit address.
 
 ## Code Structure
 
@@ -248,7 +366,8 @@ GitHub noticeboard offers from bot-escrow orders.
 - Keep Discord secrets in `/etc/btc09/discord.env` mode 600.
 - Run the bot as a dedicated unprivileged user with systemd hardening and only
   the specific wallet/data/feed paths writable.
-- Back up the encrypted wallet and SQLite database before every deployment.
+- Back up the dedicated root-only hot-wallet key file and SQLite database before
+  every deployment; keep the funded pilot caps low because this wallet is online.
 - Never log tokens, private keys, payment details, or full off-chain evidence.
 - Add structured journald errors for deposit, send, refund, release,
   withdrawal, translation, and reconciliation failures.
@@ -266,6 +385,10 @@ Automated tests must cover:
 - simultaneous accepts and confirmations;
 - duplicate admin resolution, refund, and fee withdrawal attempts;
 - process restart during reserved and broadcast transfers;
+- stale persisted-chain snapshots, preparation-time reorgs, ambiguous database
+  commits, duplicate P2P delivery, and systemd restarts with wallet children;
+- concurrent wallet address creation and process death at each durable-write
+  boundary;
 - safe failure versus uncertain send classification;
 - exact fee/liability math including network fees;
 - deposit attribution and over/under-deposit handling;

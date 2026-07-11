@@ -4,7 +4,7 @@
 
 **Goal:** Replace the prototype sell-only hot-wallet bot with a tested two-sided WTB/WTS 09C escrow service that supports broad external settlement assets without taking custody of those outside funds.
 
-**Architecture:** Keep Discord as the authenticated interaction surface and SQLite as the single-process durable store, but split domain rules, atomic persistence, wallet operations, orchestration, UI, feed projection, and optional translation into focused modules. Every wallet send is preceded by an atomic transfer reservation and followed by structured broadcast/reconciliation states; public output is a privacy-safe projection.
+**Architecture:** Keep Discord as the authenticated interaction surface and SQLite as the single-process durable store, but split domain rules, atomic persistence, wallet operations, orchestration, UI, feed projection, and optional translation into focused modules. Every wallet send is queued and globally claimed, prepared without network side effects, durably stored as one exact signed transaction, then broadcast/reconciled idempotently; public output is a privacy-safe projection.
 
 **Tech Stack:** Python 3.12+ standard library, `discord.py==2.7.1`, `requests==2.34.2`, `cryptography==49.0.0`, SQLite WAL, Go 1.24+, existing Bitcoin 09 node/P2P/explorer, systemd, nginx.
 
@@ -17,8 +17,13 @@
 - Bot UI and structured records are English.
 - Pilot service fee is exactly `0%`; network fees are quoted and reserved separately.
 - New orders remain disabled whenever reconciliation, wallet solvency, database integrity, or explorer health is not green.
+- No wallet claim/prepare may run until every watched deposit address has one
+  complete latest scan at the same live expected tip; provisional spendable
+  deposits are restricted and excluded from coin selection.
 - Every fund-moving state claim uses one conditional update inside `BEGIN IMMEDIATE`.
-- A timeout or any send result that may have signed/broadcast becomes `transfer_uncertain` and is never automatically retried.
+- A timeout after network submission becomes `transfer_uncertain`; recovery may
+  query or rebroadcast only the already persisted signed transaction and never
+  build a replacement payment.
 - Use integer 09C base units at module boundaries; one 09C is `100_000_000` units.
 - Use failing tests before production changes and review every task before the next task starts.
 - Production enablement requires a backup, empty-v0.2.1 migration proof, controlled funded trade, refund, dispute, restart recovery, feed readback, and balance reconciliation.
@@ -36,7 +41,7 @@
 - Modify: `.gitignore`
 
 **Interfaces:**
-- Produces: `OrderSide`, `OrderState`, `TransferState`, `Money`, `SettlementTerms`, `FeeQuote`, `parse_09c`, `parse_asset`, `parse_method`, `quote_deposit`.
+- Produces: `OrderSide`, `OrderState`, `TransferState`, `Money`, `SettlementTerms`, `FeeQuote`, `parse_09c`, `parse_total_price`, `parse_asset`, `parse_method`, `quote_deposit`.
 - `Money.units` is an `int`; no `float` or database `REAL` values are allowed.
 
 - [ ] **Step 1: Add pinned runtime dependencies and ignore test caches**
@@ -66,6 +71,7 @@ from bot.otc.domain import (
     OrderSide,
     OrderState,
     parse_09c,
+    parse_total_price,
     parse_asset,
     parse_method,
     quote_deposit,
@@ -86,6 +92,13 @@ class DomainTests(unittest.TestCase):
         for bad in ("$", "A", "USDT ERC20 PLEASE DM ME", "US DT"):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 parse_asset(bad)
+
+    def test_total_price_is_canonical_positive_decimal(self):
+        self.assertEqual(parse_total_price(" 0.00000001 "), "0.00000001")
+        self.assertEqual(parse_total_price("2500"), "2500")
+        for bad in (".", "0", "00.1", "1.", "1..2", "+1", "1e3", "1,000"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_total_price(bad)
 
     def test_zero_percent_quote_reserves_network_fee(self):
         quote = quote_deposit(net_amount=5_000_000_000, network_fee=10_000, fee_bps=0)
@@ -124,6 +137,9 @@ from enum import StrEnum
 UNITS_PER_09C = 100_000_000
 ASSET_RE = re.compile(r"[A-Z0-9._-]{2,12}\Z")
 METHOD_RE = re.compile(r"[A-Za-z0-9 ._+/-]{2,32}\Z")
+TOTAL_PRICE_RE = re.compile(
+    r"(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,18})?\Z"
+)
 
 
 class OrderSide(StrEnum):
@@ -187,6 +203,15 @@ def parse_asset(value: str) -> str:
     return asset
 
 
+def parse_total_price(value: str) -> str:
+    if type(value) is not str:
+        raise ValueError("total price must be text")
+    price = value.strip()
+    if not TOTAL_PRICE_RE.fullmatch(price) or not any(c in "123456789" for c in price):
+        raise ValueError("total price must be a positive plain decimal")
+    return price
+
+
 def parse_method(value: str) -> str:
     method = " ".join(value.strip().split())
     if not METHOD_RE.fullmatch(method):
@@ -218,11 +243,16 @@ Expected: four passing tests.
 **Files:**
 - Create: `bot/otc/store.py`
 - Create: `bot/tests/test_store_schema.py`
+- Modify: `bot/otc/domain.py`
+- Modify: `bot/tests/test_domain.py`
 - Read: `bot/btc09_otc_bot.py:68-157`
 
 **Interfaces:**
 - Consumes: enums and integer-unit rules from `bot.otc.domain`.
 - Produces: `Store(path)`, `Store.initialize()`, `Store.integrity_check()`, `Store.create_order(...)`, `Store.get_order(order_id)`, `Store.append_audit(...)`.
+- `python -m bot.otc.store` requires an explicit `DB_PATH`, initializes that
+  exact database, verifies integrity, and prints bounded JSON containing schema
+  version/integrity. Import-only execution or a missing path exits nonzero.
 
 - [ ] **Step 1: Write migration and schema tests**
 
@@ -249,7 +279,7 @@ class StoreSchemaTests(unittest.TestCase):
         store.initialize()
         with sqlite3.connect(self.path) as conn:
             names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            self.assertTrue({"users", "orders", "transfers", "audit_events", "schema_meta"} <= names)
+            self.assertTrue({"users", "orders", "deposit_scans", "deposit_credits", "transfers", "transfer_credit_allocations", "audit_events", "schema_meta"} <= names)
             self.assertEqual(conn.execute("SELECT version FROM schema_meta").fetchone()[0], SCHEMA_VERSION)
 
     def test_empty_prototype_database_migrates_without_loss(self):
@@ -284,47 +314,173 @@ conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
 conn.row_factory = sqlite3.Row
 conn.execute("PRAGMA busy_timeout=30000")
 conn.execute("PRAGMA foreign_keys=ON")
+conn.execute("PRAGMA recursive_triggers=ON")
 conn.execute("PRAGMA journal_mode=WAL")
+conn.execute("PRAGMA synchronous=FULL")
 ```
 
-Use `SCHEMA_VERSION = 3`. `initialize()` must run `BEGIN IMMEDIATE`. If an
-existing `orders` table lacks `side`, require it to contain zero rows, rename
-it to `orders_v2_archive`, and create the v3 table. A non-empty prototype table
-must raise `MigrationBlocked` instead of guessing how to transform live funds.
-Keep the existing `users` and `withdrawals` rows. Create this exact v3 schema:
+Use `SCHEMA_VERSION = 4`. Version/catalog compatibility is checked without
+persistent mutation before WAL activation. After WAL succeeds, repeat the full
+validation under `BEGIN IMMEDIATE`, perform all migration/schema work, validate
+the resulting catalog, stamp v4, and commit last. A denied WAL activation,
+newer schema, malformed required object, or blocked migration must not stamp or
+partially rewrite the database. An already-v4 database is validation-only and
+does not upsert its version row. Validate the complete catalog, not only required
+object presence: allow exactly the 53 active v4 objects plus exact recognized
+empty archive/withdrawal/index evidence for its migration origin, and reject
+every other table, view, index, or trigger. Stamp the durable semantic origin
+in `schema_meta.origin`: `fresh`, `live_prototype`, `v3_fresh`,
+`v3_with_withdrawals`, or `v3_live_prototype`. Three schema-meta triggers make
+the one version/origin row insert-once and reject update, delete, or replacement.
+Every later v4 initialization
+uses that marker to select exactly one permitted catalog; deleting a complete
+coherent evidence set must not make a migrated database look fresh. Catalog
+cardinality is keyed by object type and name, duplicate names across object
+types are rejected, and only verified SQL-NULL autoindexes plus the exact
+internal `sqlite_sequence` object are excluded. Executable `sqlite_*` objects
+remain part of validation. Canonical SQL comparison preserves every byte inside
+quoted literals and identifiers. If the exact live-prototype `orders`
+table lacks `side`, require it to contain zero rows and no sequence history,
+rename it to `orders_v2_archive`, and create
+the v4 table. A non-empty prototype table must raise `MigrationBlocked` instead
+of guessing how to transform live funds. Keep the existing `users` and
+`withdrawals` rows. An exact empty v3 database may be archived and rebuilt; any
+v3 database containing orders, transfers, deposit credits, or a nonzero legacy
+aggregate must raise `MigrationBlocked` because no transaction outpoints may be
+fabricated from a balance. Extend `OrderState` with `recovery_hold` and
+`TransferState` with `queued`, `prepared`, and `cancelled`,
+then create this exact v4 schema:
+
+For exact empty v3, first verify `orders`, `transfers`, and `audit_events` all
+contain zero rows and every order aggregate is zero. Inside the same migration
+transaction rename them to `orders_v3_archive`, `transfers_v3_archive`,
+`audit_events_v3_archive`, and `schema_meta_v3_archive`; drop only their verified v3 named indexes so the v4
+index names can be created. Preserve `users`, `withdrawals`, any prior empty
+`orders_v2_archive`, and all archive tables as evidence. Any nonempty or
+non-exact v3 financial catalog is blocked without mutation.
+The presence of any matching `sqlite_sequence` row is prior-use evidence even
+when `seq` is `0` or negative; absence/zero-row table checks cannot override it.
+The unversioned empty-catalog path is stricter: a truly fresh database has no
+`sqlite_sequence` object, so even an empty internal sequence table blocks fresh
+certification. Prototype and v3 origins may legitimately retain that object and
+are instead subject to their exact catalog and named-sequence checks.
+
+The ordered migration algorithm is: (1) raw read-only version/catalog/row-count
+preflight; (2) WAL plus `synchronous=FULL`; (3) `BEGIN IMMEDIATE`; (4) repeat
+the exact preflight under the writer lock, including empty withdrawals; (5) drop
+only verified named v3 indexes; (6) rename orders first so SQLite rewrites the
+old transfer FK to the archive, then rename transfers, audit, and the non-STRICT
+v3 schema_meta; (7) rebuild any compatible nullable users table; (8) create/validate the complete v4
+tables/indexes/triggers; (9) run `foreign_key_check`; (10) stamp v4 and commit as
+the final fallible mutation. Every DDL statement is transactional. Inject a
+failure after each numbered mutation and prove rollback restores the original
+catalog, data, version, and journal policy.
 
 ```sql
+PRAGMA foreign_keys = ON;
+PRAGMA recursive_triggers = ON;
 CREATE TABLE IF NOT EXISTS schema_meta (
   id INTEGER PRIMARY KEY CHECK(id = 1),
-  version INTEGER NOT NULL
-);
+  version INTEGER NOT NULL,
+  origin TEXT NOT NULL CHECK(origin IN (
+    'fresh','live_prototype','v3_fresh','v3_with_withdrawals',
+    'v3_live_prototype'
+  ))
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS schema_meta_insert_once
+BEFORE INSERT ON schema_meta
+WHEN EXISTS (SELECT 1 FROM schema_meta)
+BEGIN
+  SELECT RAISE(ABORT, 'schema metadata row already exists');
+END;
+CREATE TRIGGER IF NOT EXISTS schema_meta_update_block
+BEFORE UPDATE ON schema_meta
+BEGIN
+  SELECT RAISE(ABORT, 'schema metadata is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS schema_meta_delete_block
+BEFORE DELETE ON schema_meta
+BEGIN
+  SELECT RAISE(ABORT, 'schema metadata is immutable');
+END;
 CREATE TABLE IF NOT EXISTS users (
   user_id INTEGER PRIMARY KEY,
-  username TEXT NOT NULL,
-  wallet_addr TEXT,
+  username TEXT NOT NULL CHECK(
+    instr(username, char(0)) = 0 AND
+    length(CAST(username AS BLOB)) BETWEEN 1 AND 128
+  ),
+  wallet_addr TEXT CHECK(wallet_addr IS NULL OR (
+    instr(wallet_addr, char(0)) = 0 AND
+    length(CAST(wallet_addr AS BLOB)) BETWEEN 1 AND 128
+  )),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
-);
+) STRICT;
 CREATE TABLE IF NOT EXISTS orders (
   order_id INTEGER PRIMARY KEY AUTOINCREMENT,
   side TEXT NOT NULL CHECK(side IN ('buy','sell')),
   maker_id INTEGER NOT NULL,
-  maker_name TEXT NOT NULL,
+  maker_name TEXT NOT NULL CHECK(
+    instr(maker_name, char(0)) = 0 AND
+    length(CAST(maker_name AS BLOB)) BETWEEN 1 AND 128
+  ),
   buyer_id INTEGER,
-  buyer_name TEXT,
+  buyer_name TEXT CHECK(buyer_name IS NULL OR (
+    instr(buyer_name, char(0)) = 0 AND
+    length(CAST(buyer_name AS BLOB)) BETWEEN 1 AND 128
+  )),
   seller_id INTEGER,
-  seller_name TEXT,
-  net_amount_units INTEGER NOT NULL CHECK(net_amount_units > 0),
-  network_fee_units INTEGER NOT NULL CHECK(network_fee_units >= 0),
-  service_fee_units INTEGER NOT NULL CHECK(service_fee_units >= 0),
-  deposit_required_units INTEGER NOT NULL CHECK(deposit_required_units > 0),
-  deposit_confirmed_units INTEGER NOT NULL DEFAULT 0 CHECK(deposit_confirmed_units >= 0),
-  total_price TEXT NOT NULL,
-  settlement_asset TEXT NOT NULL,
-  settlement_network TEXT,
-  payment_method TEXT NOT NULL,
-  state TEXT NOT NULL,
-  deposit_addr TEXT,
+  seller_name TEXT CHECK(seller_name IS NULL OR (
+    instr(seller_name, char(0)) = 0 AND
+    length(CAST(seller_name AS BLOB)) BETWEEN 1 AND 128
+  )),
+  net_amount_units INTEGER NOT NULL
+    CHECK(net_amount_units BETWEEN 1 AND 2100000000000000),
+  network_fee_units INTEGER NOT NULL
+    CHECK(network_fee_units BETWEEN 0 AND 2100000000000000),
+  service_fee_units INTEGER NOT NULL
+    CHECK(service_fee_units BETWEEN 0 AND 2100000000000000),
+  deposit_required_units INTEGER NOT NULL
+    CHECK(deposit_required_units BETWEEN 1 AND 2100000000000000),
+  total_price TEXT NOT NULL CHECK(
+    instr(total_price, char(0)) = 0 AND
+    length(CAST(total_price AS BLOB)) BETWEEN 1 AND 37 AND
+    total_price NOT GLOB '*[^0-9.]*' AND
+    substr(total_price, 1, 1) != '.' AND
+    substr(total_price, -1, 1) != '.' AND
+    (instr(total_price, '.') = 0 OR
+      instr(substr(total_price, instr(total_price, '.') + 1), '.') = 0) AND
+    (substr(total_price, 1, 1) != '0' OR
+      (length(total_price) > 1 AND substr(total_price, 2, 1) = '.')) AND
+    ((instr(total_price, '.') = 0 AND length(total_price) <= 18) OR
+      (instr(total_price, '.') BETWEEN 2 AND 19 AND
+       length(total_price) - instr(total_price, '.') BETWEEN 1 AND 18)) AND
+    total_price GLOB '*[1-9]*'
+  ),
+  settlement_asset TEXT NOT NULL CHECK(
+    instr(settlement_asset, char(0)) = 0 AND
+    length(CAST(settlement_asset AS BLOB)) BETWEEN 2 AND 12 AND
+    settlement_asset NOT GLOB '*[^A-Z0-9._-]*'
+  ),
+  settlement_network TEXT CHECK(settlement_network IS NULL OR (
+    instr(settlement_network, char(0)) = 0 AND
+    length(CAST(settlement_network AS BLOB)) BETWEEN 1 AND 48 AND
+    settlement_network NOT GLOB '*[^A-Za-z0-9._ -]*'
+  )),
+  payment_method TEXT NOT NULL CHECK(
+    instr(payment_method, char(0)) = 0 AND
+    length(CAST(payment_method AS BLOB)) BETWEEN 1 AND 80 AND
+    payment_method NOT GLOB '*[^ -~]*'
+  ),
+  state TEXT NOT NULL CHECK(state IN (
+    'awaiting_deposit','open','matched','disputed','release_reserved',
+    'refund_reserved','broadcast','completed','refunded','cancelled',
+    'deposit_expired','recovery_hold','transfer_failed_safe','transfer_uncertain'
+  )),
+  deposit_addr TEXT CHECK(deposit_addr IS NULL OR (
+    instr(deposit_addr, char(0)) = 0 AND
+    length(CAST(deposit_addr AS BLOB)) BETWEEN 1 AND 128
+  )),
   buyer_confirmed INTEGER NOT NULL DEFAULT 0 CHECK(buyer_confirmed IN (0,1)),
   seller_confirmed INTEGER NOT NULL DEFAULT 0 CHECK(seller_confirmed IN (0,1)),
   deposit_deadline INTEGER,
@@ -332,50 +488,1043 @@ CREATE TABLE IF NOT EXISTS orders (
   trade_deadline INTEGER,
   disputed_at INTEGER,
   completed_at INTEGER,
+  funded_at INTEGER,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
+  updated_at INTEGER NOT NULL,
+  UNIQUE(order_id, deposit_addr),
+  CHECK(deposit_required_units =
+    net_amount_units + network_fee_units + service_fee_units),
+  CHECK((buyer_id IS NULL AND buyer_name IS NULL) OR
+        (buyer_id IS NOT NULL AND buyer_name IS NOT NULL)),
+  CHECK((seller_id IS NULL AND seller_name IS NULL) OR
+        (seller_id IS NOT NULL AND seller_name IS NOT NULL)),
+  CHECK(
+    (side = 'sell' AND seller_id = maker_id AND seller_name = maker_name) OR
+    (side = 'buy' AND buyer_id = maker_id AND buyer_name = maker_name)
+  ),
+  CHECK(buyer_id IS NULL OR seller_id IS NULL OR buyer_id != seller_id),
+  FOREIGN KEY(maker_id) REFERENCES users(user_id),
+  FOREIGN KEY(buyer_id) REFERENCES users(user_id),
+  FOREIGN KEY(seller_id) REFERENCES users(user_id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS deposit_scans (
+  scan_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  network TEXT NOT NULL CHECK(network IN ('btc09-mainnet','btc09-regtest')),
+  address TEXT NOT NULL CHECK(
+    instr(address, char(0)) = 0 AND
+    length(CAST(address AS BLOB)) BETWEEN 1 AND 128
+  ),
+  tip_hash TEXT NOT NULL CHECK(
+    instr(tip_hash, char(0)) = 0 AND
+    length(CAST(tip_hash AS BLOB)) = 64 AND
+    tip_hash NOT GLOB '*[^0-9a-f]*'
+  ),
+  tip_height INTEGER NOT NULL CHECK(tip_height >= 0),
+  observed_at INTEGER NOT NULL,
+  UNIQUE(scan_id, network, address)
+) STRICT;
+CREATE TABLE IF NOT EXISTS deposit_credits (
+  credit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES orders(order_id),
+  network TEXT NOT NULL CHECK(network IN ('btc09-mainnet','btc09-regtest')),
+  txid TEXT NOT NULL CHECK(
+    instr(txid, char(0)) = 0 AND
+    length(CAST(txid AS BLOB)) = 64 AND
+    txid NOT GLOB '*[^0-9a-f]*'
+  ),
+  vout INTEGER NOT NULL CHECK(vout >= 0),
+  deposit_addr TEXT NOT NULL CHECK(
+    instr(deposit_addr, char(0)) = 0 AND
+    length(CAST(deposit_addr AS BLOB)) BETWEEN 1 AND 128
+  ),
+  amount_units INTEGER NOT NULL
+    CHECK(amount_units BETWEEN 1 AND 2100000000000000),
+  block_hash TEXT NOT NULL CHECK(
+    instr(block_hash, char(0)) = 0 AND
+    length(CAST(block_hash AS BLOB)) = 64 AND
+    block_hash NOT GLOB '*[^0-9a-f]*'
+  ),
+  block_height INTEGER NOT NULL CHECK(block_height >= 0),
+  confirmations INTEGER NOT NULL CHECK(confirmations >= 1),
+  coinbase INTEGER NOT NULL CHECK(coinbase IN (0,1)),
+  mature INTEGER NOT NULL CHECK(mature IN (0,1)),
+  current_best_chain INTEGER NOT NULL CHECK(current_best_chain IN (0,1)),
+  spent_by_txid TEXT,
+  spent_by_vin INTEGER,
+  spent_by_block_hash TEXT,
+  spent_by_block_height INTEGER,
+  credited_at INTEGER,
+  main_units INTEGER NOT NULL DEFAULT 0 CHECK(main_units >= 0),
+  recovery_units INTEGER NOT NULL DEFAULT 0 CHECK(recovery_units >= 0),
+  recovery_reason TEXT CHECK(
+    recovery_reason IS NULL OR
+    recovery_reason IN ('excess','late','cancelled_partial')
+  ),
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  last_seen_scan_id INTEGER NOT NULL REFERENCES deposit_scans(scan_id),
+  last_checked_scan_id INTEGER NOT NULL REFERENCES deposit_scans(scan_id),
+  UNIQUE(network, txid, vout),
+  UNIQUE(credit_id, order_id),
+  CHECK(main_units + recovery_units <= amount_units),
+  CHECK(credited_at IS NOT NULL OR main_units + recovery_units = 0),
+  CHECK(credited_at IS NULL OR main_units + recovery_units = amount_units),
+  CHECK(
+    (recovery_units = 0 AND recovery_reason IS NULL) OR
+    (recovery_units > 0 AND recovery_reason IS NOT NULL)
+  ),
+  CHECK(last_seen_at >= first_seen_at),
+  CHECK(credited_at IS NULL OR credited_at >= first_seen_at),
+  CHECK(current_best_chain = 0 OR last_seen_scan_id = last_checked_scan_id),
+  CHECK(
+    (spent_by_txid IS NULL AND spent_by_vin IS NULL AND
+     spent_by_block_hash IS NULL AND spent_by_block_height IS NULL) OR
+    (spent_by_txid IS NOT NULL AND spent_by_vin IS NOT NULL AND
+     spent_by_block_hash IS NOT NULL AND spent_by_block_height IS NOT NULL AND
+     instr(spent_by_txid, char(0)) = 0 AND
+     length(CAST(spent_by_txid AS BLOB)) = 64 AND
+     spent_by_txid NOT GLOB '*[^0-9a-f]*' AND
+     spent_by_vin >= 0 AND
+     instr(spent_by_block_hash, char(0)) = 0 AND
+     length(CAST(spent_by_block_hash AS BLOB)) = 64 AND
+     spent_by_block_hash NOT GLOB '*[^0-9a-f]*' AND
+     spent_by_block_height >= 0)
+  ),
+  FOREIGN KEY(order_id, deposit_addr)
+    REFERENCES orders(order_id, deposit_addr),
+  FOREIGN KEY(last_seen_scan_id, network, deposit_addr)
+    REFERENCES deposit_scans(scan_id, network, address),
+  FOREIGN KEY(last_checked_scan_id, network, deposit_addr)
+    REFERENCES deposit_scans(scan_id, network, address)
+) STRICT;
 CREATE TABLE IF NOT EXISTS transfers (
   transfer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  operation_key TEXT NOT NULL UNIQUE CHECK(
+    instr(operation_key, char(0)) = 0 AND
+    length(CAST(operation_key AS BLOB)) BETWEEN 1 AND 160 AND
+    operation_key NOT GLOB '*[^a-z0-9:_-]*'
+  ),
   order_id INTEGER REFERENCES orders(order_id),
-  kind TEXT NOT NULL CHECK(kind IN ('release','refund','resolve_buyer','resolve_seller','fee_withdrawal','excess_refund')),
-  state TEXT NOT NULL,
-  amount_units INTEGER NOT NULL CHECK(amount_units > 0),
-  network_fee_units INTEGER NOT NULL CHECK(network_fee_units >= 0),
-  destination TEXT NOT NULL,
-  txid TEXT,
-  result_class TEXT,
-  error_text TEXT,
+  wallet_scope TEXT NOT NULL DEFAULT 'escrow' CHECK(wallet_scope = 'escrow'),
+  kind TEXT NOT NULL CHECK(kind IN (
+    'release','refund','resolve_buyer','resolve_seller','recovery_refund',
+    'fee_withdrawal'
+  )),
+  is_main_outcome INTEGER NOT NULL CHECK(is_main_outcome IN (0,1)),
+  state TEXT NOT NULL CHECK(state IN (
+    'queued','reserved','prepared','broadcast','confirmed','failed_safe',
+    'uncertain','cancelled'
+  )),
+  amount_units INTEGER NOT NULL
+    CHECK(amount_units BETWEEN 1 AND 2100000000000000),
+  network_fee_units INTEGER NOT NULL
+    CHECK(network_fee_units BETWEEN 0 AND 2100000000000000),
+  earned_fee_units INTEGER NOT NULL DEFAULT 0
+    CHECK(earned_fee_units BETWEEN 0 AND 2100000000000000),
+  destination TEXT NOT NULL CHECK(
+    instr(destination, char(0)) = 0 AND
+    length(CAST(destination AS BLOB)) BETWEEN 1 AND 128
+  ),
+  txid TEXT CHECK(
+    txid IS NULL OR (
+      instr(txid, char(0)) = 0 AND
+      length(CAST(txid AS BLOB)) = 64 AND
+      txid NOT GLOB '*[^0-9a-f]*'
+    )
+  ),
+  signed_tx_hex TEXT CHECK(
+    signed_tx_hex IS NULL OR
+    (instr(signed_tx_hex, char(0)) = 0 AND
+     length(CAST(signed_tx_hex AS BLOB)) BETWEEN 2 AND 20000 AND
+     length(CAST(signed_tx_hex AS BLOB)) % 2 = 0 AND
+     signed_tx_hex NOT GLOB '*[^0-9a-f]*')
+  ),
+  prepared_tip_hash TEXT CHECK(
+    prepared_tip_hash IS NULL OR (
+      instr(prepared_tip_hash, char(0)) = 0 AND
+      length(CAST(prepared_tip_hash AS BLOB)) = 64 AND
+      prepared_tip_hash NOT GLOB '*[^0-9a-f]*'
+    )
+  ),
+  prepared_tip_height INTEGER CHECK(
+    prepared_tip_height IS NULL OR prepared_tip_height >= 0
+  ),
+  result_class TEXT CHECK(
+    result_class IS NULL OR
+    result_class IN ('broadcast','safe_to_retry','uncertain')
+  ),
+  error_text TEXT CHECK(error_text IS NULL OR (
+    instr(error_text, char(0)) = 0 AND
+    length(CAST(error_text AS BLOB)) <= 500
+  )),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+  reserved_at INTEGER,
+  signed_at INTEGER,
+  broadcast_at INTEGER,
+  confirmed_at INTEGER,
+  confirmed_block_hash TEXT CHECK(
+    confirmed_block_hash IS NULL OR
+    (instr(confirmed_block_hash, char(0)) = 0 AND
+     length(CAST(confirmed_block_hash AS BLOB)) = 64 AND
+     confirmed_block_hash NOT GLOB '*[^0-9a-f]*')
+  ),
+  confirmed_block_height INTEGER,
+  confirmations INTEGER NOT NULL DEFAULT 0 CHECK(confirmations >= 0),
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
+  updated_at INTEGER NOT NULL,
+  CHECK(
+    (kind = 'fee_withdrawal' AND order_id IS NULL) OR
+    (kind != 'fee_withdrawal' AND order_id IS NOT NULL)
+  ),
+  CHECK(
+    (is_main_outcome = 1 AND kind IN (
+      'release','refund','resolve_buyer','resolve_seller'
+    )) OR
+    (is_main_outcome = 0 AND kind IN ('recovery_refund','fee_withdrawal'))
+  ),
+  CHECK(earned_fee_units = 0 OR kind IN ('release','resolve_buyer')),
+  CHECK(confirmed_block_height IS NULL OR confirmed_block_height >= 0),
+  CHECK(
+    state NOT IN ('queued','reserved','failed_safe','cancelled') OR
+    (txid IS NULL AND signed_tx_hex IS NULL AND signed_at IS NULL AND
+     prepared_tip_hash IS NULL AND prepared_tip_height IS NULL)
+  ),
+  CHECK(
+    state NOT IN ('prepared','broadcast','confirmed','uncertain') OR
+    (txid IS NOT NULL AND signed_tx_hex IS NOT NULL AND signed_at IS NOT NULL AND
+     prepared_tip_hash IS NOT NULL AND prepared_tip_height IS NOT NULL)
+  ),
+  CHECK(state != 'broadcast' OR txid IS NOT NULL),
+  CHECK(
+    state != 'confirmed' OR
+    (txid IS NOT NULL AND confirmed_at IS NOT NULL AND
+     confirmed_block_hash IS NOT NULL AND confirmed_block_height IS NOT NULL AND
+     confirmations >= 1)
+  ),
+  UNIQUE(transfer_id, order_id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS transfer_credit_allocations (
+  transfer_id INTEGER NOT NULL REFERENCES transfers(transfer_id),
+  credit_id INTEGER NOT NULL REFERENCES deposit_credits(credit_id),
+  order_id INTEGER NOT NULL REFERENCES orders(order_id),
+  bucket TEXT NOT NULL CHECK(bucket IN ('main','recovery')),
+  units INTEGER NOT NULL CHECK(units BETWEEN 1 AND 2100000000000000),
+  PRIMARY KEY(transfer_id, credit_id, bucket),
+  FOREIGN KEY(transfer_id, order_id)
+    REFERENCES transfers(transfer_id, order_id),
+  FOREIGN KEY(credit_id, order_id)
+    REFERENCES deposit_credits(credit_id, order_id)
+) STRICT;
 CREATE INDEX IF NOT EXISTS orders_by_state ON orders(state, updated_at);
-CREATE INDEX IF NOT EXISTS orders_by_deposit ON orders(deposit_addr);
-CREATE UNIQUE INDEX IF NOT EXISTS one_active_order_transfer
+CREATE UNIQUE INDEX IF NOT EXISTS one_order_per_deposit_address
+ON orders(deposit_addr) WHERE deposit_addr IS NOT NULL;
+CREATE INDEX IF NOT EXISTS deposit_scans_by_address
+ON deposit_scans(network, address, scan_id DESC);
+CREATE INDEX IF NOT EXISTS deposit_credits_by_order
+ON deposit_credits(order_id, credited_at);
+CREATE INDEX IF NOT EXISTS deposit_credits_by_address
+ON deposit_credits(network, deposit_addr, current_best_chain);
+CREATE UNIQUE INDEX IF NOT EXISTS one_main_outcome_per_order
+ON transfers(order_id) WHERE is_main_outcome = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS one_transfer_per_txid
+ON transfers(txid) WHERE txid IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS one_unfinished_recovery_per_order
 ON transfers(order_id)
-WHERE state IN ('reserved','broadcast','uncertain');
+WHERE kind = 'recovery_refund' AND state NOT IN ('confirmed','cancelled');
+CREATE UNIQUE INDEX IF NOT EXISTS one_wallet_send_in_flight
+ON transfers(wallet_scope) WHERE state IN ('reserved','prepared','broadcast');
+CREATE INDEX IF NOT EXISTS transfers_queue
+ON transfers(state, created_at, transfer_id);
+CREATE INDEX IF NOT EXISTS transfer_allocations_by_credit
+ON transfer_credit_allocations(credit_id);
+CREATE TRIGGER IF NOT EXISTS order_insert_invariant
+BEFORE INSERT ON orders
+WHEN NOT (
+  NEW.side = 'sell'
+  AND NEW.state = 'awaiting_deposit'
+  AND NEW.seller_id = NEW.maker_id
+  AND NEW.seller_name = NEW.maker_name
+  AND NEW.buyer_id IS NULL
+  AND NEW.buyer_name IS NULL
+  AND NEW.deposit_addr IS NOT NULL
+  AND NEW.buyer_confirmed = 0
+  AND NEW.seller_confirmed = 0
+) AND NOT (
+  NEW.side = 'buy'
+  AND NEW.state = 'open'
+  AND NEW.buyer_id = NEW.maker_id
+  AND NEW.buyer_name = NEW.maker_name
+  AND NEW.seller_id IS NULL
+  AND NEW.seller_name IS NULL
+  AND NEW.deposit_addr IS NULL
+  AND NEW.buyer_confirmed = 0
+  AND NEW.seller_confirmed = 0
+)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid initial order roles or state');
+END;
+CREATE TRIGGER IF NOT EXISTS order_quote_immutable
+BEFORE UPDATE ON orders
+WHEN NEW.side IS NOT OLD.side
+  OR NEW.maker_id IS NOT OLD.maker_id
+  OR NEW.maker_name IS NOT OLD.maker_name
+  OR NEW.net_amount_units IS NOT OLD.net_amount_units
+  OR NEW.network_fee_units IS NOT OLD.network_fee_units
+  OR NEW.service_fee_units IS NOT OLD.service_fee_units
+  OR NEW.deposit_required_units IS NOT OLD.deposit_required_units
+  OR NEW.total_price IS NOT OLD.total_price
+  OR NEW.settlement_asset IS NOT OLD.settlement_asset
+  OR NEW.settlement_network IS NOT OLD.settlement_network
+  OR NEW.payment_method IS NOT OLD.payment_method
+  OR NEW.created_at IS NOT OLD.created_at
+  OR (OLD.deposit_addr IS NOT NULL AND NEW.deposit_addr IS NOT OLD.deposit_addr)
+BEGIN
+  SELECT RAISE(ABORT, 'order quote and deposit identity are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS order_participant_transition_guard
+BEFORE UPDATE ON orders
+WHEN (
+  OLD.side = 'sell' AND NOT (
+    (NEW.buyer_id IS OLD.buyer_id AND NEW.buyer_name IS OLD.buyer_name) OR
+    (OLD.buyer_id IS NULL AND OLD.buyer_name IS NULL
+      AND NEW.buyer_id IS NOT NULL AND NEW.buyer_name IS NOT NULL
+      AND NEW.buyer_id != OLD.maker_id
+      AND OLD.state = 'open' AND NEW.state = 'matched'
+      AND OLD.buyer_confirmed = 0 AND OLD.seller_confirmed = 0
+      AND NEW.buyer_confirmed = 0 AND NEW.seller_confirmed = 0) OR
+    (OLD.buyer_id IS NOT NULL AND OLD.buyer_name IS NOT NULL
+      AND NEW.buyer_id IS NULL AND NEW.buyer_name IS NULL
+      AND OLD.state = 'matched' AND NEW.state = 'open'
+      AND OLD.buyer_confirmed = 0 AND OLD.seller_confirmed = 0
+      AND NEW.buyer_confirmed = 0 AND NEW.seller_confirmed = 0)
+  )
+) OR (
+  OLD.side = 'buy' AND NOT (
+    (NEW.seller_id IS OLD.seller_id AND NEW.seller_name IS OLD.seller_name) OR
+    (OLD.seller_id IS NULL AND OLD.seller_name IS NULL
+      AND NEW.seller_id IS NOT NULL AND NEW.seller_name IS NOT NULL
+      AND NEW.seller_id != OLD.maker_id
+      AND OLD.state = 'open' AND NEW.state = 'awaiting_deposit'
+      AND OLD.deposit_addr IS NULL AND NEW.deposit_addr IS NOT NULL
+      AND OLD.buyer_confirmed = 0 AND OLD.seller_confirmed = 0
+      AND NEW.buyer_confirmed = 0 AND NEW.seller_confirmed = 0)
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid order participant transition');
+END;
+CREATE TRIGGER IF NOT EXISTS order_deposit_assignment_guard
+BEFORE UPDATE OF deposit_addr ON orders
+WHEN NEW.deposit_addr IS NOT OLD.deposit_addr AND NOT (
+  OLD.side = 'buy'
+  AND OLD.deposit_addr IS NULL
+  AND NEW.deposit_addr IS NOT NULL
+  AND OLD.state = 'open'
+  AND NEW.state = 'awaiting_deposit'
+  AND OLD.seller_id IS NULL
+  AND OLD.seller_name IS NULL
+  AND NEW.seller_id IS NOT NULL
+  AND NEW.seller_name IS NOT NULL
+)
+BEGIN
+  SELECT RAISE(ABORT, 'deposit address may only attach with first WTB seller');
+END;
+CREATE TRIGGER IF NOT EXISTS order_confirmation_guard
+BEFORE UPDATE OF buyer_confirmed, seller_confirmed ON orders
+WHEN NEW.buyer_confirmed != OLD.buyer_confirmed
+  OR NEW.seller_confirmed != OLD.seller_confirmed
+BEGIN
+  SELECT CASE WHEN OLD.state != 'matched'
+      OR NEW.buyer_confirmed < OLD.buyer_confirmed
+      OR NEW.seller_confirmed < OLD.seller_confirmed
+      OR NEW.buyer_confirmed + NEW.seller_confirmed
+         != OLD.buyer_confirmed + OLD.seller_confirmed + 1
+      OR (NEW.buyer_confirmed + NEW.seller_confirmed = 1
+          AND NEW.state != 'matched')
+      OR (NEW.buyer_confirmed + NEW.seller_confirmed = 2
+          AND NEW.state != 'release_reserved')
+    THEN RAISE(ABORT, 'invalid payment confirmation transition') END;
+END;
+CREATE TRIGGER IF NOT EXISTS order_state_machine
+BEFORE UPDATE OF state ON orders
+WHEN NEW.state IS NOT OLD.state AND NOT (
+  (OLD.side = 'sell' AND OLD.state = 'awaiting_deposit'
+    AND (
+      (NEW.state = 'open' AND COALESCE((
+        SELECT SUM(c.main_units) FROM deposit_credits c
+        WHERE c.order_id = OLD.order_id AND c.credited_at IS NOT NULL
+      ), 0) >= OLD.deposit_required_units) OR
+      (NEW.state IN ('cancelled','deposit_expired') AND COALESCE((
+        SELECT SUM(c.amount_units) FROM deposit_credits c
+        WHERE c.order_id = OLD.order_id AND c.credited_at IS NOT NULL
+      ), 0) = 0) OR
+      (NEW.state = 'recovery_hold'
+        AND OLD.buyer_confirmed = 0 AND OLD.seller_confirmed = 0
+        AND COALESCE((SELECT SUM(c.amount_units) FROM deposit_credits c
+          WHERE c.order_id = OLD.order_id AND c.credited_at IS NOT NULL), 0)
+            BETWEEN 1 AND OLD.deposit_required_units - 1) OR
+      (NEW.state = 'refund_reserved' AND EXISTS (
+        SELECT 1 FROM transfers t WHERE t.order_id = OLD.order_id
+          AND t.kind IN ('refund','recovery_refund') AND t.state = 'queued'
+          AND COALESCE((SELECT SUM(a.units)
+            FROM transfer_credit_allocations a
+            WHERE a.transfer_id = t.transfer_id), 0)
+              = t.amount_units + t.network_fee_units + t.earned_fee_units
+      ))
+    )) OR
+  (OLD.side = 'sell' AND OLD.state = 'open'
+    AND ((NEW.state = 'matched' AND NEW.buyer_id IS NOT NULL)
+      OR (NEW.state = 'refund_reserved' AND EXISTS (
+        SELECT 1 FROM transfers t WHERE t.order_id = OLD.order_id
+          AND t.kind = 'refund' AND t.state = 'queued'
+          AND COALESCE((SELECT SUM(a.units)
+            FROM transfer_credit_allocations a
+            WHERE a.transfer_id = t.transfer_id), 0)
+              = t.amount_units + t.network_fee_units + t.earned_fee_units
+      )))) OR
+  (OLD.side = 'sell' AND OLD.state = 'matched'
+    AND ((NEW.state = 'open' AND NEW.buyer_id IS NULL
+          AND OLD.buyer_confirmed = 0 AND OLD.seller_confirmed = 0)
+      OR (NEW.state = 'release_reserved'
+          AND NEW.buyer_confirmed = 1 AND NEW.seller_confirmed = 1
+          AND EXISTS (SELECT 1 FROM transfers t
+            WHERE t.order_id = OLD.order_id AND t.is_main_outcome = 1
+              AND t.kind = 'release' AND t.state = 'queued'
+              AND COALESCE((SELECT SUM(a.units)
+                FROM transfer_credit_allocations a
+                WHERE a.transfer_id = t.transfer_id), 0)
+                  = t.amount_units + t.network_fee_units + t.earned_fee_units))
+      OR NEW.state = 'disputed'
+      OR (NEW.state = 'refund_reserved'
+          AND OLD.buyer_confirmed = 0 AND OLD.seller_confirmed = 0
+          AND EXISTS (SELECT 1 FROM transfers t
+            WHERE t.order_id = OLD.order_id AND t.is_main_outcome = 1
+              AND t.kind = 'refund' AND t.state = 'queued'
+              AND COALESCE((SELECT SUM(a.units)
+                FROM transfer_credit_allocations a
+                WHERE a.transfer_id = t.transfer_id), 0)
+                  = t.amount_units + t.network_fee_units + t.earned_fee_units)))) OR
+  (OLD.side = 'buy' AND OLD.state = 'open'
+    AND ((NEW.state = 'awaiting_deposit' AND NEW.seller_id IS NOT NULL
+          AND NEW.deposit_addr IS NOT NULL)
+      OR NEW.state = 'cancelled')) OR
+  (OLD.side = 'buy' AND OLD.state = 'awaiting_deposit'
+    AND (
+      (NEW.state = 'matched' AND COALESCE((
+        SELECT SUM(c.main_units) FROM deposit_credits c
+        WHERE c.order_id = OLD.order_id AND c.credited_at IS NOT NULL
+      ), 0) >= OLD.deposit_required_units) OR
+      (NEW.state IN ('cancelled','deposit_expired') AND COALESCE((
+        SELECT SUM(c.amount_units) FROM deposit_credits c
+        WHERE c.order_id = OLD.order_id AND c.credited_at IS NOT NULL
+      ), 0) = 0) OR
+      (NEW.state = 'recovery_hold'
+        AND OLD.buyer_confirmed = 0 AND OLD.seller_confirmed = 0
+        AND COALESCE((SELECT SUM(c.amount_units) FROM deposit_credits c
+          WHERE c.order_id = OLD.order_id AND c.credited_at IS NOT NULL), 0)
+            BETWEEN 1 AND OLD.deposit_required_units - 1) OR
+      (NEW.state = 'refund_reserved' AND EXISTS (
+        SELECT 1 FROM transfers t WHERE t.order_id = OLD.order_id
+          AND t.kind IN ('refund','recovery_refund') AND t.state = 'queued'
+          AND COALESCE((SELECT SUM(a.units)
+            FROM transfer_credit_allocations a
+            WHERE a.transfer_id = t.transfer_id), 0)
+              = t.amount_units + t.network_fee_units + t.earned_fee_units
+      ))
+    )) OR
+  (OLD.side = 'buy' AND OLD.state = 'matched'
+    AND ((NEW.state = 'release_reserved'
+          AND NEW.buyer_confirmed = 1 AND NEW.seller_confirmed = 1
+          AND EXISTS (SELECT 1 FROM transfers t
+            WHERE t.order_id = OLD.order_id AND t.is_main_outcome = 1
+              AND t.kind = 'release' AND t.state = 'queued'
+              AND COALESCE((SELECT SUM(a.units)
+                FROM transfer_credit_allocations a
+                WHERE a.transfer_id = t.transfer_id), 0)
+                  = t.amount_units + t.network_fee_units + t.earned_fee_units))
+      OR NEW.state = 'disputed'
+      OR (NEW.state = 'refund_reserved'
+          AND OLD.buyer_confirmed = 0 AND OLD.seller_confirmed = 0
+          AND EXISTS (SELECT 1 FROM transfers t
+            WHERE t.order_id = OLD.order_id AND t.is_main_outcome = 1
+              AND t.kind = 'refund' AND t.state = 'queued'
+              AND COALESCE((SELECT SUM(a.units)
+                FROM transfer_credit_allocations a
+                WHERE a.transfer_id = t.transfer_id), 0)
+                  = t.amount_units + t.network_fee_units + t.earned_fee_units)))) OR
+  (OLD.state = 'disputed' AND (
+    (NEW.state = 'release_reserved' AND EXISTS (
+      SELECT 1 FROM transfers t WHERE t.order_id = OLD.order_id
+        AND t.kind = 'resolve_buyer' AND t.state = 'queued'
+        AND COALESCE((SELECT SUM(a.units)
+          FROM transfer_credit_allocations a
+          WHERE a.transfer_id = t.transfer_id), 0)
+            = t.amount_units + t.network_fee_units + t.earned_fee_units
+    )) OR
+    (NEW.state = 'refund_reserved' AND EXISTS (
+      SELECT 1 FROM transfers t WHERE t.order_id = OLD.order_id
+        AND t.kind = 'resolve_seller' AND t.state = 'queued'
+        AND COALESCE((SELECT SUM(a.units)
+          FROM transfer_credit_allocations a
+          WHERE a.transfer_id = t.transfer_id), 0)
+            = t.amount_units + t.network_fee_units + t.earned_fee_units
+    ))
+  )) OR
+  (OLD.state = 'release_reserved'
+    AND NEW.state IN ('broadcast','completed','transfer_failed_safe','transfer_uncertain')) OR
+  (OLD.state = 'refund_reserved'
+    AND NEW.state IN ('broadcast','refunded','transfer_failed_safe','transfer_uncertain')) OR
+  (OLD.state = 'broadcast'
+    AND NEW.state IN ('completed','refunded','transfer_uncertain')) OR
+  (OLD.state = 'transfer_failed_safe' AND (
+    (NEW.state = 'release_reserved' AND EXISTS (
+      SELECT 1 FROM transfers t WHERE t.order_id = OLD.order_id
+        AND t.kind IN ('release','resolve_buyer') AND t.state = 'queued'
+        AND COALESCE((SELECT SUM(a.units)
+          FROM transfer_credit_allocations a
+          WHERE a.transfer_id = t.transfer_id), 0)
+            = t.amount_units + t.network_fee_units + t.earned_fee_units
+    )) OR
+    (NEW.state = 'refund_reserved' AND EXISTS (
+      SELECT 1 FROM transfers t WHERE t.order_id = OLD.order_id
+        AND t.kind IN ('refund','resolve_seller','recovery_refund')
+        AND t.state = 'queued'
+        AND COALESCE((SELECT SUM(a.units)
+          FROM transfer_credit_allocations a
+          WHERE a.transfer_id = t.transfer_id), 0)
+            = t.amount_units + t.network_fee_units + t.earned_fee_units
+    ))
+  )) OR
+  (OLD.state = 'transfer_uncertain'
+    AND NEW.state IN ('broadcast','completed','refunded')) OR
+  (OLD.state IN ('completed','refunded')
+    AND NEW.state = 'transfer_uncertain') OR
+  (OLD.state = 'recovery_hold' AND NEW.state = 'refund_reserved'
+    AND EXISTS (SELECT 1 FROM transfers t WHERE t.order_id = OLD.order_id
+      AND t.kind = 'recovery_refund' AND t.state = 'queued'
+      AND COALESCE((SELECT SUM(a.units)
+        FROM transfer_credit_allocations a
+        WHERE a.transfer_id = t.transfer_id), 0)
+          = t.amount_units + t.network_fee_units + t.earned_fee_units))
+)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid order state transition');
+END;
+CREATE TRIGGER IF NOT EXISTS order_delete_block
+BEFORE DELETE ON orders
+BEGIN
+  SELECT RAISE(ABORT, 'orders are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS deposit_scan_update_block
+BEFORE UPDATE ON deposit_scans
+BEGIN
+  SELECT RAISE(ABORT, 'deposit scans are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS deposit_scan_delete_block
+BEFORE DELETE ON deposit_scans
+BEGIN
+  SELECT RAISE(ABORT, 'deposit scans are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS deposit_credit_identity_immutable
+BEFORE UPDATE ON deposit_credits
+WHEN NEW.order_id IS NOT OLD.order_id
+  OR NEW.network IS NOT OLD.network
+  OR NEW.txid IS NOT OLD.txid
+  OR NEW.vout IS NOT OLD.vout
+  OR NEW.deposit_addr IS NOT OLD.deposit_addr
+  OR NEW.amount_units IS NOT OLD.amount_units
+  OR NEW.coinbase IS NOT OLD.coinbase
+  OR NEW.first_seen_at IS NOT OLD.first_seen_at
+  OR (OLD.credited_at IS NOT NULL AND NEW.credited_at IS NOT OLD.credited_at)
+BEGIN
+  SELECT RAISE(ABORT, 'deposit credit identity is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS deposit_credit_classification_guard
+BEFORE UPDATE OF credited_at, main_units, recovery_units, recovery_reason
+ON deposit_credits
+WHEN NOT (
+  NEW.credited_at IS OLD.credited_at
+  AND NEW.main_units = OLD.main_units
+  AND NEW.recovery_units = OLD.recovery_units
+  AND NEW.recovery_reason IS OLD.recovery_reason
+) AND NOT (
+  OLD.credited_at IS NULL
+  AND NEW.credited_at IS NOT NULL
+  AND OLD.main_units = 0
+  AND OLD.recovery_units = 0
+  AND NEW.main_units + NEW.recovery_units = OLD.amount_units
+) AND NOT (
+  OLD.credited_at IS NOT NULL
+  AND NEW.credited_at = OLD.credited_at
+  AND OLD.main_units > 0
+  AND NEW.main_units = 0
+  AND NEW.recovery_units = OLD.main_units + OLD.recovery_units
+  AND NEW.recovery_reason = 'cancelled_partial'
+  AND EXISTS (
+    SELECT 1 FROM orders o
+    WHERE o.order_id = OLD.order_id
+      AND o.state IN ('refund_reserved','recovery_hold')
+      AND o.buyer_confirmed = 0
+      AND o.seller_confirmed = 0
+      AND COALESCE((
+        SELECT SUM(c.amount_units)
+        FROM deposit_credits c
+        WHERE c.order_id = o.order_id AND c.credited_at IS NOT NULL
+      ), 0) < o.deposit_required_units
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM transfer_credit_allocations a
+    WHERE a.credit_id = OLD.credit_id AND a.bucket = 'main'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM transfers t
+    WHERE t.order_id = OLD.order_id AND t.is_main_outcome = 1
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid deposit credit classification change');
+END;
+CREATE TRIGGER IF NOT EXISTS deposit_credit_observation_guard
+BEFORE UPDATE ON deposit_credits
+WHEN NEW.block_hash IS NOT OLD.block_hash
+  OR NEW.block_height IS NOT OLD.block_height
+  OR NEW.confirmations IS NOT OLD.confirmations
+  OR NEW.mature IS NOT OLD.mature
+  OR NEW.current_best_chain IS NOT OLD.current_best_chain
+  OR NEW.spent_by_txid IS NOT OLD.spent_by_txid
+  OR NEW.spent_by_vin IS NOT OLD.spent_by_vin
+  OR NEW.spent_by_block_hash IS NOT OLD.spent_by_block_hash
+  OR NEW.spent_by_block_height IS NOT OLD.spent_by_block_height
+  OR NEW.last_seen_at IS NOT OLD.last_seen_at
+  OR NEW.last_seen_scan_id IS NOT OLD.last_seen_scan_id
+  OR NEW.last_checked_scan_id IS NOT OLD.last_checked_scan_id
+BEGIN
+  SELECT CASE WHEN NEW.last_checked_scan_id <= OLD.last_checked_scan_id
+    THEN RAISE(ABORT, 'credit observation requires a newer scan') END;
+  SELECT CASE WHEN NEW.last_seen_at < OLD.last_seen_at
+    THEN RAISE(ABORT, 'credit last-seen time cannot move backwards') END;
+END;
+CREATE TRIGGER IF NOT EXISTS deposit_credit_bucket_capacity_guard
+BEFORE UPDATE OF main_units, recovery_units ON deposit_credits
+BEGIN
+  SELECT CASE WHEN NEW.main_units < COALESCE((
+    SELECT SUM(a.units) FROM transfer_credit_allocations a
+    WHERE a.credit_id = OLD.credit_id AND a.bucket = 'main'
+  ), 0) THEN RAISE(ABORT, 'main credit capacity is allocated') END;
+  SELECT CASE WHEN NEW.recovery_units < COALESCE((
+    SELECT SUM(a.units) FROM transfer_credit_allocations a
+    WHERE a.credit_id = OLD.credit_id AND a.bucket = 'recovery'
+  ), 0) THEN RAISE(ABORT, 'recovery credit capacity is allocated') END;
+END;
+CREATE TRIGGER IF NOT EXISTS deposit_credit_delete_block
+BEFORE DELETE ON deposit_credits
+BEGIN
+  SELECT RAISE(ABORT, 'deposit credits are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS transfer_operation_key_lifetime_guard
+BEFORE INSERT ON transfers
+WHEN EXISTS (
+  SELECT 1 FROM transfers t WHERE t.operation_key = NEW.operation_key
+)
+BEGIN
+  SELECT RAISE(ABORT, 'transfer operation key already exists');
+END;
+CREATE TRIGGER IF NOT EXISTS transfer_insert_must_queue
+BEFORE INSERT ON transfers
+WHEN NEW.state != 'queued'
+  OR NEW.attempt_count != 0
+  OR NEW.reserved_at IS NOT NULL
+  OR NEW.signed_at IS NOT NULL
+  OR NEW.broadcast_at IS NOT NULL
+  OR NEW.confirmed_at IS NOT NULL
+  OR NEW.confirmed_block_hash IS NOT NULL
+  OR NEW.confirmed_block_height IS NOT NULL
+  OR NEW.confirmations != 0
+BEGIN
+  SELECT RAISE(ABORT, 'new transfer must be a clean queued operation');
+END;
+CREATE TRIGGER IF NOT EXISTS transfer_economics_on_insert
+BEFORE INSERT ON transfers
+BEGIN
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM orders o
+    WHERE o.deposit_addr IS NOT NULL AND o.deposit_addr = NEW.destination
+  ) THEN RAISE(ABORT, 'destination is an escrow deposit address') END;
+  SELECT CASE WHEN NEW.kind IN ('release','resolve_buyer') AND NOT EXISTS (
+    SELECT 1 FROM orders o JOIN users u ON u.user_id = o.buyer_id
+    WHERE o.order_id = NEW.order_id
+      AND NEW.operation_key = 'order:' || o.order_id || ':main'
+      AND NEW.amount_units = o.net_amount_units
+      AND NEW.network_fee_units = o.network_fee_units
+      AND NEW.earned_fee_units = o.service_fee_units
+      AND NEW.destination = u.wallet_addr
+  ) THEN RAISE(ABORT, 'invalid buyer outcome economics') END;
+  SELECT CASE WHEN NEW.kind IN ('refund','resolve_seller') AND NOT EXISTS (
+    SELECT 1 FROM orders o JOIN users u ON u.user_id = o.seller_id
+    WHERE o.order_id = NEW.order_id
+      AND NEW.operation_key = 'order:' || o.order_id || ':main'
+      AND NEW.amount_units = o.net_amount_units + o.service_fee_units
+      AND NEW.network_fee_units = o.network_fee_units
+      AND NEW.earned_fee_units = 0
+      AND NEW.destination = u.wallet_addr
+  ) THEN RAISE(ABORT, 'invalid seller outcome economics') END;
+  SELECT CASE WHEN NEW.kind = 'recovery_refund' AND NOT EXISTS (
+    SELECT 1 FROM orders o JOIN users u ON u.user_id = o.seller_id
+    WHERE o.order_id = NEW.order_id
+      AND NEW.operation_key = 'order:' || o.order_id || ':recovery:' || (
+        SELECT MAX(c.credit_id) FROM deposit_credits c
+        WHERE c.order_id = o.order_id AND c.credited_at IS NOT NULL
+          AND c.recovery_units > COALESCE((
+            SELECT SUM(a.units) FROM transfer_credit_allocations a
+            WHERE a.credit_id = c.credit_id AND a.bucket = 'recovery'
+          ), 0)
+      )
+      AND NEW.network_fee_units = o.network_fee_units
+      AND NEW.earned_fee_units = 0
+      AND NEW.destination = u.wallet_addr
+      AND NEW.amount_units + NEW.network_fee_units =
+        COALESCE((SELECT SUM(c.recovery_units)
+                  FROM deposit_credits c
+                  WHERE c.order_id = NEW.order_id
+                    AND c.credited_at IS NOT NULL), 0)
+        - COALESCE((SELECT SUM(a.units)
+                    FROM transfer_credit_allocations a
+                    JOIN transfers t ON t.transfer_id = a.transfer_id
+                    WHERE t.order_id = NEW.order_id
+                      AND a.bucket = 'recovery'), 0)
+  ) THEN RAISE(ABORT, 'invalid recovery economics') END;
+  SELECT CASE WHEN NEW.kind = 'fee_withdrawal' AND (
+    NEW.earned_fee_units != 0 OR
+    NEW.amount_units + NEW.network_fee_units >
+      COALESCE((SELECT SUM(earned_fee_units) FROM transfers
+                WHERE state = 'confirmed'
+                  AND kind IN ('release','resolve_buyer')), 0)
+      - COALESCE((SELECT SUM(amount_units + network_fee_units) FROM transfers
+                  WHERE kind = 'fee_withdrawal' AND state != 'cancelled'), 0)
+  ) THEN RAISE(ABORT, 'fee withdrawal exceeds earned revenue') END;
+END;
+CREATE TRIGGER IF NOT EXISTS transfer_economics_immutable
+BEFORE UPDATE ON transfers
+WHEN NEW.operation_key IS NOT OLD.operation_key
+  OR NEW.order_id IS NOT OLD.order_id
+  OR NEW.wallet_scope IS NOT OLD.wallet_scope
+  OR NEW.kind IS NOT OLD.kind
+  OR NEW.is_main_outcome IS NOT OLD.is_main_outcome
+  OR NEW.amount_units IS NOT OLD.amount_units
+  OR NEW.network_fee_units IS NOT OLD.network_fee_units
+  OR NEW.earned_fee_units IS NOT OLD.earned_fee_units
+  OR NEW.destination IS NOT OLD.destination
+BEGIN
+  SELECT RAISE(ABORT, 'transfer economics are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS signed_transfer_immutable
+BEFORE UPDATE ON transfers
+WHEN OLD.signed_tx_hex IS NOT NULL AND (
+  NEW.txid IS NOT OLD.txid OR
+  NEW.signed_tx_hex IS NOT OLD.signed_tx_hex OR
+  NEW.signed_at IS NOT OLD.signed_at OR
+  NEW.prepared_tip_hash IS NOT OLD.prepared_tip_hash OR
+  NEW.prepared_tip_height IS NOT OLD.prepared_tip_height
+)
+BEGIN
+  SELECT RAISE(ABORT, 'prepared transaction identity is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS transfer_timeline_guard
+BEFORE UPDATE ON transfers
+BEGIN
+  SELECT CASE WHEN NEW.created_at IS NOT OLD.created_at
+    OR NEW.updated_at < OLD.updated_at
+    THEN RAISE(ABORT, 'invalid transfer timestamps') END;
+  SELECT CASE WHEN NEW.attempt_count != OLD.attempt_count +
+    CASE WHEN OLD.state = 'queued' AND NEW.state = 'reserved' THEN 1 ELSE 0 END
+    THEN RAISE(ABORT, 'invalid transfer attempt count') END;
+  SELECT CASE WHEN OLD.state = 'queued' AND NEW.state = 'reserved' AND (
+      NEW.reserved_at IS NULL OR NEW.reserved_at < OLD.updated_at
+    ) THEN RAISE(ABORT, 'claim requires reservation time') END;
+  SELECT CASE WHEN NEW.reserved_at IS NOT OLD.reserved_at AND NOT (
+      OLD.state = 'queued' AND NEW.state = 'reserved' AND OLD.reserved_at IS NULL
+    ) AND NOT (
+      OLD.state = 'failed_safe' AND NEW.state = 'queued'
+      AND NEW.reserved_at IS NULL
+    ) THEN RAISE(ABORT, 'invalid reservation time change') END;
+  SELECT CASE WHEN OLD.state = 'reserved' AND NEW.state = 'prepared' AND (
+      NEW.signed_at IS NULL OR NEW.txid IS NULL OR NEW.signed_tx_hex IS NULL OR
+      NEW.prepared_tip_hash IS NULL OR NEW.prepared_tip_height IS NULL
+    ) THEN RAISE(ABORT, 'prepare requires complete durable identity') END;
+  SELECT CASE WHEN OLD.signed_tx_hex IS NULL AND NEW.signed_tx_hex IS NOT NULL
+      AND NOT (OLD.state = 'reserved' AND NEW.state = 'prepared')
+    THEN RAISE(ABORT, 'signed identity may only attach on prepare') END;
+  SELECT CASE WHEN OLD.broadcast_at IS NOT NULL
+      AND NEW.broadcast_at IS NOT OLD.broadcast_at
+    THEN RAISE(ABORT, 'broadcast time is immutable') END;
+  SELECT CASE WHEN NEW.state = 'broadcast' AND OLD.state != 'broadcast'
+      AND NEW.broadcast_at IS NULL
+    THEN RAISE(ABORT, 'trusted-node observation time required') END;
+  SELECT CASE WHEN OLD.broadcast_at IS NULL AND NEW.broadcast_at IS NOT NULL
+      AND NEW.state != 'broadcast'
+    THEN RAISE(ABORT, 'broadcast time requires broadcast state') END;
+END;
+CREATE TRIGGER IF NOT EXISTS transfer_state_machine
+BEFORE UPDATE OF state ON transfers
+WHEN NEW.state IS NOT OLD.state AND NOT (
+  (OLD.state = 'queued' AND NEW.state = 'reserved') OR
+  (OLD.state = 'reserved' AND NEW.state IN ('prepared','failed_safe')) OR
+  (OLD.state = 'prepared' AND NEW.state IN ('broadcast','confirmed','uncertain')) OR
+  (OLD.state = 'broadcast' AND NEW.state IN ('confirmed','uncertain')) OR
+  (OLD.state = 'uncertain' AND NEW.state IN ('broadcast','confirmed')) OR
+  (OLD.state = 'confirmed' AND NEW.state = 'uncertain') OR
+  (OLD.state = 'failed_safe' AND NEW.state = 'queued') OR
+  (OLD.state = 'failed_safe' AND NEW.state = 'cancelled'
+    AND OLD.kind = 'fee_withdrawal')
+)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid transfer state transition');
+END;
+CREATE TRIGGER IF NOT EXISTS uncertain_blocks_prebroadcast_progress
+BEFORE UPDATE OF state ON transfers
+WHEN (
+  (OLD.state = 'reserved' AND NEW.state = 'prepared') OR
+  (OLD.state = 'prepared' AND NEW.state = 'broadcast')
+) AND EXISTS (
+  SELECT 1 FROM transfers t WHERE t.state = 'uncertain'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'uncertain transfer blocks pre-broadcast progress');
+END;
+CREATE TRIGGER IF NOT EXISTS allocation_insert_guard
+BEFORE INSERT ON transfer_credit_allocations
+BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM transfers t
+    WHERE t.transfer_id = NEW.transfer_id
+      AND t.order_id = NEW.order_id
+      AND t.kind != 'fee_withdrawal'
+      AND t.state = 'queued'
+      AND ((t.is_main_outcome = 1 AND NEW.bucket = 'main') OR
+           (t.kind = 'recovery_refund' AND NEW.bucket = 'recovery'))
+  ) THEN RAISE(ABORT, 'invalid transfer allocation target') END;
+  SELECT CASE WHEN NEW.units + COALESCE((
+    SELECT SUM(a.units) FROM transfer_credit_allocations a
+    WHERE a.credit_id = NEW.credit_id AND a.bucket = NEW.bucket
+  ), 0) > COALESCE((
+    SELECT CASE NEW.bucket
+      WHEN 'main' THEN c.main_units ELSE c.recovery_units END
+    FROM deposit_credits c
+    WHERE c.credit_id = NEW.credit_id
+      AND c.order_id = NEW.order_id
+      AND c.credited_at IS NOT NULL
+  ), -1) THEN RAISE(ABORT, 'credit bucket over-allocation') END;
+END;
+CREATE TRIGGER IF NOT EXISTS allocation_immutable_update
+BEFORE UPDATE ON transfer_credit_allocations
+BEGIN
+  SELECT RAISE(ABORT, 'transfer allocations are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS allocation_immutable_delete
+BEFORE DELETE ON transfer_credit_allocations
+BEGIN
+  SELECT RAISE(ABORT, 'transfer allocations are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS transfer_delete_block
+BEFORE DELETE ON transfers
+BEGIN
+  SELECT RAISE(ABORT, 'transfers are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS transfer_claim_guard
+BEFORE UPDATE OF state ON transfers
+WHEN OLD.state = 'queued' AND NEW.state = 'reserved'
+BEGIN
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM transfers WHERE state = 'uncertain'
+  ) THEN RAISE(ABORT, 'uncertain transfer blocks wallet claim') END;
+  SELECT CASE WHEN OLD.kind != 'fee_withdrawal' AND NOT EXISTS (
+    SELECT 1 FROM orders o
+    WHERE o.order_id = OLD.order_id AND (
+      (OLD.kind = 'release' AND o.state = 'release_reserved'
+        AND o.buyer_confirmed = 1 AND o.seller_confirmed = 1) OR
+      (OLD.kind = 'refund' AND o.state = 'refund_reserved'
+        AND o.buyer_confirmed = 0 AND o.seller_confirmed = 0) OR
+      (OLD.kind = 'resolve_buyer' AND o.state = 'release_reserved') OR
+      (OLD.kind = 'resolve_seller' AND o.state = 'refund_reserved') OR
+      (OLD.kind = 'recovery_refund' AND o.state IN (
+        'refund_reserved','completed','refunded','cancelled','deposit_expired'
+      ))
+    )
+  ) THEN RAISE(ABORT, 'transfer is not authorized by order state') END;
+  SELECT CASE WHEN COALESCE((
+    SELECT SUM(units) FROM transfer_credit_allocations
+    WHERE transfer_id = OLD.transfer_id
+  ), 0) != CASE WHEN OLD.kind = 'fee_withdrawal' THEN 0
+                ELSE OLD.amount_units + OLD.network_fee_units
+                     + OLD.earned_fee_units END
+  THEN RAISE(ABORT, 'transfer allocations do not balance') END;
+  SELECT CASE WHEN EXISTS (
+    SELECT 1
+    FROM (
+      SELECT credit_id, bucket, SUM(units) AS allocated_units
+      FROM transfer_credit_allocations
+      GROUP BY credit_id, bucket
+    ) a
+    JOIN deposit_credits c ON c.credit_id = a.credit_id
+    WHERE a.allocated_units > CASE a.bucket
+      WHEN 'main' THEN c.main_units ELSE c.recovery_units END
+  ) THEN RAISE(ABORT, 'allocated credit capacity changed') END;
+END;
+CREATE TRIGGER IF NOT EXISTS transfer_confirmation_guard
+BEFORE UPDATE OF state ON transfers
+WHEN NEW.state = 'confirmed' AND OLD.state != 'confirmed'
+BEGIN
+  SELECT CASE WHEN COALESCE((
+    SELECT SUM(units) FROM transfer_credit_allocations
+    WHERE transfer_id = OLD.transfer_id
+  ), 0) != CASE WHEN OLD.kind = 'fee_withdrawal' THEN 0
+                ELSE OLD.amount_units + OLD.network_fee_units
+                     + OLD.earned_fee_units END
+  THEN RAISE(ABORT, 'confirmed transfer allocations do not balance') END;
+  SELECT CASE WHEN EXISTS (
+    SELECT 1
+    FROM (
+      SELECT credit_id, bucket, SUM(units) AS allocated_units
+      FROM transfer_credit_allocations
+      GROUP BY credit_id, bucket
+    ) a
+    JOIN deposit_credits c ON c.credit_id = a.credit_id
+    WHERE a.allocated_units > CASE a.bucket
+      WHEN 'main' THEN c.main_units ELSE c.recovery_units END
+  ) THEN RAISE(ABORT, 'allocated credit capacity changed') END;
+END;
+CREATE TRIGGER IF NOT EXISTS transfer_confirmation_evidence_guard
+BEFORE UPDATE ON transfers
+BEGIN
+  SELECT CASE WHEN OLD.state != 'confirmed' AND NEW.state != 'confirmed' AND (
+      NEW.confirmed_at IS NOT OLD.confirmed_at OR
+      NEW.confirmed_block_hash IS NOT OLD.confirmed_block_hash OR
+      NEW.confirmed_block_height IS NOT OLD.confirmed_block_height OR
+      NEW.confirmations != OLD.confirmations
+    ) THEN RAISE(ABORT, 'confirmation evidence requires reconciliation transition') END;
+  SELECT CASE WHEN OLD.state = 'confirmed' AND NEW.state = 'confirmed' AND (
+      NEW.confirmed_at IS NOT OLD.confirmed_at OR
+      NEW.confirmed_block_hash IS NOT OLD.confirmed_block_hash OR
+      NEW.confirmed_block_height IS NOT OLD.confirmed_block_height OR
+      NEW.confirmations < OLD.confirmations
+    ) THEN RAISE(ABORT, 'confirmed anchor is immutable') END;
+  SELECT CASE WHEN OLD.state = 'confirmed' AND NEW.state = 'uncertain' AND (
+      NEW.confirmed_at IS NOT OLD.confirmed_at OR
+      NEW.confirmed_block_hash IS NOT OLD.confirmed_block_hash OR
+      NEW.confirmed_block_height IS NOT OLD.confirmed_block_height OR
+      NEW.confirmations != OLD.confirmations
+    ) THEN RAISE(ABORT, 'reorg transition must preserve prior evidence') END;
+END;
 CREATE TABLE IF NOT EXISTS audit_events (
   event_id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_id INTEGER,
   actor_id INTEGER,
-  event_type TEXT NOT NULL,
-  old_state TEXT,
-  new_state TEXT,
-  detail_json TEXT NOT NULL DEFAULT '{}',
+  event_type TEXT NOT NULL CHECK(
+    instr(event_type, char(0)) = 0 AND
+    length(CAST(event_type AS BLOB)) BETWEEN 1 AND 80 AND
+    event_type NOT GLOB '*[^a-z0-9:_-]*'
+  ),
+  old_state TEXT CHECK(old_state IS NULL OR (
+    instr(old_state, char(0)) = 0 AND
+    length(CAST(old_state AS BLOB)) BETWEEN 1 AND 48 AND
+    old_state NOT GLOB '*[^a-z0-9_]*'
+  )),
+  new_state TEXT CHECK(new_state IS NULL OR (
+    instr(new_state, char(0)) = 0 AND
+    length(CAST(new_state AS BLOB)) BETWEEN 1 AND 48 AND
+    new_state NOT GLOB '*[^a-z0-9_]*'
+  )),
+  detail_json TEXT NOT NULL DEFAULT '{}' CHECK(
+    instr(detail_json, char(0)) = 0 AND
+    length(CAST(detail_json AS BLOB)) BETWEEN 2 AND 4000 AND
+    json_valid(detail_json)
+  ),
   created_at INTEGER NOT NULL
-);
-INSERT INTO schema_meta(id, version) VALUES(1, 3)
-ON CONFLICT(id) DO UPDATE SET version=excluded.version;
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS audit_event_update_block
+BEFORE UPDATE ON audit_events
+BEGIN
+  SELECT RAISE(ABORT, 'audit events are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS audit_event_delete_block
+BEFORE DELETE ON audit_events
+BEGIN
+  SELECT RAISE(ABORT, 'audit events are append-only');
+END;
+INSERT INTO schema_meta(id, version, origin) VALUES(1, 4, 'fresh');
 ```
 
 The archive table is read-only migration evidence and is dropped only in a
 future release after its zero-row condition has been verified from backup.
+
+Schema tests compare normalized definitions for every required table/index and
+cover invalid hashes/states, duplicate outpoints, duplicate lifetime operation
+keys, a second main order outcome, and two in-flight wallet operations including
+`order_id IS NULL` fee withdrawals. They prove a `queued` or `failed_safe` row
+does not use the unique send lane, `reserved`/`prepared`/`broadcast` do, and application
+claim logic separately refuses every claim while any `uncertain` row exists.
+They reserve an operation, reorg a different confirmed earning transfer to
+`uncertain`, and prove the reserved operation cannot attach signed bytes and a
+prepared operation cannot enter broadcast until uncertainty clears; truthful
+confirmation and exact uncertain-row recovery remain legal.
+Every Store connection asserts `foreign_keys=ON`, `recursive_triggers=ON`, WAL,
+and `synchronous=FULL`; tests use `INSERT OR REPLACE` to prove neither an
+operation key nor an append-only row can be replaced through SQLite conflict
+semantics.
+
+Also test the database defenses directly, not only Store methods: STRICT rejection
+of fractional REAL monetary values (and public Store rejection of Python bool,
+float, and string), exact quote-sum CHECK and supply
+bounds, every partial-null `spent_by` tuple, scan/order/address composite foreign
+keys, cross-order and fee-withdrawal allocations, cumulative bucket
+over-allocation, forged outcome/earned-fee economics, immutable transfer fields
+and allocations, unbalanced claim/confirmation, invalid state transitions, and
+an uncertain row racing concurrent claims. Inject `U+0000` plus hidden suffixes
+into every hash, signed hex, operation key, address, and bounded machine string;
+assert byte-length/canonical checks reject them and that hidden identities cannot
+bypass unique indexes. After a confirmed payout, attempt direct SQL mutation or
+deletion of order quote economics, scans, credit identity/amount/classification,
+bucket capacity, transfers, confirmation anchors, and audit rows. Only a newer
+matching scan observation, monotonic confirmations on the same confirmed anchor,
+or an explicit confirmed-to-uncertain-to-confirmed reconciliation may change
+the corresponding evidence.
+Exercise every side-aware order transition directly: sell-maker remains seller,
+buy-maker remains buyer, WTS buyer can set once on `open -> matched` and clear
+only on zero-flag `matched -> open`, WTB seller can set only once on
+`open -> awaiting_deposit`, and neither participant can be redirected afterward.
+An unaccepted/cancelled WTB cannot be poisoned with a deposit address: NULL may
+become non-NULL only in the same `open -> awaiting_deposit` update that assigns
+its first seller, after which it is immutable.
+Prove a fully funded or payment-flagged trade cannot enter partial-credit
+reclassification, while a genuinely underfunded zero-flag order with no main
+operation can move main capacity to `cancelled_partial` recovery exactly once.
+`Store.create_order` always normalizes `total_price` through
+`parse_total_price`; direct SQL is independently rejected for zero, leading
+zeros, missing digits, repeated/trailing dots, exponent/comma/sign syntax, more
+than 18 integer or fractional digits, non-ASCII, and embedded NUL.
+
+Migration fixtures include (a) a sanitized byte-for-byte catalog equivalent of
+the live prototype: nullable five-column users with one compatible row, expanded
+empty legacy orders plus its four named indexes, empty withdrawals, WAL mode,
+and no `schema_meta`; and (b) databases created by the actual committed v3 Store,
+both with and without an existing empty `orders_v2_archive`. Require legacy
+withdrawals to be empty; nonempty withdrawals have no trustworthy opening
+revenue provenance and block migration. Require absent/zero `sqlite_sequence`
+history for prototype orders/withdrawals and v3 orders/transfers/audits,
+withdrawals, and any prior order archive; insert-then-delete fixtures must block
+without mutation. Add populated shadow-liability tables and rogue triggers to
+v3/v4 fixtures and prove complete-catalog validation rejects them. For every success assert exact v4
+catalog, preserved user/archive evidence, `integrity_check`, and
+`foreign_key_check`. For every blocked/fault-injected phase assert catalog,
+rows, version, and journal mode are unchanged.
 
 - [ ] **Step 4: Verify migration, integrity, and rollback behavior**
 
 ```powershell
 python -m unittest bot.tests.test_store_schema -v
 python -m unittest discover -s bot/tests -p "test_*.py" -v
+$env:DB_PATH = Join-Path $env:TEMP "btc09-otc-migrate-proof.db"
+python -m bot.otc.store
 ```
 
 Expected: all tests pass and `PRAGMA integrity_check` returns `ok`.
@@ -383,156 +1532,910 @@ Expected: all tests pass and `PRAGMA integrity_check` returns `ok`.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add bot/otc/store.py bot/tests/test_store_schema.py
-git commit -m "Add versioned OTC database schema"
+git add bot/otc/domain.py bot/otc/schema_v4.sql bot/otc/store.py bot/tests/test_domain.py bot/tests/test_store_schema.py
+git commit -m "Upgrade OTC schema for durable accounting"
 ```
 
 ---
 
-### Task 3: Atomic Order Claims, Transfer Reservations, and Solvency
+### Task 3: Atomic Credits, Claims, Transfer Queue, and Solvency
 
 **Files:**
 - Modify: `bot/otc/store.py`
 - Create: `bot/tests/test_store_atomic.py`
 
 **Interfaces:**
-- Produces: `reserve_accept`, `record_confirmation`, `reserve_transfer`, `mark_transfer_broadcast`, `mark_transfer_failed_safe`, `mark_transfer_uncertain`, `liability_units`, `reserve_fee_withdrawal`.
-- All reservation functions return a row/result only to the winning caller and `None` to losers.
+- Produces: `reconcile_all_deposit_outputs`, `reserve_accept`,
+  `record_confirmation`, `queue_order_transfer`, `claim_next_transfer`,
+  `attach_signed_transfer` (including the exact prepared tip),
+  `recover_ambiguous_attach`, `mark_transfer_broadcast`, `mark_transfer_failed_safe`,
+  `mark_transfer_uncertain`, `mark_transfer_confirmed`,
+  `requeue_failed_safe`, `cancel_failed_safe_fee_withdrawal`,
+  `customer_liability_units`,
+  `order_liability_units`, `provisional_restricted_units`,
+  `wallet_solvency_snapshot`, `earned_fee_units`, `available_fee_units`, and
+  `queue_fee_withdrawal`.
+- Every mutation takes an explicit exact-integer `now` value and uses
+  `BEGIN IMMEDIATE`. Audit insertion reuses that same connection; it never
+  opens a nested writer.
+- Queue/claim functions return a row/result only to the winning caller and
+  `None` to losers.
 
-- [ ] **Step 1: Write concurrent reservation tests**
+- [ ] **Step 1: Write credit and liability lifecycle tests**
+
+Use quote `net=100`, `network_fee=10`, `service_fee=7`, `required=117` so
+fee omissions are observable. Insert normalized address-output snapshots with
+stable lowercase 64-hex transaction/block IDs and verify:
+
+- two partial outpoints of 50 and 67 produce liability 117 and deterministically
+  allocate exactly 117 `main_units` without an aggregate order-balance cache;
+- replaying either outpoint is idempotent, while the same outpoint assigned to
+  another order is rejected;
+- a 137-unit credit produces liability 137; after a confirmed release it leaves
+  exactly 20, and a confirmed 10-unit recovery refund plus its 10-unit fee
+  leaves zero;
+- a cancelled/expired/completed order receiving a new 20-unit late credit gains
+  liability 20 and is flagged for recovery instead of reopening. Its terminal
+  main-order state remains unchanged; recovery status is derived from residual
+  recovery units/transfers and never overwrites `completed`, `refunded`,
+  `cancelled`, or `deposit_expired`;
+- a credited output missing from a later complete canonical snapshot is marked
+  noncanonical, retains its liability, and reports recovery/unhealthy;
+- an output that disappears before reaching configured depth never becomes a
+  liability; coinbase is credited only when both depth and maturity pass;
+- liability stays 117 through queued, reserved, broadcast, uncertain, and
+  failed-safe transfer states. A transfer row is not added to the order credit
+  again. Liability falls only on confirmed disposition.
+- confirmed release changes liability `117 -> 0` and earned fees `0 -> 7`;
+  outgoing reorg `confirmed -> uncertain` restores `117`/`0`, and canonical
+  reconfirmation restores `0`/`7` without a second operation.
+- all watched addresses must be fetched at one expected hash/height and applied
+  in one transaction. A missing/extra watched address, mixed tip, new address
+  racing the batch, or final live-tip change rejects the whole barrier without
+  partially advancing any address;
+- a best-chain mature output below credit depth is recorded with
+`credited_at=NULL`, counted as provisional/restricted, subtracted from usable
+wallet funds, and excluded from coin selection. It cannot make an insolvent
+credited ledger appear funded.
+
+Each accepted complete all-address batch appends a new `deposit_scans`
+observation per watched address only when that address's latest scan has a
+different tip; it may reuse only the current latest identical scan, never an
+older historical row with a matching hash. Thus A -> B -> A creates three
+increasing scan IDs without writing an unbounded duplicate row for repeated
+polls at A. The batch upserts returned
+outpoints, and marks previously observed-but-absent outpoints off the current
+best chain in one transaction. Before commit, compare the caller's address set
+to the current distinct non-null `orders.deposit_addr` set; any difference rolls
+back the entire batch. `credited_at` is permanent
+once depth/maturity policy passes. While the order is active, credited units
+fill `main_units` deterministically up to `deposit_required_units`; the remainder
+is recovery/excess. Credits first observed after cancellation/expiry/completion
+are recovery/late units. A first-seen already-spent output is still recorded and
+credited so the obligation cannot vanish; unless `spent_by` matches a known
+transfer it also creates an unknown-spend health failure and stops wallet work.
+
+The exact formula per order is:
+
+```text
+SUM(deposit_credits.amount_units WHERE credited_at IS NOT NULL)
+- SUM(transfer_credit_allocations.units joined to confirmed transfers)
+```
+
+Every aggregate is wrapped with `COALESCE(SUM(...), 0)`; an empty ledger is
+zero, while a negative result is never hidden.
+
+The common-tip claim guard runs inside the same `BEGIN IMMEDIATE` that claims a
+queued transfer. For every current watched address, its maximum `scan_id` must
+name the caller's exact expected tip hash/height and every credit's
+`last_checked_scan_id` must be that latest scan. `claim_next_transfer` returns
+the barrier anchor and the sorted restricted outpoint set to the winner. Before
+prepare, the service rechecks the live tip is still that anchor, obtains the
+locked structured wallet snapshot at that anchor (including primary/change and
+every key), verifies every restricted unspent outpoint appears in it with the
+same units, and requires:
+
+```text
+wallet_spendable_units - provisional_restricted_units
+  >= customer_liability_units + pending_platform_outflow_units
+```
+
+The wallet command also excludes each restricted outpoint, so aggregate math
+cannot be defeated by deterministic coin selection. If the tip advances, the
+worker safely releases/requeues the unsigned reservation through the documented
+failed-safe path, rebuilds the all-address barrier, and claims again; it never
+signs against mixed/stale ledger evidence.
+The snapshot's exact `wallet_snapshot_hash` is passed through the prepare
+comparison; a wallet address/UTXO-set change between solvency and signing is a
+safe pre-attach retry, never permission to reuse the earlier balance.
+
+`provisional_restricted_units` is the exact sum of current-best-chain, mature,
+unspent (`spent_by IS NULL`) outputs with `credited_at IS NULL`. The restricted
+outpoint set is derived from those same rows in the same read transaction. An
+immature coinbase is not reported spendable and is not subtracted; any partial
+spent tuple, current-chain mismatch, or negative usable balance fails health.
+
+Reservation atomically allocates credit buckets without exceeding each credit's
+`main_units`/`recovery_units`. Release/resolve-buyer allocates
+`amount + network fee + earned fee = deposit_required`; refund/resolve-seller
+allocates `amount + network fee = deposit_required`; recovery refund allocates
+`amount + network fee` exclusively from `recovery` buckets. Main outcomes may
+allocate only `main` buckets. A fee withdrawal has no customer-credit allocation.
+Raise `AccountingInvariantError` rather than clamp or hide a negative result.
+Composite foreign keys require transfer, credit, and allocation to share one
+order. Capacity is reduced by every durable allocation, regardless of transfer
+state, so two queued/concurrent operations cannot reserve the same units.
+Allocations and transfer economics are immutable; DB triggers independently
+reject forged quote values, earned fees, destinations, cross-order links,
+wrong-bucket use, oversubscription, or an unbalanced claim/confirmation.
+Every transfer destination is also rejected when it equals any currently
+watched order deposit address, preventing same-order and cross-order escrow
+loop payouts even for a direct SQL writer. Task 4 repeats this check against
+the locked wallet snapshot's complete owned-address set before preparation.
+Order transitions that authorize a transfer require its queued allocations to
+already equal its immutable amount plus fees. Claim-time kind/state coupling is
+independent: release requires `release_reserved` plus both party flags, ordinary
+refund requires zero-flag `refund_reserved`, dispute outcomes require their
+reserved resolution state, and recovery is limited to `refund_reserved` or an
+unchanged terminal main-order state. A zero-allocation placeholder release can
+neither unlock a release transition nor let a recovery transfer consume main
+credit; test that exact adversarial sequence.
+Append-only scan tests cover the same address at tips A, then B, then A again;
+all three observations receive increasing scan IDs and the last A snapshot may
+authoritatively reconcile current credit evidence.
+
+- [ ] **Step 2: Write accept, confirmation, and global-claim concurrency tests**
+
+Cover 20 concurrent attempts for each path:
+
+- WTS `open -> matched` assigns exactly one non-maker buyer.
+- WTB `open -> awaiting_deposit` assigns exactly one non-maker seller and the
+  winner's preallocated fresh address/deadline. Losing fresh addresses are never
+  stored or disclosed.
+- Existing/wrong roles and self-accept do not mutate the order or audit log.
+- Buyer and seller confirmations are role-authorized and idempotent. Whichever
+  valid actor confirms second atomically sets its flag, inserts exactly one
+  `queued` release with operation key `order:{id}:main`, snapshots the buyer's
+  validated stored address, and moves the order to `release_reserved` in the
+  same transaction.
+- A crash immediately after that commit leaves one safe queued operation; there
+  is no `matched + both flags + no transfer` gap.
+- With several queued operations, 20 concurrent `claim_next_transfer` calls
+  change exactly one row to `reserved`. Queued rows do not occupy the wallet
+  slot; reserved/prepared/broadcast rows occupy the unique lane globally, including fee
+  withdrawals whose `order_id` is NULL. Any uncertain row independently makes
+  every claim return `None`.
+- Claims with one stale/missing latest address scan, provisional funds masking a
+  one-unit deficit, or an expected tip different from the barrier all return
+  `None`; no wallet process starts.
+
+Use this accept interface so both sides are representable:
 
 ```python
-# bot/tests/test_store_atomic.py
-import concurrent.futures
-import tempfile
-import unittest
-from pathlib import Path
-
-from bot.otc.domain import OrderSide, OrderState
-from bot.otc.store import Store
-
-
-def insert_order(store, *, state, side="sell", both_confirmed=False):
-    now = 1_700_000_000
-    buyer_id = 20 if state != OrderState.OPEN.value else None
-    seller_id = 10
-    with store.connect() as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        cur = conn.execute(
-            """INSERT INTO orders (
-                side, maker_id, maker_name, buyer_id, buyer_name, seller_id, seller_name,
-                net_amount_units, network_fee_units, service_fee_units,
-                deposit_required_units, deposit_confirmed_units, total_price,
-                settlement_asset, settlement_network, payment_method, state,
-                deposit_addr, buyer_confirmed, seller_confirmed, created_at, updated_at
-            ) VALUES (?, 10, 'seller', ?, ?, ?, 'seller', 100000000000, 10000, 0,
-                      100000010000, 100000010000, '20', 'USDT', 'TRC20',
-                      'external wallet', ?, 'deposit-address', ?, ?, ?, ?)""",
-            (side, buyer_id, "buyer" if buyer_id else None, seller_id, state,
-             int(both_confirmed), int(both_confirmed), now, now),
-        )
-        conn.commit()
-        return cur.lastrowid
-
-
-class AtomicStoreTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.store = Store(Path(self.tmp.name) / "otc.db")
-        self.store.initialize()
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def test_only_one_buyer_can_accept(self):
-        order_id = insert_order(self.store, side=OrderSide.SELL.value, state=OrderState.OPEN.value)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            results = list(pool.map(lambda buyer: self.store.reserve_accept(order_id, buyer), (1001, 1002)))
-        self.assertEqual(sum(result is not None for result in results), 1)
-
-    def test_only_one_release_can_be_reserved(self):
-        order_id = insert_order(self.store, state=OrderState.MATCHED.value, both_confirmed=True)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            results = list(pool.map(lambda _: self.store.reserve_transfer(order_id, "release", "valid-address"), range(2)))
-        self.assertEqual(sum(result is not None for result in results), 1)
-        self.assertEqual(self.store.get_order(order_id)["state"], "release_reserved")
-
-    def test_liability_includes_uncertain_transfer(self):
-        order_id = insert_order(self.store, state=OrderState.MATCHED.value, both_confirmed=True)
-        transfer = self.store.reserve_transfer(order_id, "release", "valid-address")
-        self.store.mark_transfer_uncertain(transfer["transfer_id"], "timeout")
-        self.assertEqual(self.store.liability_units(), 100_000_010_000)
+store.reserve_accept(
+    order_id=order_id,
+    actor_id=actor_id,
+    actor_name=actor_name,
+    preallocated_deposit_addr=addr_or_none,
+    deposit_deadline=deadline_or_none,
+    now=now,
+)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 3: Implement immutable outcome and transfer state rules**
 
-```powershell
-python -m unittest bot.tests.test_store_atomic -v
-```
+Main outcome amount/destination is derived inside the locked transaction:
 
-Expected: missing reservation methods.
+| kind | destination | amount | network fee | earns service fee |
+|---|---|---:|---:|---:|
+| `release`, `resolve_buyer` | buyer stored address | order net | quoted | on confirmation |
+| `refund`, `resolve_seller` | seller stored address | net + service fee | quoted | never |
+| `recovery_refund` | seller stored address | unallocated recovery units - quoted fee | quoted | never |
 
-- [ ] **Step 3: Implement atomic helpers**
+When residual liability is not greater than its fee, do not create a zero or
+negative payout. Atomically move the order to `recovery_hold`, retain every unit
+of liability, keep watching the same address, and tell the depositor that a
+top-up must make the total greater than the disclosed network fee. New credited
+output re-evaluates the hold; `fee + 1` queues a one-unit recovery payout. The
+0% pilot does not silently subsidize dust from another customer or unproven
+revenue. Tests cover residual `1`, exactly `fee`, and `fee + 1`.
+At insert, the DB trigger snapshots economics by requiring `amount + fee` to
+equal every currently unallocated `recovery` unit for that order; recovery
+transfers cannot allocate `main` capacity. Credits first qualified after the
+queue commit remain liability for a later recovery; they do not mutate or block
+the immutable in-flight operation.
+The recovery operation key is deterministic:
+`order:{order_id}:recovery:{max_unallocated_recovery_credit_id}`. A replay of
+the same recovery set cannot create a new lifetime row; a later qualifying
+credit produces a new key only after the prior recovery is terminal.
+For late/excess recovery on an already terminal order, queue/confirm the
+`recovery_refund` without changing that main order state. For a pre-terminal
+partial cancellation, `recovery_hold -> refund_reserved -> refunded` remains
+the explicit user-visible path. Tests distinguish both cases.
+The four main outcomes share one lifetime operation/index and cannot be replaced
+after a failed-safe result. An explicit failed-safe retry changes the same
+immutable row back to `queued`; uncertain is never automatically retried.
 
-Every helper uses this transaction shape:
+Transfer CAS rules:
 
-```python
-with self.connect() as conn:
-    conn.execute("BEGIN IMMEDIATE")
-    row = conn.execute("SELECT * FROM orders WHERE order_id=?", (order_id,)).fetchone()
-    if row is None or row["state"] not in allowed_states:
-        conn.rollback()
-        return None
-    updated = conn.execute(
-        "UPDATE orders SET state=?, updated_at=? WHERE order_id=? AND state=?",
-        (new_state, now, order_id, row["state"]),
-    ).rowcount
-    if updated != 1:
-        conn.rollback()
-        return None
-    conn.execute("INSERT INTO audit_events (...) VALUES (...)", (...,))
-    conn.commit()
-```
+- `queued -> reserved` only through the global claim winner;
+- `reserved -> prepared` atomically stores the full txid and signed transaction
+  hex plus the exact persisted/live tip hash and height returned by the
+  no-network prepare process. SQLite WAL with
+  `synchronous=FULL` is the durable operation journal and commits before any
+  submit or peer write;
+- `prepared -> broadcast` occurs only after submitting that exact stored
+  transaction and observing the exact txid as mempool/canonical on the trusted
+  live node. A crash, timeout, or peer write without trusted-node observation
+  changes it to `uncertain`, but the exact transaction remains available for
+  idempotent status lookup or rebroadcast;
+- `reserved -> failed_safe` is legal only when preparation failed before a
+  signed transaction was durably attached;
+- `prepared|broadcast -> uncertain` retains full liability and blocks every
+  global claim;
+- `prepared|broadcast|uncertain -> confirmed` is reconciliation-only and atomically
+  completes/refunds the order according to immutable kind;
+- `confirmed -> uncertain` handles an outgoing-transaction reorg, immediately
+  restoring allocated liability and reversing earned fees until reconfirmed;
+- a reserved row found after restart has no signed tx and cannot have reached
+  the network by construction; after confirming the old prepare child is gone,
+  it may become `failed_safe` and requeue the same operation. Prepared and later
+  rows always resume/reconcile the exact stored tx and never build a replacement.
 
-`reserve_transfer` must insert the transfer row before commit. Its amount and
-network fee come from the immutable order quote, not Discord arguments.
-`liability_units` sums `deposit_confirmed_units` for funded orders and active or
-uncertain transfers until a confirmed release/refund removes the liability.
+`Wallet.prepare` accepts only Go output that has decoded/validated the signed
+transaction against the chain and exactly matches the requested destination,
+amount, and fee. `attach_signed_transfer` independently validates bounded
+lowercase hex, recomputes SHA256d txid from those bytes, and compares the
+structured destination/amount/fee metadata with the immutable reserved row. It
+also validates/stores the 64-hex prepared tip and exact integer height before
+committing. Tests reject a txid/hex mismatch, different quoted metadata,
+malformed/trailing transaction bytes at the Go boundary, a mismatched live tip,
+and a second attachment; prepared identity is DB-immutable thereafter.
 
-- [ ] **Step 4: Stress the atomic tests**
+Treat an exception returned by SQLite COMMIT as ambiguous, not as rollback.
+`recover_ambiguous_attach` closes that connection and reopens the database: an
+exact matching txid/hex/tip in `prepared` resumes recovery; a completely
+unsigned `reserved` row permits the same no-network prepare to retry; any
+partial/mismatched/unreadable result raises `AccountingInvariantError`, fails
+health, and halts all claims. Keep commit behind an injectable Store boundary so
+stdlib `sqlite3` tests can deterministically raise immediately before calling
+COMMIT and immediately after a successful COMMIT but before returning to the
+caller. Also kill a subprocess at randomized offsets during COMMIT and always
+classify by reopen/read; do not claim a Python-level WAL-sync hook that stdlib
+SQLite does not expose. Test reopen/read failure separately.
+
+- [ ] **Step 4: Implement earned-fee and fee-withdrawal idempotency**
+
+Gross earned fees are the immutable `earned_fee_units` on confirmed
+`release`/`resolve_buyer` outcomes. Available fee funds equal gross earned fees minus
+`amount + network_fee` for every non-cancelled fee-withdrawal operation,
+including failed-safe and uncertain rows. `queue_fee_withdrawal` requires a
+caller-supplied stable interaction/operation key, validates exact integer amount
+and configured admin destination, and atomically refuses oversubscription.
+
+Tests prove two concurrent requests that oversubscribe earnings have one winner;
+replaying the same key before or after confirmation never creates a second row;
+different keys within earned revenue can both queue; a 0% fee pilot cannot
+withdraw; and a failed-safe fee transfer remains encumbered until the same row
+is retried or explicitly cancelled.
+
+Cancellation is an audited admin CAS permitted only for a `fee_withdrawal` in
+`failed_safe` with no txid/signed transaction. It is forbidden from queued,
+reserved, prepared, broadcast, uncertain, confirmed, and every customer
+transfer. A confirmed release reorg after fees were already withdrawn may make
+available revenue negative; that is an accounting invariant/health failure that
+halts intake and claims, never a value clamped to zero.
+
+#### Task 3 controller addenda (2026-07-10)
+
+These resolved boundary rules are durable requirements for Tasks 3-10:
+
+- Each `Store` has one validated configured network (`btc09-mainnet` by
+  default, `btc09-regtest` only by explicit opt-in). Reconciliation must match
+  it; common-tip, credit, restricted-fund, health, claim, and solvency reads are
+  network-scoped. Evidence for a watched address on another network fails
+  health. The Store independently checks confirmations from block/tip heights
+  and coinbase maturity (100 mainnet, 2 regtest) before permanent credit.
+- `claim_next_transfer` receives a preliminary exact-integer, protocol-capped
+  `wallet_spendable_units` from a read-only snapshot at the requested common
+  tip. Its `BEGIN IMMEDIATE` derives current liability, restricted provisional
+  units, and pending platform outflow and returns `None` before reservation on
+  deficit or unhealthy evidence. The winning result carries the common anchor,
+  sorted restricted outpoints with units, `attempt_count`, and `reserved_at`.
+- After claim and before prepare, Task 4 must re-read the live tip and supply a
+  locked structured wallet snapshot. `wallet_solvency_snapshot` requires the
+  complete outpoint-to-units mapping and deterministic 64-hex snapshot hash,
+  requires the scalar spendable total to equal the exact structured sum, and
+  verifies every restricted outpoint in one SQLite read snapshot. Prepare and
+  attach must compare the same snapshot hash; drift takes the failed-safe retry
+  path before signed bytes attach.
+- Attach, ambiguous-commit recovery, and failed-safe classification bind to the
+  exact reservation `attempt_count` plus `reserved_at`; stale callbacks cannot
+  affect a reclaimed attempt. Uncertainty callbacks additionally bind the
+  expected prior state and txid, so an old timeout cannot demote a confirmed
+  transfer. SHA256d is compared as direct lowercase digest-byte hex, matching
+  Bitcoin 09 `core.Tx.ID()`, with no Bitcoin Core display-byte reversal.
+- The latest identical deposit tip may be reused only for a true semantic
+  no-op; changed evidence at the same tip rejects the entire batch. Accepted
+  adverse scan/reorg/unknown-spend evidence commits before health is reported.
+  Automatic recovery must never roll that evidence back merely because the
+  seller destination is missing or unsafe.
+- `recovery_hold` is only the preterminal partial-cancellation state. Dust on a
+  completed, refunded, cancelled, or deposit-expired order is a derived
+  residual condition and never replaces the terminal main state. A later
+  qualifying top-up automatically queues immutable recovery economics while
+  preserving that state; credit arriving during an in-flight recovery remains
+  liability for a later lifetime operation.
+- Both the Store and schema reject every customer or fee destination equal to
+  any current watched deposit address. Task 4 must additionally reject every
+  destination found in the locked wallet snapshot's full owned address/key set,
+  covering primary, change, unused keys, and the queue-to-prepare race.
+- Post-credit reorg, unknown spend, unsafe recovery destination, negative fee
+  revenue, ambiguous attach health failure, or any uncertain transfer halts new
+  order intake, acceptance, payment-confirmation progress, transfer queueing,
+  and claims. Deposit evidence and exact transfer reconciliation/repair remain
+  allowed so the halt cannot deadlock its own resolution.
+
+- [ ] **Step 5: Stress, verify, and commit**
 
 ```powershell
 1..50 | ForEach-Object { python -m unittest bot.tests.test_store_atomic -q; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
 python -m unittest discover -s bot/tests -p "test_*.py" -v
-```
-
-Expected: 50 clean iterations and the full Python suite passes.
-
-- [ ] **Step 5: Commit**
-
-```powershell
+go test ./... -count=1
 git add bot/otc/store.py bot/tests/test_store_atomic.py
 git commit -m "Make OTC fund transitions atomic"
 ```
 
+Expected: 50 clean concurrency iterations, the full Python/Go suites pass, and
+no liability, transfer, audit, or fee reservation is duplicated.
+
 ---
 
-### Task 4: Structured BTC09 Send and Wallet Adapter
+### Task 4: Canonical Credit Snapshot and Structured Wallet Boundaries
 
 **Files:**
+- Modify: `go.mod`
+- Modify: `go.sum`
+- Modify: `core/params.go`
+- Modify: `core/chain.go`
+- Modify: `core/core_test.go`
+- Modify: `core/miner.go`
+- Modify: `core/store.go`
+- Create: `core/store_test.go`
+- Create: `core/filelock_unix.go`
+- Create: `core/filelock_windows.go`
+- Create: `core/durable_replace_unix.go`
+- Create: `core/durable_replace_windows.go`
+- Modify: `wallet/wallet.go`
+- Create: `wallet/wallet_test.go`
+- Create: `wallet/filelock_unix.go`
+- Create: `wallet/filelock_windows.go`
+- Create: `wallet/durable_replace_unix.go`
+- Create: `wallet/durable_replace_windows.go`
+- Modify: `explorer/explorer.go`
+- Modify: `explorer/explorer_test.go`
 - Modify: `p2p/p2p.go`
 - Modify: `p2p/p2p_test.go`
 - Modify: `cmd/btc09/main.go`
 - Modify: `cmd/btc09/main_test.go`
+- Create: `bot/otc/explorer.py`
 - Create: `bot/otc/wallet.py`
+- Create: `bot/tests/test_explorer.py`
 - Create: `bot/tests/test_wallet.py`
 
 **Interfaces:**
-- Go produces: `Node.WaitForPeers(ctx, minimum) bool`, `Node.BroadcastTx(tx) int`, and `btc09 send -json -require-broadcast`.
-- JSON result: `{"ok":true,"txid":"<64 hex>","amount_units":N,"fee_units":N,"broadcast_peers":N}`.
-- Python produces: `Wallet.send(destination, amount_units, fee_units) -> BroadcastResult` and exceptions `SafeSendFailure`, `UncertainSendFailure`.
+- Go produces `Chain.ConfirmedOutputsForPKH`, atomic transaction-accept results,
+  canonical tip/block and transaction-status lookup,
+  `GET /api/v1/address/{address}/outputs`, `GET /api/v1/tip`,
+  `GET /api/v1/block/{hash}`, `Node.WaitForPeers`, `Node.BroadcastTx`,
+  crash-durable `btc09 wallet new -wallet-file`, locked structured
+  `btc09 wallet snapshot -json`, `btc09 prepare-send -json`,
+  and `btc09 broadcast-tx -json -require-broadcast`.
+- Python produces `Explorer.outputs(address, expected_tip)`, `Explorer.tip()`,
+  `Explorer.block(hash)`, `Explorer.transaction(txid)`,
+  `Wallet.new_address()`, `Wallet.snapshot(expected_tip) -> WalletSnapshot`,
+  `Wallet.prepare(destination, amount_units, fee_units, expected_tip,
+  restricted_outpoints, expected_snapshot) -> PreparedTransfer`, and
+  `Wallet.broadcast(signed_tx_hex, expected_txid, prepared_tip) -> BroadcastResult` with
+  `SafeSendFailure` and `UncertainSendFailure`.
 
-- [ ] **Step 1: Write failing Go tests**
+**Controller addenda (mandatory before Task 4 implementation):**
+
+Task 4 is split into two separately reviewed commits. Task 4A first hardens
+consensus money arithmetic and canonical chain persistence. Task 4B may begin
+only after 4A is green and approved; it implements the explorer, P2P, wallet,
+CLI, and Python trust boundaries. This split is a review boundary, not a
+relaxation of any Task 4 gate.
+
+- Consensus defines `MaxMoneyUnits = 21_000_000 * UnitsPerCoin` and one checked
+  MoneyRange/addition implementation. Every transaction input/output value,
+  aggregate input/output sum, derived fee, aggregate block fee, subsidy-plus-
+  fee sum, and aggregate coinbase output is range checked. Any intermediate
+  overflow, negative value, or total above `MaxMoneyUnits` rejects. The miner
+  uses the same checked helpers. Tests reject a correctly signed transaction
+  with two `math.MaxInt64` outputs in both mempool and block paths, a coinbase
+  with two `math.MaxInt64` outputs, and synthetic aggregate-fee overflow, while
+  accepting the exact legal boundary. Task 4A therefore also modifies
+  `core/params.go`, `core/miner.go`, and their tests. The miner deterministically
+  skips any mempool transaction whose inclusion would make aggregate fees or
+  `SubsidyAt(height)+fees` leave MoneyRange, so it always returns a valid
+  template rather than constructing an invalid coinbase.
+- Context-free transaction/block sanity runs before *any* block is inserted in
+  the index, including an equal/lower-work side branch: required ins/outs,
+  positive MoneyRange outputs, checked per-transaction output aggregates,
+  duplicate inputs, and duplicate transaction IDs. Before *any* non-tip branch
+  candidate is indexed, replay its complete candidate branch on scratch UTXO
+  state and validate UTXO ownership, maturity, signatures, input sums, fees, and
+  coinbase reward without committing. A heavier valid branch commits that
+  already-validated state; an equal/lower-work valid branch is cached only after
+  the same contextual proof. Mined equal-work forks with overflowing outputs,
+  subsidy overpay, invalid inputs, or invalid signatures must return an error
+  and remain absent from `HasBlock`; invalid side branches are never cached as
+  successfully accepted.
+- `core.Store.SaveSnapshot` may not call `Tip` and `BlockAt` separately. A new
+  chain method copies one complete canonical main-chain snapshot under one
+  `Chain.RLock`; serialization occurs after the chain lock is released.
+  `SaveSnapshot` acquires `Store.mu`, then a canonical-path interprocess OS
+  file lock, *before* taking that chain snapshot and holds both locks through
+  validation and durable replace. The immutable snapshot includes a copied
+  cumulative-work value. Under the OS lock, Save validates the current durable
+  snapshot and refuses an older/lower-work candidate or an equal-work candidate
+  with a different tip; the same exact tip is an idempotent no-op. Thus another
+  `*Store`, process, or late callback backed by a stale `*Chain` cannot regress
+  disk. It writes an accepted snapshot to a unique same-directory temp, syncs
+  it, atomically replaces the destination, and syncs the directory (or uses the
+  equivalent hard-fail Windows write-through primitive). `LoadInto` takes the
+  same OS lock while reading. Reorg/save/reload races must yield one complete
+  old or new branch, never a mixture or stale-save regression. If replacement
+  succeeds but the final directory/write-through durability barrier reports an
+  error, an exact-tip retry reruns that final barrier without rewriting the
+  block file; same-tip idempotency may skip create/replace but never skips an
+  unproven final durability completion.
+  Task 4A therefore also modifies `core/store.go` and adds its platform helpers
+  and tests.
+- Human CLI network aliases remain `mainnet|regtest`. Every machine boundary
+  and every JSON response uses exactly `btc09-mainnet|btc09-regtest`; mapping
+  occurs once and a wrong/unknown machine identity fails closed. The dedicated
+  wallet file is stamped with that canonical network.
+- `AcceptTx` remains as the compatibility error-only wrapper. A new atomic
+  result method performs the same single-lock admission and returns exactly
+  `added` or `already_known`; P2P and machine paths use the result method, and
+  only `added` is relayed. This avoids unrelated API churn without weakening
+  duplicate suppression.
+- Explorer V1 response shapes are exact and reject extra/duplicate fields.
+  Every authoritative chain-state success/status variant, including the typed
+  missing-block 404 and address tip-mismatch 409, uses full lowercase hashes,
+  JSON integers, canonical network, and exactly one response tip anchor.
+  Generic protocol/resource 400/404/405/503 envelopes intentionally contain no
+  tip and may be returned without entering a Chain query:
+
+  ```json
+  {"schema_version":1,"network":"btc09-mainnet","tip":{"hash":"<64hex>","height":7000}}
+  {"schema_version":1,"network":"btc09-mainnet","found":true,"block":{"hash":"<query64hex>","height":6995,"canonical":true},"tip":{"hash":"<64hex>","height":7000}}
+  {"schema_version":1,"network":"btc09-mainnet","txid":"<query64hex>","status":"confirmed","block":{"hash":"<64hex>","height":6999},"confirmations":2,"tip":{"hash":"<64hex>","height":7000}}
+  ```
+
+  Transaction `unknown` and `mempool` are HTTP 200 with `block:null` and
+  `confirmations:0`; confirmed has the exact block and derived confirmations.
+  Unknown block is 404; a known side-chain block is 200 with
+  `canonical:false`. Address-output rows add `transaction_index`, and non-null
+  `spent_by` is exactly `{txid,input_index,block:{hash,height}}`, so canonical
+  `(block height, transaction index, vout)` ordering is independently
+  verifiable. Expected-tip 409 responses contain no output array.
+- Canonical chain/address/wallet snapshots are copied under one chain read
+  lock and encoded only after release. Wallet UTXOs for all keys are collected
+  in one multi-PKH snapshot, never one independently locked read per key.
+- Consensus state never retains or exposes caller-owned mutable pointers.
+  `NewChain` copies Params; transaction/block admission deep-copies all structs
+  and byte slices before storing; `BlockAt`, `MempoolTxs`, and `OnNewTip` return
+  or receive fresh clones. After an admission call returns, mutation of the
+  caller's original or any accessor result cannot change `index`, `mainIDs`,
+  UTXO, mempool, or persisted bytes. The canonical Store snapshot also verifies
+  every copied block ID, parent link, and merkle root against its captured
+  metadata before writing. Sequential and concurrent post-return mutation tests
+  cover blocks, transactions, accessor values, and save/reload. Callers may not
+  mutate an object concurrently *during* its admission call.
+- Wallet snapshot hash V1 is SHA-256 over this exact binary preimage:
+  ASCII `btc09-wallet-snapshot-v1` followed by a NUL byte; a big-endian u16
+  length plus canonical-network UTF-8 bytes; the raw 32 tip-hash bytes; the
+  non-negative tip height as big-endian u64; a big-endian u32 address count;
+  each lexicographically sorted ASCII address as u16 length plus bytes; a
+  big-endian u32 outpoint count; then each `(txid raw32, vout u32, amount u64,
+  owner-address-index u32)` sorted by raw txid then vout. Duplicate addresses,
+  duplicate outpoints, invalid/missing owner indexes, invalid ranges, or count/
+  length overflow reject. Each outpoint has exactly one owner index; the same
+  owner may correctly own multiple distinct outpoints. Go and Python
+  independently construct and compare this preimage and hash.
+- The wallet file V1 schema is exactly
+  `{"schema_version":1,"network":"btc09-mainnet","keys":["<64-lowercase-hex-seed>"]}`
+  (JSON whitespace is insignificant), strict, bounded, and network stamped. It rejects
+  unknown/duplicate JSON fields, trailing values, empty keys, duplicate seeds
+  or derived addresses, malformed seed lengths, excessive keys, and a wrong
+  network. Plain `Load` is read-only and never creates or writes. An explicit
+  locked legacy migration may convert only the exact old `{\"keys\":[...]}`
+  shape to V1 without changing keys; an explicit create/new operation creates
+  one key on a missing file. `wallet new -json` returns that one address only
+  after the V1 file is durable.
+- Wallet path precedence is explicit `-wallet-file`, then
+  `BTC09_WALLET_PATH`, then the legacy network-specific datadir path. Every
+  key-reading or key-writing path, including node/miner, list/new/snapshot,
+  legacy send, and prepare, uses one canonical path and the same interprocess
+  lock. Lock order is wallet OS lock, strict key reload, immutable chain
+  snapshot; the lock is released before mempool submission or networking and
+  is never acquired from a chain callback.
+- Unix durability is a mode-0600 same-directory temp, file fsync, atomic
+  rename, and directory fsync. Windows is temp-handle `FlushFileBuffers` then
+  `MoveFileExW(MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)`; unsupported
+  `REPLACEFILE_WRITE_THROUGH` is not used. Every primitive error hard-fails.
+  `LockFileEx`/`flock` ownership is kernel managed. Kill-owner tests retry with
+  a bounded deadline because Windows lock release after process termination
+  need not be instantaneous.
+- Go prepare reloads every wallet key while holding that lock and rejects the
+  destination PKH if it matches primary, change, used, unused, or a key added
+  after Python's earlier snapshot. It signs only from the one structured
+  snapshot, excludes every restricted outpoint, uses txid+vout deterministic
+  tie-breaking, and has no mempool, P2P, or wallet-file mutation side effect.
+- Machine commands emit exactly one bounded JSON object on stdout, with
+  `schema_version:1`, canonical `network`, `ok`, and an exact `stage`; stderr
+  is empty or one bounded generic secret-free error. Wallet-new, snapshot,
+  prepare, inspect, and broadcast schemas are strict. OTC raw transactions are
+  capped at 10,000 bytes / 20,000 lowercase hex characters to match the Store;
+  JSON/stdin and restricted-input counts are separately bounded. Legacy send
+  also uses the strict ASCII decimal parser.
+
+  ```json
+  {"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"wallet_new","address":"<09C-address>"}
+  {"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"snapshot","tip":{"hash":"<64hex>","height":7000},"addresses":["<sorted-address>"],"outpoints":[{"outpoint":"<64hex>:0","amount_units":100,"address":"<owner-address>"}],"spendable_units":100,"wallet_snapshot_hash":"<64hex>"}
+  {"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"prepared","txid":"<64hex>","signed_tx_hex":"<lowercase-hex>","destination":"<09C-address>","amount_units":90,"fee_units":10,"snapshot_tip":{"hash":"<64hex>","height":7000},"wallet_snapshot_hash":"<64hex>","selected_outpoints":["<64hex>:0"]}
+  {"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"inspected","txid":"<64hex>","inputs":["<64hex>:0"],"outputs":[{"index":0,"address":"<09C-address>","amount_units":90}]}
+  {"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"broadcast","status":"submitted","txid":"<64hex>","peer_writes":1}
+  {"ok":false,"schema_version":1,"network":"btc09-mainnet","stage":"prepared","error_code":"safe_prepare_failure"}
+  ```
+
+  Those are exact key sets for their variants. Arrays are canonically sorted
+  where specified; output order is transaction order. Machine JSON input or
+  output is at most 4 MiB, raw signed-transaction stdin is at most 20,000 ASCII
+  hex characters, restricted-outpoint input is at most 4,096 unique canonical
+  identities, wallet files contain at most 10,000 unique keys, and structured
+  error text/code is at most 128 ASCII bytes. A nonzero machine exit still
+  emits exactly the failure object and never echoes untrusted input.
+- Add side-effect-free `btc09 inspect-tx -json`; it reads bounded signed hex
+  from stdin and reports txid plus canonical inputs/outputs without echoing the
+  hex. `broadcast-tx` also reads signed hex from bounded stdin, never argv or a
+  process listing. Python uses an absolute binary path, `shell=False`, a
+  minimal environment, and exceptions that never contain signed hex, seeds,
+  tokens, argv, subprocess stdout/stderr, or the full environment.
+- The Python explorer accepts only an explicitly configured canonical lowercase
+  HTTP base matching `http://127.0.0.1:<1..65535>` or
+  `http://[::1]:<1..65535>` exactly. It rejects a trailing slash, userinfo, zone
+  IDs, mapped IPv6, shorthand/integer/octal/hex IPv4, whitespace/NUL, and every
+  path/query/fragment. Each request uses a fresh stdlib
+  `http.client.HTTPConnection` directly to the validated numeric host; no proxy
+  or redirect machinery is involved. It sends `Accept-Encoding: identity`,
+  rejects duplicate/ambiguous response headers and non-identity content
+  encoding, and applies explicit connect/read timeouts plus a monotonic whole-
+  response deadline. The deadline is enforced even while headers or a body are
+  being slow-dripped by a per-request watchdog that closes the non-reused
+  connection, plus remaining-time socket bounds and `read1` checks; the
+  watchdog is always cancelled. JSON bodies are capped at 4 MiB using both a
+  canonical Content-Length precheck and cap-plus-one streaming read. Strict UTF-8 (no
+  BOM), JSON media type/UTF-8 charset, duplicate keys at every depth, NaN/
+  Infinity, trailing values, booleans as integers, and extra/missing keys all
+  fail closed. HTTP proxy, redirect, slow-drip, oversized/chunked-body, and
+  encoding forgery tests must fail closed. Transport/protocol failure remains
+  distinct from a valid chain transaction status of `unknown`.
+- Python `Wallet.prepare` receives the prior typed `WalletSnapshot` and must
+  match its V1 hash; `Wallet.broadcast` receives the persisted prepared tip and
+  canonical network. Broadcast first proves that tip remains canonical and
+  checks the trusted local tx endpoint. Exact pre-observed mempool/confirmed
+  status skips submission. Chain-unknown requires at least one successful peer
+  write and then exact trusted-local observation. Canonical loss, transport or
+  parse failure, zero-write unknown, timeout, or process crash is uncertain;
+  only the DB-stored bytes/txid may be retried.
+- Task 3 already covers SQLite attach-COMMIT ambiguity. Post-broadcast DB-update
+  crash orchestration belongs to Tasks 5/6, where the service exists; Task 4
+  proves killed prepare is safe and every invoked/ambiguous broadcast is
+  uncertain. Windows runs the complete runtime suite. Linux build-tag paths
+  are cross-compiled locally, then the full/race and durability suite runs on
+  the production-like Linux VPS before release.
+
+- [ ] **Task 4A Step 1: Red-test consensus MoneyRange arithmetic**
+
+Add focused core tests for the signed two-`MaxInt64` output transaction through
+both mempool and block validation, two-`MaxInt64` coinbase outputs, synthetic
+aggregate-fee overflow, negative/out-of-range persisted UTXOs, and exact
+`MaxMoneyUnits` boundary-valid input/output/fee behavior. Invalid-value blocks
+must also fail through `Store.LoadInto`, not only direct in-memory validation.
+Run the focused tests and record the expected failures before implementation.
+
+- [ ] **Task 4A Step 2: Implement shared checked money arithmetic**
+
+Add `MaxMoneyUnits`, shared MoneyRange/checked-add helpers, and use them in
+transaction validation, block fee/coinbase validation, and miner template fee
+construction. No consensus or miner economic sum uses unchecked `int64`
+addition. Rerun focused tests, the full core suite, and `go test ./...`.
+
+- [ ] **Task 4A Step 3: Red-test and implement canonical durable Store snapshots**
+
+Add the one-RLock immutable main-chain snapshot, acquire `Store.mu` before
+capturing it, and hold that mutex plus the canonical-path OS file lock through
+a unique-temp durable replacement. Tests use two Store/Chain instances and a
+late stale callback to prove lower-work and equal-work-different-tip snapshots
+cannot overwrite the newer durable tip, while an exact-tip replay is a no-op.
+They also force competing branch saves and injected failures at temp write,
+file sync, replace, and final directory/write-through completion. Reload must
+always yield the complete prior or complete new branch. A subprocess lock-owner
+death must release the OS lock within a bounded retry deadline.
+Before persistence tests pass, add RED pointer-ownership tests proving an
+accepted block/transaction and values returned by `BlockAt`/`MempoolTxs` can be
+mutated after return without changing the Chain or Store snapshot. The captured
+snapshot must reject any internally inconsistent ID/parent/merkle metadata.
+
+- [ ] **Task 4A Step 4: Verify, review, and commit before Task 4B**
+
+```powershell
+go test ./core -count=1
+1..20 | ForEach-Object { go test ./core -run 'Test.*(Money|Overflow|Store|Snapshot)' -count=1; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+go test ./... -count=1
+go vet ./...
+$env:GOOS='linux'; $env:GOARCH='amd64'; go test ./core -c -o $env:TEMP\btc09-core-linux.test; Remove-Item Env:GOOS; Remove-Item Env:GOARCH
+git add go.mod go.sum core/params.go core/chain.go core/core_test.go core/miner.go core/store.go core/store_test.go core/filelock_unix.go core/filelock_windows.go core/durable_replace_unix.go core/durable_replace_windows.go docs/superpowers/plans/2026-07-10-otc-trade-system.md
+git commit -m "Harden consensus money and chain persistence"
+```
+
+Task 4B remains blocked until a fresh reviewer approves that exact commit.
+
+Task 4B is also delivered through three separately reviewed commits so the
+independent trust boundaries remain auditable:
+
+1. **Task 4B1** implements Steps 1-3: atomic core query snapshots, exact Go
+   explorer V1 endpoints, and the pinned fail-closed Python Explorer adapter;
+   commit `Add canonical OTC explorer boundaries` after focused/full review.
+2. **Task 4B2** implements Step 4: atomic P2P acceptance/relay, kernel-locked
+   crash-durable wallet V1, structured snapshot/hash, prepare/inspect/broadcast
+   machine commands, and strict integer CLI parsing; commit
+   `Add durable OTC wallet commands` after Windows/Linux and crash review.
+3. **Task 4B3** implements Step 5: the Python Wallet adapter and integrated
+   prepare/broadcast/reorg/secret-redaction tests; commit
+   `Add fail-closed OTC wallet adapter` after adversarial review.
+
+Each commit starts from the approved predecessor, gets its own review package,
+and must be approved before the next sub-slice edits begin. Task 4B Step 6 is
+the final aggregate gate, not permission to squash or bypass those reviews.
+
+Task 4B1 has these controller decisions before RED tests begin:
+
+- Add `MainNetMachineID = "btc09-mainnet"`,
+  `RegTestMachineID = "btc09-regtest"`, and one shared
+  `CanonicalNetworkID(*Params) (string, error)` implementation in
+  `core/params.go`. It compares the complete supplied Params value with the
+  canonical `MainNet` or `RegTest` value; matching `Name` alone is insufficient.
+  Nil, an unknown name, or same-name/custom-consensus parameters fail closed.
+  Explorer and every later CLI/wallet machine boundary use this one helper;
+  Task 4B1 does not change Task 4A money arithmetic.
+- `explorer.New` becomes `New(*core.Chain, PeerCounter) (*Server, error)` and
+  validates/stores that canonical identity before any handler or listener can
+  exist. Nil/noncanonical chains return an error; no handler may emit an empty
+  network or silently fall back to `Params.Name`. Update the node call site and
+  test it in `cmd/btc09/main.go` and `cmd/btc09/main_test.go` in B1.
+- Every address, tip, block, or transaction query takes exactly one
+  `Chain.RLock`, derives the live tip and lookup result inside it, and copies all
+  result values before unlock. HTTP never assembles one response from separate
+  public Chain calls. Transaction precedence is canonical-confirmed, then
+  mempool, then unknown; a side-chain-only transaction is unknown. A known
+  side-chain block is `found=true,canonical=false`; a missing block is the
+  anchored 404 variant below. Address order is creation order `(block height,
+  transaction index, vout)`, hashes are direct digest-byte lowercase hex, and
+  tests include a later transaction in the same block spending the output with
+  the exact `spent_by.input_index`.
+- Block-membership, transaction, and address-history queries share the same
+  locked full-canonical-sequence validator as Store snapshots: exact genesis,
+  ID/height metadata, every parent link, merkle root, and cumulative-work
+  recurrence. Intermediate branch splices, mutated transaction/merkle data, or
+  corrupted work fail closed as `chain_unavailable`; no query may label such
+  data canonical, confirmed, or `complete=true`.
+- Coinbase `mature` is true exactly when `confirmations >=
+  Params.CoinbaseMaturity`, matching both prospective next-block consensus
+  validation and the Store. The genesis output is included when querying the
+  all-zero PKH because the snapshot promises every canonical output, including
+  spent or economically unspendable outputs.
+- Every V1 route is GET-only; HEAD, POST, and OPTIONS return 405 with
+  `Allow: GET`. POST and OPTIONS carry the exact JSON 405 envelope below. Go's
+  real `net/http` server suppresses HEAD response bodies, so a recognized-route
+  HEAD carries the same required V1 headers plus `Allow: GET` but an empty wire
+  body; verify that behavior through `httptest.Server`, not only
+  `ResponseRecorder`. Every other HEAD result is likewise bodyless: raw-path
+  rejection remains 400 and an unmatched path remains 404 under the precedence
+  below, with the required V1 headers but no JSON body. Paths are
+  exact and reject extra segments, trailing slashes,
+  path-cleaning aliases, or any percent-encoded alias. Tip/block/transaction
+  reject all query fields. Address accepts either no query or exactly one value
+  for each of `expected_tip_hash` and `expected_tip_height`; duplicate, empty,
+  partial, unknown, non-lowercase hash, or noncanonical decimal height is 400.
+  Raw-path routing runs first: percent/path-cleaning aliases are 400 and an
+  unmatched/extra/trailing V1 path is 404 regardless of method. For a recognized
+  route shape, the method check precedes parameter/query validation, so non-GET
+  is 405 and only a GET with malformed parameters is 400.
+  All V1 success and error responses have exactly one
+  `Content-Type: application/json; charset=utf-8`, plus `Cache-Control:
+  no-store` and `X-Content-Type-Options: nosniff`.
+- For non-HEAD requests, the exact generic error bodies are
+  `{"schema_version":1,"network":"btc09-mainnet","error_code":"bad_request"}`
+  for 400, the same shape with `not_found` for an unknown V1 path (404),
+  `method_not_allowed` for POST/OPTIONS 405 (HEAD 405 has the explicitly empty
+  wire body above), `busy` for an expensive-query saturation 503,
+  `snapshot_too_large` for a response-cap 503, and `chain_unavailable` for a
+  core atomic-query/integrity failure 503. They never echo untrusted input or
+  internal error text. A syntactically valid but missing block instead returns HTTP 404 with
+  the exact atomic body
+  `{"schema_version":1,"network":"btc09-mainnet","found":false,"block":{"hash":"<query64hex>","height":null,"canonical":false},"tip":{"hash":"<64hex>","height":7000}}`.
+  A found block uses the same exact keys with `found:true`, integer height, and
+  its true canonical flag. For a canonical block, matching the tip height or
+  hash requires both identities to match; a valid noncanonical side branch may
+  have a height greater than the canonical tip.
+- The exact expected-tip mismatch body is
+  `{"schema_version":1,"network":"btc09-mainnet","address":"...","complete":false,"tip":{"hash":"<64hex>","height":7000}}` with HTTP 409,
+  the V1 headers above, and no `outputs` key.
+- Address-history, transaction, and block-membership lookups share one
+  nonblocking four-permit semaphore because all three validate the complete
+  canonical sequence before returning authoritative chain state. Saturation returns the exact
+  `busy` 503 before entering a Chain scan; cancellation and every return path
+  release the permit. Every V1 response is encoded into a bounded buffer before
+  headers are written; a body above 4 MiB is never truncated or partially sent
+  and becomes the exact `snapshot_too_large` 503. Tests block/saturate the
+  expensive seam, prove excess requests do not enter Chain scanning, and prove
+  no permit leaks. The production HTTP server sets `ReadHeaderTimeout=5s`,
+  `ReadTimeout=10s`, `WriteTimeout=10s`, `IdleTimeout=30s`, and
+  `MaxHeaderBytes=16384`, with a testable server-construction seam.
+- Python exposes an all-or-nothing batch helper whose input is a bounded
+  `read_watched_addresses` callback. It reads and validates the complete unique
+  watched set exactly once before the first tip request and once after the final
+  tip request, rejecting any change. Callback results must be non-string
+  sequences of at most 10,000 canonical re-encoded 09C Base58Check addresses
+  (version `0x09`, exact checksum), with no duplicates. Empty sets still perform
+  both tip reads; nonempty addresses are fetched sequentially in sorted order.
+  Each response is at most 4 MiB, the batch is at most 100,000 total outpoints
+  and 32 MiB aggregate response bytes, and a cross-address duplicate outpoint
+  or spending-input identity rejects the whole batch. This is an early barrier;
+  the Store's repeated watched-set checks inside `BEGIN IMMEDIATE` remain the
+  final authority.
+- The Python adapter accepts tip/transaction HTTP 200 only; address output
+  accepts exact 200 or the exact anchored 409 as typed `TipMismatch`; block
+  accepts exact 200/found-true or exact 404/found-false. Every other status or
+  body is a transport/protocol failure, distinct from transaction
+  `status="unknown"` and block `found=false`.
+- Wire snapshots retain nested `tip`, `block`, and
+  `spent_by:{txid,input_index,block}`. The adapter explicitly converts each
+  validated address snapshot to the Store's flattened shape using
+  `tip_hash/tip_height`, `block_hash/block_height`, and
+  `spent_by:{txid,vin,block_hash,block_height}`; direct raw-JSON handoff is
+  forbidden and tested. `vout`, `transaction_index`, and `input_index` are true
+  JSON integers in `0..2^32-1`; amounts are in `1..MaxMoneyUnits`; all heights,
+  confirmations, maturity, and confirmed-spend positions match the anchored
+  tip and consensus exactly. Extra/missing fields, duplicate nested keys, and
+  booleans-as-integers reject.
+
+- [ ] **Task 4B Step 1: Write failing canonical address-history tests**
+
+Build regtest chains and assert:
+
+- a normal confirmed output has exact lowercase `txid:vout`, integer units,
+  block hash/height, confirmations, `coinbase=false`, and `mature=true`;
+- the output remains in history with exact `spent_by` identity after a later
+  confirmed transaction spends it;
+- mempool-only outputs are absent and confirmations advance with the tip;
+- coinbase outputs are returned but switch `mature` only at the consensus
+  maturity boundary;
+- a heavier-fork reorg removes or reanchors the outpoint and changes the one
+  consistent tip anchor;
+- concurrent reads/reorgs never mix blocks from different main-chain tips.
+
+Implement:
+
+```go
+func (c *Chain) ConfirmedOutputsForPKH(pkh [20]byte) (AddressOutputSnapshot, error)
+```
+
+Scan the current canonical `mainIDs`/blocks under one consistent chain read
+snapshot, not the current UTXO map. Return deterministic order by block height,
+transaction index, and vout. The snapshot contains network, `complete=true`,
+tip hash/height, and all best-chain outputs including spent outputs. Each output
+contains full txid/vout, integer `amount_units`, block anchor, confirmations,
+coinbase/maturity, and an optional confirmed spending tx/input/block identity.
+
+- [ ] **Task 4B Step 2: Expose and test the explorer JSON contract**
+
+Add:
+
+```http
+GET /api/v1/address/{base58-address}/outputs?expected_tip_hash={hash}&expected_tip_height={height}
+```
+
+```json
+{
+  "schema_version": 1,
+  "network": "btc09-mainnet",
+  "address": "...",
+  "complete": true,
+  "tip": {"height": 7000, "hash": "<64 lowercase hex>"},
+  "outputs": [{
+    "txid": "<64 lowercase hex>",
+    "transaction_index": 1,
+    "vout": 0,
+    "amount_units": 100000000,
+    "block": {"height": 6995, "hash": "<64 lowercase hex>"},
+    "confirmations": 6,
+    "coinbase": false,
+    "mature": true,
+    "spent_by": null
+  }]
+}
+```
+
+Return schema version 1, exact JSON integers/full hashes, deterministic complete
+output array, and `Cache-Control: no-store`. Return 400 for a bad address and 405
+for non-GET. An empty array with `complete=true` is authoritative. The endpoint
+reads the live in-memory chain; do not implement this by launching a CLI that
+can lag the running node.
+
+When expected-tip query fields are present they are both required and strictly
+validated. Under the same chain read snapshot used for the address history,
+return 409 without output data unless the live tip exactly matches them. The
+service first reads `/tip`, fetches every watched address with that expectation,
+then reads `/tip` again; only two equal tip reads and all equal response anchors
+may enter the atomic all-address Store reconciliation.
+
+Also expose `GET /api/v1/transaction/{64-hex-txid}` with exact status
+`unknown`, `mempool`, or `confirmed`; confirmed results include block hash,
+height, and confirmations. This is the reconciliation source for a prepared or
+broadcast operation and uses the same consistent live-chain/mempool snapshot.
+
+Expose `GET /api/v1/tip` as one exact live hash/height pair and
+`GET /api/v1/block/{64-hex-hash}` as a canonical-membership lookup containing
+`canonical`, the block height when known, and the current tip anchor. All three
+responses use one in-memory chain snapshot, lowercase full hashes,
+`Cache-Control: no-store`, strict 400/404/405 behavior, and no CLI/disk fallback.
+The block lookup lets recovery prove that the exact tip used to sign is still a
+canonical ancestor after newer blocks arrive.
+
+- [ ] **Task 4B Step 3: Write and implement the fail-closed Python explorer adapter**
+
+Tests accept only the endpoint-specific status variants frozen above and reject
+every other status, timeout/deadline, malformed JSON, `complete=false` in a 200,
+wrong schema/network/address, duplicate `(network,txid,vout)`, negative/non-
+integer units, short/non-lowercase hashes, impossible heights/confirmations,
+duplicate or malformed `spent_by`, and unsorted output. They also exercise proxy
+and metadata redirects, slow-drip total timeout, oversized Content-Length and
+chunked cap-plus-one bodies, duplicate nested keys, BOM/bad UTF-8/charset,
+compressed bodies, NaN/Infinity, trailing values, extra fields, and bool-as-int.
+All transport/protocol failures raise and must never become a zero balance.
+Valid empty and multi-output snapshots remain distinguishable.
+Transaction-status tests reject identity/status mismatches and treat transport
+failure as unknown-to-the-service, not chain status `unknown`.
+Tip/block tests reject stale or internally inconsistent anchors. A live tip
+change between the pre-prepare and post-prepare reads is a safe preparation
+failure because no network side effect occurred. Loss of a stored prepared
+tip from the canonical chain is uncertain and globally halts wallet work; an
+already persisted signed transaction is never replaced.
+Batch tests fetch addresses A/B/C at expected tip T and reject all results if B
+returns 409, C returns another tip, the final tip advances, the watched DB set
+changes, or an output/outpoint repeats across address responses.
+
+Verify/review/commit Task 4B1 before Step 4:
+
+```powershell
+go test ./core ./explorer -count=1
+python -m unittest bot.tests.test_explorer -v
+python -m unittest discover -s bot/tests -p "test_*.py" -v
+go test ./... -count=1
+go vet ./...
+git add core/params.go core/chain.go core/core_test.go explorer/explorer.go explorer/explorer_test.go cmd/btc09/main.go cmd/btc09/main_test.go bot/otc/explorer.py bot/tests/test_explorer.py docs/superpowers/plans/2026-07-10-otc-trade-system.md
+git commit -m "Add canonical OTC explorer boundaries"
+```
+
+Generate a Task 4B1 review package and obtain fresh approval before Step 4.
+
+- [ ] **Task 4B Step 4: Write failing prepare/persist/broadcast Go tests**
 
 Add tests that assert:
 
@@ -548,21 +2451,33 @@ func TestWaitForPeersHonorsContext(t *testing.T) {
     if n.WaitForPeers(ctx, 1) { t.Fatal("reported a peer") }
 }
 
-func TestSendJSONContainsFullTxID(t *testing.T) {
-    // exercise the JSON encoder helper with a known 32-byte ID
-    // decode output and assert len(txid) == 64 and broadcast_peers == 1
+func TestPrepareSendDoesNotSubmitOrBroadcast(t *testing.T) {
+    // returns full txid + signed bytes, chain mempool stays empty, zero peer writes
+}
+
+func TestBroadcastPreparedTxUsesExactBytes(t *testing.T) {
+    // decode one prepared tx, submit it, and report the same full txid
+}
+
+func TestDuplicateTxIsNotRegossiped(t *testing.T) {
+    // a cyclic peer graph receives one relay for a newly added tx and none for
+    // an already-known replay
+}
+
+func TestPrepareSendRequiresExactExpectedLiveTip(t *testing.T) {
+    // persisted chain hash/height must exactly match the caller-supplied tip
+}
+
+func TestPrepareSendNeverSelectsRestrictedOutpoint(t *testing.T) {
+    // a larger restricted UTXO is skipped in favor of eligible inputs; fail
+    // safely when eligible inputs cannot cover amount plus fee
+}
+
+func TestWalletSnapshotIncludesPrimaryChangeAndAllKeys(t *testing.T) {
+    // exact integer total/outpoints cover internal primary/change plus every
+    // other wallet key at the expected network/tip
 }
 ```
-
-- [ ] **Step 2: Verify Go RED**
-
-```powershell
-go test ./p2p ./cmd/btc09 -run "TestBroadcastTx|TestWaitForPeers|TestSendJSON" -count=1 -v
-```
-
-Expected: missing functions or failed expectations.
-
-- [ ] **Step 3: Implement peer wait, broadcast count, and JSON output**
 
 Use this P2P contract:
 
@@ -584,70 +2499,213 @@ func (n *Node) BroadcastTx(tx *core.Tx) int {
 }
 ```
 
-Change `broadcast` to return the number of `p.send` calls that return `nil`.
-In `cmdSend`, add `-json` and `-require-broadcast`. When seeds are present,
-start the node and require at least one peer before calling `wallet.Send` when
-`-require-broadcast` is set. Print the full transaction ID and successful peer
-count only after broadcast attempts complete.
+Add the atomic transaction-acceptance result method that distinguishes `added`
+from `already_known`; keep the existing error-only `AcceptTx` wrapper for human
+and compatibility callers. The P2P receive path relays only `added`; an exact
+replay is successful and idempotent but is never re-gossiped. Add a cyclic
+multi-peer test that would fail if duplicates bounce indefinitely.
 
-- [ ] **Step 4: Write failing Python adapter tests**
-
-```python
-# bot/tests/test_wallet.py
-import subprocess
-import unittest
-from unittest.mock import patch
-
-from bot.otc.wallet import SafeSendFailure, UncertainSendFailure, Wallet
-
-
-class WalletTests(unittest.TestCase):
-    def setUp(self):
-        self.wallet = Wallet("btc09", "data", "127.0.0.1:9009")
-
-    @patch("bot.otc.wallet.subprocess.run")
-    def test_parses_structured_broadcast(self, run):
-        run.return_value = subprocess.CompletedProcess([], 0, '{"ok":true,"txid":"' + 'ab'*32 + '","amount_units":100,"fee_units":10,"broadcast_peers":1}\n', '')
-        result = self.wallet.send("address", 100, 10)
-        self.assertEqual(result.broadcast_peers, 1)
-
-    @patch("bot.otc.wallet.subprocess.run", side_effect=subprocess.TimeoutExpired("btc09", 30))
-    def test_timeout_is_uncertain(self, run):
-        with self.assertRaises(UncertainSendFailure):
-            self.wallet.send("address", 100, 10)
-
-    @patch("bot.otc.wallet.subprocess.run")
-    def test_prebroadcast_nonzero_is_safe_failure(self, run):
-        run.return_value = subprocess.CompletedProcess([], 2, '{"ok":false,"stage":"preflight","error":"insufficient_funds"}\n', '')
-        with self.assertRaises(SafeSendFailure):
-            self.wallet.send("address", 100, 10)
-
-    @patch("bot.otc.wallet.subprocess.run")
-    def test_unstructured_nonzero_is_uncertain(self, run):
-        run.return_value = subprocess.CompletedProcess([], 1, '', 'process crashed')
-        with self.assertRaises(UncertainSendFailure):
-            self.wallet.send("address", 100, 10)
-```
-
-- [ ] **Step 5: Implement adapter, verify, and commit**
-
-The adapter must use base-unit-to-decimal formatting without float, invoke:
+Change `broadcast` to return successful peer writes. Refactor the wallet so
+`BuildPayment` selects inputs and signs but does not call `Chain.AcceptTx`;
+`SubmitPayment` validates/submits a previously signed transaction. Every wallet
+load and mutation uses the same cross-process lock. Keep the human `send`
+command compatible while removing its `flag.Float64` path too. The bot uses a
+dedicated wallet and these machine boundaries (machine `NETWORK` is the
+canonical `btc09-mainnet|btc09-regtest` ID):
 
 ```text
-btc09 send -to ADDRESS -amount DECIMAL -fee DECIMAL -datadir DATA -seeds 127.0.0.1:9009 -json -require-broadcast
+btc09 wallet new -wallet-file WALLET -network NETWORK -json
+btc09 wallet snapshot -wallet-file WALLET -datadir DATA -network NETWORK -expected-tip-hash HASH -expected-tip-height HEIGHT -json
+btc09 prepare-send -to ADDRESS -amount DECIMAL -fee DECIMAL -datadir DATA -network NETWORK -wallet-file WALLET -expected-tip-hash HASH -expected-tip-height HEIGHT -exclude-outpoints-json - -json
+btc09 inspect-tx -tx-hex - -network NETWORK -json
+btc09 broadcast-tx -tx-hex - -expected-txid TXID -datadir DATA -network NETWORK -seeds HOSTS -json -require-broadcast
 ```
 
-and reject malformed JSON, short txids, zero broadcast peers, amount mismatch,
-fee mismatch, or any unstructured nonzero exit as uncertain. A failure is safe
-to retry only when the CLI emits valid JSON with `ok=false` and
-`stage=preflight`, before `wallet.Send` is called.
+`wallet snapshot` takes the same interprocess wallet lock, requires its loaded
+chain to equal the expected tip/network, and returns canonical sorted wallet
+addresses plus every mature spendable wallet UTXO (`txid:vout`, integer units),
+an overflow-checked `spendable_units` sum, and a deterministic SHA-256
+`wallet_snapshot_hash` over network, tip, address set, and UTXO set. It includes
+the internal primary/change address even when that address is not attached to an
+order. It has no save, signing, mempool, or network side effect.
+
+`prepare-send` must never start P2P, submit to the mempool, or write to a peer.
+It loads the persisted chain and refuses to sign unless its exact hash/height
+matches the caller's immediately preceding live `GET /api/v1/tip` result. It
+reads a bounded canonical JSON array of lowercase `txid:vout` identities from
+stdin and excludes all of them from coin selection. It returns the matched
+snapshot anchor and the selected inputs so both languages can prove exclusion:
+
+```json
+{"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"prepared","txid":"<64 lowercase hex>","signed_tx_hex":"<lowercase hex>","destination":"<09C address>","amount_units":100,"fee_units":10,"snapshot_tip":{"height":7000,"hash":"<64 lowercase hex>"},"wallet_snapshot_hash":"<64 lowercase hex>","selected_outpoints":["<txid>:0"]}
+```
+
+The parent reads the live tip again after prepare. It attaches the prepared
+transaction only when both live reads and the returned snapshot anchor are
+exactly equal. A changed tip is a safe retry because prepare had no network
+side effect. It commits the exact txid/hex and prepared tip to the reserved
+SQLite transfer (`reserved -> prepared`, WAL `synchronous=FULL`) before invoking
+`broadcast-tx`.
+
+If the FULL commit call raises, the process closes the connection, reopens the
+database, and reads the row before deciding: exact committed bytes/anchor enter
+prepared recovery; a still-reserved row with every signed field NULL is safe to
+retry; mismatch, unreadable state, or partial evidence sets the service health
+to failed and halts the global lane. An injectable Store commit boundary tests
+immediately before COMMIT and immediately after a successful durable COMMIT but
+before return, plus subprocess kills at randomized COMMIT offsets. Classification
+always comes from reopen/read because Python stdlib exposes no WAL-sync hook.
+
+Before every first broadcast or rebroadcast, the parent asks the live block
+endpoint whether the stored prepared tip is still canonical. If not, it moves
+the row to `uncertain`, halts the global wallet lane, and never builds a
+replacement. The broadcast command opens the explicitly selected network and
+datadir, decodes and re-hashes the stored bytes, requires the expected
+transaction to be valid, waits for a peer before initial
+submission, and returns the same txid plus submission/peer-write count:
+
+```json
+{"ok":true,"schema_version":1,"network":"btc09-mainnet","stage":"broadcast","status":"submitted","txid":"<same 64 hex>","peer_writes":1}
+```
+
+The ephemeral broadcaster never reports `mempool` merely because its temporary
+chain accepted the transaction or because a socket write succeeded. After a
+`submitted` result, Python polls the trusted local live transaction endpoint for
+the exact txid; only an observed `mempool` or `confirmed` status promotes the DB
+row to `broadcast`/`confirmed`. If that endpoint already reports mempool or
+canonical before submission, the exact replay is idempotent and may have zero
+new peer writes. A disconnect, zero write for a previously unknown tx, malformed
+result, local-observation timeout, or process crash during broadcast is
+uncertain, but the stored signed transaction can be looked up and rebroadcast
+without building a second payment.
+
+Replace every current `flag.Float64` amount/fee path, including legacy `send`,
+completely. Parse strict
+plain ASCII decimal strings to int64 base units: no sign, exponent, whitespace
+inside, more than eight decimals, zero amount, negative fee, or value above
+21,000,000 09C. Tests include one base unit, eight decimals, maximum supply,
+one unit over, exponent notation, overflow-length input, and decimals known to
+truncate through binary float. No accounting boundary uses float.
+
+Add `-wallet-file` to every key-reading/writing wallet command. Production uses
+`BTC09_WALLET_PATH=/var/lib/btc09-otc/wallet-mainnet.json`, never the chain
+datadir wallet. `wallet new` takes an interprocess lock file, re-reads the wallet
+under that lock, writes a mode-0600 temporary file in the wallet directory,
+fsyncs the file, atomically renames it, fsyncs the directory, and only then
+prints/returns the address. Prepare holds the same lock while reading keys and
+constructing the signed transaction. No command signs from a long-lived cached
+key slice, and `Load` never performs an unlocked implicit first-key write. Add
+subprocess concurrency tests and a
+crash helper killed after temp creation, file sync, rename, and directory sync;
+after each case the wallet is either the complete old file or complete new file,
+never malformed, and no returned address lacks a durable private key.
+Use build-tagged platform primitives: advisory `flock` plus rename/directory
+fsync on Unix, and `LockFileEx` plus write-through replace/handle flush on
+Windows. An unsupported durability primitive is a hard error, not a silent
+best-effort save. Kill a subprocess while it owns the platform lock and prove
+the OS releases the lock so the next process can open the unchanged wallet; do
+not implement ownership with a bare persistent `O_EXCL` sentinel file.
+
+Task 4B2 ends after the Go wallet/P2P/CLI implementation and its platform/crash
+tests are green, before Python Wallet implementation begins:
+
+```powershell
+go test ./core ./p2p ./wallet ./cmd/btc09 -count=1
+go test ./... -count=1
+go vet ./...
+$walletTest = Join-Path $env:TEMP ("bitcoin09-wallet-{0}.test" -f [guid]::NewGuid())
+$cliTest = Join-Path $env:TEMP ("bitcoin09-cli-{0}.test" -f [guid]::NewGuid())
+try {
+  $env:GOOS='linux'; $env:GOARCH='amd64'
+  go test ./wallet -c -o $walletTest
+  if ($LASTEXITCODE -ne 0) { throw "Linux wallet test compile failed" }
+  go test ./cmd/btc09 -c -o $cliTest
+  if ($LASTEXITCODE -ne 0) { throw "Linux CLI test compile failed" }
+} finally {
+  Remove-Item Env:GOOS -ErrorAction SilentlyContinue
+  Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $walletTest,$cliTest -Force -ErrorAction SilentlyContinue
+}
+git add go.mod go.sum core/chain.go core/core_test.go wallet/wallet.go wallet/wallet_test.go wallet/filelock_unix.go wallet/filelock_windows.go wallet/durable_replace_unix.go wallet/durable_replace_windows.go p2p/p2p.go p2p/p2p_test.go cmd/btc09/main.go cmd/btc09/main_test.go
+git commit -m "Add durable OTC wallet commands"
+```
+
+Generate a Task 4B2 review package and obtain fresh approval before Step 5.
+
+- [ ] **Task 4B Step 5: Implement and test the Python wallet adapter**
+
+Use integer base-unit decimal formatting without float and invoke the wallet
+creation, snapshot, prepare, inspect, and broadcast commands above.
+`Wallet.new_address` returns only a
+durably stored address from the dedicated wallet. `Wallet.snapshot` rejects a
+wrong network/tip, duplicate address/outpoint, bad integer sum, malformed hash,
+or noncanonical ordering. `Wallet.prepare` receives the prior typed
+`expected_snapshot`, then first reads
+the live tip and requires it equal the Store claim's common-ledger tip, then
+passes that anchor and the configured Explorer network to the command,
+passes the Store's sorted provisional/restricted outpoints through bounded JSON
+stdin, and validates exact network/amount/fee, full txid,
+bounded canonical signed hex and returned snapshot, then reads the live tip
+again. It accepts only three equal anchors, requires the prepare response's
+wallet snapshot hash equal the immediately preceding locked snapshot, and
+confirms decoding/re-hashing through the CLI agrees. Any selected input present
+in the restricted set is a hard invariant failure, not a retry. An intervening
+address/key or UTXO-set change is a safe pre-attach retry.
+Because prepare has no submission/network path, a killed/failed prepare is safe
+to retry while the DB remains `reserved` and has no signed bytes.
+
+`Wallet.broadcast` accepts only the DB-stored hex, expected txid, and persisted
+prepared tip (with the adapter's configured canonical network), and first
+proves that exact prepared tip remains canonical. Reject malformed/multiple JSON
+values, identity mismatch, zero peer writes for a transaction the trusted node
+did not already know, stderr-only/unstructured failures, missing trusted-node
+observation, or timeout as `UncertainSendFailure`. A prepared exact tx may be
+retried/rebroadcast; it is never replaced. Never include a token, private key,
+seed, signed transaction, or complete subprocess environment in an exception/log.
+
+Task 4 crash tests cover before signing, after signing but before parent
+receipt, after local submission, and after the first peer write. Task 3 owns
+the ambiguous FULL SQLite attach boundary; Tasks 5/6 own the post-broadcast DB
+update crash. Race tests cover disk/live tip
+mismatch, reorg during signing, a new block during signing, and reorg after the
+prepared commit. A funded regtest path passes `btc09-regtest`; a mainnet tip or
+output is rejected when any boundary is configured for regtest and vice versa.
+Every post-commit case reconciles or rebroadcasts only the same
+txid (or halts uncertain if its snapshot lost canonicality); every pre-commit
+case proves no network write.
+Snapshot tests include funds held only at the primary/change address, multiple
+wallet keys, restricted outpoints, exact sum overflow, a new address between
+snapshot and prepare, and wrong network/tip. No test parses the human `balance`
+or `wallet list` output.
+
+Task 4B3 stages only the Python wallet boundary and its integrated tests after
+the Step 5 adversarial suite is green:
+
+```powershell
+python -m unittest bot.tests.test_wallet -v
+python -m unittest discover -s bot/tests -p "test_*.py" -v
+go test ./... -count=1
+git add bot/otc/wallet.py bot/tests/test_wallet.py
+git commit -m "Add fail-closed OTC wallet adapter"
+```
+
+Generate a Task 4B3 review package and obtain fresh approval before Step 6.
+
+- [ ] **Task 4B Step 6: Verify and final range readback**
 
 ```powershell
 go test ./... -count=1
-python -m unittest bot.tests.test_wallet -v
-git add p2p/p2p.go p2p/p2p_test.go cmd/btc09/main.go cmd/btc09/main_test.go bot/otc/wallet.py bot/tests/test_wallet.py
-git commit -m "Add structured idempotent wallet boundary"
+python -m unittest bot.tests.test_explorer bot.tests.test_wallet -v
+python -m unittest discover -s bot/tests -p "test_*.py" -v
+go vet ./...
+$status = git status --short
+if ($status) { $status; throw "Task 4B aggregate gate requires a clean worktree" }
 ```
+
+The aggregate gate expects a clean worktree containing the three already-
+reviewed Task 4B commits on the approved Task 4A base; it creates no fourth
+implementation commit. Task 4B must not rewrite Task 4A money or persistence
+invariants. Obtain one final range readback approval before Task 5 begins.
 
 ---
 
@@ -660,7 +2718,9 @@ git commit -m "Add structured idempotent wallet boundary"
 
 **Interfaces:**
 - Produces: `TradeService.create_sell`, `create_buy`, `accept`, `check_deposit`, `confirm_sent`, `confirm_received`, `list_open`, `mine`.
-- Consumes: `Store`, `Wallet`, explorer balance callable, fresh-address callable, and a clock through constructor injection.
+- Consumes: `Store`, `Wallet`, the strict `Explorer` snapshot adapter,
+  fresh-address callable, confirmation-depth configuration, and a clock through
+  constructor injection.
 
 - [ ] **Step 1: Write failing WTS/WTB tests**
 
@@ -670,7 +2730,7 @@ Create real temporary SQLite stores and small fake boundary adapters. Cover:
 def test_wts_requires_deposit_before_listing():
     order = service.create_sell(seller_id=1, net_amount=100_000_000, total_price="2", asset="AUD", method="PayID", network=None)
     assert order.state == "awaiting_deposit"
-    explorer.set_balance(order.deposit_addr, order.deposit_required_units)
+    explorer.set_outputs(order.deposit_addr, [confirmed_output(order.deposit_required_units)])
     assert service.check_deposit(order.order_id, actor_id=1).state == "open"
 
 def test_wtb_assigns_seller_then_requires_deposit():
@@ -696,19 +2756,34 @@ Expected: missing `TradeService`.
 
 `TradeService` returns domain result objects/events and never imports Discord.
 WTS creation creates its deposit address immediately. WTB creation is open with
-the buyer assigned; acceptance atomically assigns the seller and creates the
-deposit address. `check_deposit` compares integer spendable units to the quoted
-requirement. Underpayment stays waiting; overpayment creates an excess refund
-liability; late payment creates a recovery event and does not reopen the order.
+the buyer assigned; acceptance preallocates an address, then atomically assigns
+the winning seller/address/deadline. `check_deposit` consumes one complete
+canonical output snapshot and reconciles stable outpoints, never a balance.
+Underpayment stays waiting. Fully credited WTS becomes `open`; fully credited
+WTB becomes `matched` because both roles are already assigned. Overpayment stays
+an exact residual liability; late payment creates a recovery event and does not
+reopen, rematch, or silently disappear. All known deposit addresses, including
+cancelled/expired/completed orders, remain in the watcher set.
 
 - [ ] **Step 4: Add confirmation/release tests and implementation**
 
 Test that buyer `confirm_sent` alone does not release, seller
 `confirm_received` alone does not release, either order of both confirmations
-creates exactly one reserved transfer, and 20 concurrent second confirmations
-produce one wallet call. The service updates `broadcast` only from a valid
-`BroadcastResult`, `transfer_failed_safe` from `SafeSendFailure`, and
-`transfer_uncertain` from `UncertainSendFailure`.
+creates exactly one queued transfer, and 20 concurrent second confirmations plus
+workers produce one global claim, one prepare, one durable signed-tx attachment,
+and one exact broadcast. Before invoking the wallet,
+the service completes the all-watched-address common-tip barrier, verifies
+aggregate spendable wallet units minus provisional/restricted units cover all
+customer liabilities/platform commitments, excludes those provisional
+outpoints from coin selection, and verifies the selected order covers its own
+immutable payout/fee. It does not add that fee again. The service updates
+`prepared` only after `Wallet.prepare` returns a valid result and the Store
+commits exact txid/signed hex with FULL durability. It then calls
+`Wallet.broadcast` only with those stored bytes. A safe prepare failure becomes
+`transfer_failed_safe`; any broadcast ambiguity becomes `transfer_uncertain`.
+On startup a signed prepared row is reconciled/rebroadcast using the same tx;
+an unsigned reserved row is safe to requeue only after the old prepare child is
+known dead. No recovery path builds a replacement transaction.
 
 - [ ] **Step 5: Verify and commit**
 
@@ -736,16 +2811,34 @@ git commit -m "Build two-sided OTC order service"
 Cover these exact cases with a temporary database:
 
 - Two simultaneous funded cancellations invoke the wallet once.
+- Cancelling an underpaid order with credited partial units creates one recovery
+  refund (net of its disclosed network fee) when positive; residual `<= fee`
+  enters `recovery_hold` with liability/watch intact until a top-up.
 - Two simultaneous admin resolutions invoke the wallet once.
 - A matched timeout changes to `disputed` and does not call the wallet.
-- A `reserved` transfer on restart blocks new order creation until reconciled.
+- A `queued` transfer on restart is safe for a worker to claim. A `reserved`
+  transfer has no signed bytes/network side effect; after systemd confirms the
+  old prepare child is dead, the same operation becomes failed-safe and requeues.
+- A `prepared` transfer on restart looks up and, if needed, rebroadcasts only its
+  DB-stored signed transaction. Crashes after local submit, first peer write, or
+  before the DB broadcast update all retain one txid and never build another.
 - A `broadcast` transfer with a transaction present in the explorer becomes
-  `completed` or `refunded` according to kind.
+  `completed` or `refunded` according to kind only at required confirmation depth.
 - An unknown `broadcast` transaction remains a liability and becomes
   `transfer_uncertain` after the configured reconciliation deadline.
-- A late deposit after cancellation creates `excess_refund`/recovery liability.
+- A previously confirmed transfer that disappears in a reorg becomes uncertain;
+  its credit allocation stops discharging liability and earned fees reverse.
+- A late deposit after cancellation creates `recovery_refund` liability while
+  preserving the terminal main-order state; dust is a derived recovery hold.
+- A credited deposit output that becomes noncanonical, or an output spent by an
+  unknown transaction, retains liability and fails health closed.
+- A failed-safe fee withdrawal can be cancelled by an admin once; cancellation
+  from any other state/customer kind is rejected. If its earning release later
+  reorgs after a confirmed fee withdrawal, negative fee availability closes
+  health instead of being clamped.
 - `system_health().accepting_orders` is false for DB failure, explorer failure,
-  wallet balance below liability, or any uncertain transfer.
+  wallet balance below customer liability plus pending platform commitments,
+  any uncertain transfer, any post-credit reorg, or unknown custodian spend.
 
 - [ ] **Step 2: Verify RED**
 
@@ -757,9 +2850,27 @@ python -m unittest bot.tests.test_service_recovery -v
 
 Admin resolution requires `winner in {'buyer','seller'}` and a 10-500 character
 reason. The store writes the reason only to private audit JSON, never the public
-feed. Cancellation and resolution reserve transfer rows before wallet calls.
+feed. Cancellation and resolution queue immutable transfer rows before any
+wallet call; only the global claim winner may invoke the wallet.
 `expire_orders` uses conditional updates and only opens disputes.
 `reconcile_transfers` is safe to run at startup and every 30 seconds.
+
+Cancellation follows a side/state matrix:
+
+- WTS awaiting deposit with zero credit cancels without transfer; partial credit
+  is reclassified/allocated to one recovery refund or dust hold; funded open WTS queues the
+  main seller refund.
+- A WTS taker buyer may leave `matched -> open` only before either payment flag;
+  the same seller escrow and watched deposit address remain attached.
+- Unaccepted WTB cancels without transfer. Once a seller accepts, the order is
+  never reopened: zero-credit cancellation closes it, while partial/full credit
+  refunds that seller (or remains in dust hold) and closes it after canonical confirmation. A new WTB must
+  be posted for another seller/address.
+- Once either party records payment movement, both sides require dispute/admin
+  resolution; no timeout or cancellation auto-pays or auto-refunds.
+
+Stress every matrix row with concurrent cancel/accept/confirm attempts and prove
+old WTB deposit addresses remain watched for late recovery credits.
 
 - [ ] **Step 4: Stress and commit**
 
@@ -797,6 +2908,9 @@ Use small fake interaction/user objects. Assert:
 - a duplicate button interaction returns the current state and does not call
   the service twice;
 - fund-moving actions require an ephemeral confirmation button.
+- `OTC_ACCEPTING_ORDERS=0` blocks new create/accept actions with the same clear
+  English maintenance notice used during the upgrade, while read-only status,
+  dispute, reconciliation, and safe recovery paths remain available.
 
 - [ ] **Step 2: Verify RED**
 
@@ -807,10 +2921,12 @@ python -m unittest bot.tests.test_discord_ui -v
 - [ ] **Step 3: Implement grouped commands and components**
 
 Use `app_commands.Group(name="trade", description="Buy and sell Bitcoin 09")`.
-Use autocomplete for the common asset list and accept validated custom text.
+Use English autocomplete for AUD, USD, EUR, GBP, CNY, JPY, USDT, USDC, BTC,
+ETH, SOL, LTC, DOGE, and BNB, and accept validated custom asset text.
 Commands must defer before explorer/wallet work and use follow-ups after defer.
 Persistent button `custom_id` values contain only action and numeric order ID,
-never user IDs or addresses.
+never user IDs or addresses. Stable Discord interaction IDs become operation
+keys where an admin fee/recovery action needs lifetime replay protection.
 
 Keep `/sell`, `/orders`, `/buy`, `/deposit`, `/confirm`, `/cancel`, `/dispute`,
 `/setaddress`, and `/balance` as one-release wrappers that call the same service.
@@ -859,6 +2975,14 @@ public timestamps are present.
 Test atomic writing by patching `os.replace`, verifying the temporary file is
 fsynced and replaced in the same directory, and confirming readers never see
 partial JSON.
+The default production feed path is
+`/var/lib/btc09-otc/public/otc-bot-feed.json`; the bot writes it atomically and
+the local feed service has read-only access. No mutable feed or database remains
+under `/opt/btc09` once the hardened services are enabled.
+The feed reparses the stored canonical total with `Decimal`, derives net 09C
+from integer units, and emits price-per-09C as a canonical decimal string; it
+never converts either value through binary float. A malformed direct fixture
+fails health/feed generation closed instead of publishing a misleading price.
 
 - [ ] **Step 2: Write translation adapter tests**
 
@@ -876,9 +3000,13 @@ python -m unittest bot.tests.test_public_feed bot.tests.test_translation -v
 python -m unittest discover -s bot/tests -p "test_*.py" -v
 ```
 
-Add `/healthz` fields: database integrity, explorer reachable, wallet
-spendable units, liability units, uncertain transfer count, feed age seconds,
-and `accepting_orders`. Bind the feed service to `127.0.0.1` only; nginx exposes
+Add `/healthz` fields: database/foreign-key integrity, explorer snapshot and tx
+status reachability, wallet spendable units, customer liability, pending
+platform outflows, provisional/restricted units, common ledger tip and stale
+watched-address count, gross/available fee units (including negative invariant),
+queued/reserved/prepared/broadcast/uncertain counts, credited noncanonical and
+unknown-spend counts, feed age seconds, and `accepting_orders`. Bind the feed
+service to `127.0.0.1` only; nginx exposes
 the sanitized feed but keeps detailed health local.
 
 - [ ] **Step 4: Commit**
@@ -910,6 +3038,8 @@ The scripts must accept explicit paths and fail closed. `backup-otc.sh` runs
 hashes, and refuses a destination outside `/var/backups/btc09`. `check-otc-health.sh`
 requires `integrity=ok`, `accepting_orders` boolean, and zero unresolved schema
 migrations.
+The production wallet argument is the dedicated
+`/var/lib/btc09-otc/wallet-mainnet.json`, never a general node-datadir wallet.
 
 Run expected RED while files are absent:
 
@@ -928,8 +3058,15 @@ Add:
 ```ini
 User=btc09-otc
 Group=btc09-otc
+Environment=OTC_ACCEPTING_ORDERS=0
+Environment=DB_PATH=/var/lib/btc09-otc/otc_bot.db
+Environment=BTC09_WALLET_PATH=/var/lib/btc09-otc/wallet-mainnet.json
+Environment=PUBLIC_FEED_PATH=/var/lib/btc09-otc/public/otc-bot-feed.json
+KillMode=control-group
+TimeoutStopSec=15
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
 ProtectKernelTunables=true
@@ -937,9 +3074,31 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 LockPersonality=true
 RestrictSUIDSGID=true
-ReadWritePaths=/var/lib/btc09-otc /opt/btc09/data
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/btc09-otc
+ReadOnlyPaths=/opt/btc09/data
 UMask=0077
 ```
+
+The feed service sets
+`OTC_FEED_PATH=/var/lib/btc09-otc/public/otc-bot-feed.json` and receives only
+read access to that file. Change the Python defaults in Tasks 7/8 to these same
+state paths so an omitted environment variable cannot fall back into the
+read-only application tree.
+
+`KillMode=control-group` is part of the wallet safety contract: after a service
+restart, no old prepare/broadcast child may survive. Startup verifies there is
+at most one reserved/prepared/broadcast lane row, reconciles it before enabling
+the worker, and never logs signed transaction hex.
+
+Add an actual systemd integration test, not only a unit assertion: a test
+adapter starts a long-lived child in the service cgroup and records both parent
+and child PIDs; `systemctl restart btc09-otc-bot` must make both old PIDs
+disappear before the new worker reports recovery complete. Then inject one
+prepared row and prove the restarted service reconciles only its exact txid. A
+surviving old child, overlapping worker generation, or claim before recovery
+keeps intake disabled and fails deployment.
 
 Keep `/etc/btc09/discord.env` root-owned mode 600 and expose needed values with
 a root-owned environment file readable through the service manager, not by
@@ -948,12 +3107,16 @@ making the file world-readable.
 - [ ] **Step 3: Test migration on a copy and deploy disabled**
 
 ```powershell
-ssh root@178.128.105.41 "systemctl stop btc09-otc-bot; /opt/btc09/bitcoin09/deploy/scripts/backup-otc.sh /opt/btc09/otc_bot.db /opt/btc09/data/wallet-mainnet.json /var/backups/btc09; cp /opt/btc09/otc_bot.db /tmp/otc-migration-test.db; OTC_ORDERS_ENABLED=0 DB_PATH=/tmp/otc-migration-test.db /opt/btc09/venv/bin/python -m bot.otc.store; sqlite3 /tmp/otc-migration-test.db 'PRAGMA integrity_check'"
+ssh root@178.128.105.41 "systemctl stop btc09-otc-bot; /opt/btc09/bitcoin09/deploy/scripts/backup-otc.sh /opt/btc09/otc_bot.db /opt/btc09/data/wallet-mainnet.json /var/backups/btc09; install -d -o btc09-otc -g btc09-otc -m 0700 /var/lib/btc09-otc/public; sqlite3 /opt/btc09/otc_bot.db '.backup /var/lib/btc09-otc/otc_bot.db'; chown btc09-otc:btc09-otc /var/lib/btc09-otc/otc_bot.db; chmod 0600 /var/lib/btc09-otc/otc_bot.db; sqlite3 /var/lib/btc09-otc/otc_bot.db '.backup /tmp/otc-migration-test.db'; OTC_ACCEPTING_ORDERS=0 DB_PATH=/tmp/otc-migration-test.db /opt/btc09/venv/bin/python -m bot.otc.store; sqlite3 /tmp/otc-migration-test.db 'PRAGMA integrity_check'"
 ```
 
 Expected: backup hashes written, migration exit 0, integrity `ok`, original DB
-untouched. Deploy code and dependencies, set `OTC_ORDERS_ENABLED=0`, start bot,
-and read back command sync plus detailed local health.
+untouched. Verify the legacy aggregate is still zero, then create a fresh
+dedicated escrow wallet at `/var/lib/btc09-otc/wallet-mainnet.json` with the
+crash-durable command via `runuser -u btc09-otc -- ...` (or chown the completed
+mode-0600 file before startup); do not copy the general node wallet into escrow. Deploy
+code and dependencies, set `OTC_ACCEPTING_ORDERS=0`, start bot, and read back
+command sync plus detailed local health.
 
 - [ ] **Step 4: Verify services and commit deployment files**
 
@@ -985,7 +3148,12 @@ Expected: both active, health JSON valid, no traceback/token/private data in log
 Use a separate pilot seller and buyer address and the smallest practical net
 amount. Record before-balances, deposit-required units, deposit txid, release
 txid, after-balances, transfer rows, order state, and liability total. Restart
-the bot after deposit and before confirmation to prove recovery. The pass
+the bot after deposit and before confirmation to prove recovery. In a disabled,
+operator-controlled pilot run, use the tested one-shot hold immediately after
+the FULL `prepared` DB commit, stop/restart the service, then prove reconciliation
+broadcasts the stored tx bytes and produces the same single txid. The hold must
+refuse to activate while public intake is enabled and must be removed/unset
+before launch. The pass
 condition is buyer receives the exact net amount, liability returns to zero,
 and the network-fee buffer reconciles exactly.
 
@@ -998,7 +3166,7 @@ Refund: funded open WTS cancels once under two simultaneous attempts, seller
 receives the quoted refundable amount, and one txid exists.
 
 Dispute: matched order times out or is disputed, two simultaneous admin
-resolutions produce one reserved transfer and one txid. Use a reason that
+resolutions produce one queued/prepared operation and one txid. Use a reason that
 contains no payment credentials.
 
 - [ ] **Step 3: Update website and Discord copy**
@@ -1025,7 +3193,7 @@ new values in logs, commits, or task output.
 Set explicit production limits:
 
 ```text
-OTC_ORDERS_ENABLED=1
+OTC_ACCEPTING_ORDERS=1
 FEE_BPS=0
 MAX_ORDER_09C=1000
 MAX_TOTAL_LIABILITY_09C=5000

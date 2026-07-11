@@ -7,12 +7,19 @@
 // 10-minute blocks, fair launch, no premine, unspendable genesis reward.
 package core
 
-import "math/big"
+import (
+	"errors"
+	"fmt"
+	"math/big"
+)
 
 const (
-	CoinName     = "Bitcoin 09"
-	Ticker       = "09C"
-	UnitsPerCoin = 100_000_000 // smallest unit, like satoshis
+	CoinName               = "Bitcoin 09"
+	Ticker                 = "09C"
+	MainNetMachineID       = "btc09-mainnet"
+	RegTestMachineID       = "btc09-regtest"
+	UnitsPerCoin           = 100_000_000 // smallest unit, like satoshis
+	MaxMoneyUnits    int64 = 21_000_000 * UnitsPerCoin
 
 	InitialRewardUnits = 50 * UnitsPerCoin
 	HalvingInterval    = 210_000 // blocks, Bitcoin-classic
@@ -20,6 +27,28 @@ const (
 
 	MaxBlockBytes = 1_000_000 // 1 MB, Bitcoin-classic
 )
+
+// ErrMoneyRange marks consensus rejection caused by a negative, overflowing,
+// or above-maximum monetary value or aggregate.
+var ErrMoneyRange = errors.New("money amount out of range")
+
+// MoneyRange reports whether value is a valid consensus monetary amount.
+func MoneyRange(value int64) bool {
+	return value >= 0 && value <= MaxMoneyUnits
+}
+
+// checkedAddMoney adds two already-denominated monetary amounts without ever
+// overflowing int64 or crossing the consensus money range.
+func checkedAddMoney(left, right int64) (int64, bool) {
+	if !MoneyRange(left) || !MoneyRange(right) || left > MaxMoneyUnits-right {
+		return 0, false
+	}
+	return left + right, true
+}
+
+func moneyRangeError(detail string) error {
+	return fmt.Errorf("%w: %s", ErrMoneyRange, detail)
+}
 
 // Params defines a network (mainnet or regtest for local testing).
 type Params struct {
@@ -39,34 +68,60 @@ type Params struct {
 	FutureDrift     int64 // max seconds a block time may be ahead of local clock
 }
 
-var MainNet = Params{
-	Name:             "mainnet",
-	NetMagic:         0xB7C09001,
-	TargetBlockTime:  600, // 10 minutes, Bitcoin-classic
-	RetargetInterval: 2016, // Bitcoin-classic, ~2 weeks at target rate
-	CoinbaseMaturity: 100, // Bitcoin-classic
-	MaxTargetBits:    0x1f00ffff,
-	ArgonMemKiB:      64 * 1024, // 64 MiB per hash attempt
-	ArgonTime:        1,
-	GenesisTime:      1783274400, // 2026-07-05 18:00:00 UTC, launch day
-	GenesisNonce:     20214,      // mined 2026-07-06; genesis id ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f
-	GenesisHeadline:  "the coin that you can mine like it's 2009",
-	FutureDrift:      2 * 3600,
+func canonicalMainNetParams() Params {
+	return Params{
+		Name:             "mainnet",
+		NetMagic:         0xB7C09001,
+		TargetBlockTime:  600,  // 10 minutes, Bitcoin-classic
+		RetargetInterval: 2016, // Bitcoin-classic, ~2 weeks at target rate
+		CoinbaseMaturity: 100,  // Bitcoin-classic
+		MaxTargetBits:    0x1f00ffff,
+		ArgonMemKiB:      64 * 1024, // 64 MiB per hash attempt
+		ArgonTime:        1,
+		GenesisTime:      1783274400, // 2026-07-05 18:00:00 UTC, launch day
+		GenesisNonce:     20214,      // mined 2026-07-06; genesis id ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f
+		GenesisHeadline:  "the coin that you can mine like it's 2009",
+		FutureDrift:      2 * 3600,
+	}
 }
 
-var RegTest = Params{
-	Name:             "regtest",
-	NetMagic:         0xB7C09BAD,
-	TargetBlockTime:  1,
-	RetargetInterval: 8,
-	CoinbaseMaturity: 2,
-	MaxTargetBits:    0x207fffff, // ~1 in 2 hashes wins
-	ArgonMemKiB:      1024,       // 1 MiB, fast for tests
-	ArgonTime:        1,
-	GenesisTime:      1751738400,
-	GenesisNonce:     0,
-	GenesisHeadline:  "regtest genesis",
-	FutureDrift:      2 * 3600,
+func canonicalRegTestParams() Params {
+	return Params{
+		Name:             "regtest",
+		NetMagic:         0xB7C09BAD,
+		TargetBlockTime:  1,
+		RetargetInterval: 8,
+		CoinbaseMaturity: 2,
+		MaxTargetBits:    0x207fffff, // ~1 in 2 hashes wins
+		ArgonMemKiB:      1024,       // 1 MiB, fast for tests
+		ArgonTime:        1,
+		GenesisTime:      1751738400,
+		GenesisNonce:     0,
+		GenesisHeadline:  "regtest genesis",
+		FutureDrift:      2 * 3600,
+	}
+}
+
+var MainNet = canonicalMainNetParams()
+
+var RegTest = canonicalRegTestParams()
+
+// CanonicalNetworkID returns the stable machine identity for an exact,
+// canonical consensus parameter set. Names alone are intentionally
+// insufficient because machine-facing data must never cross networks whose
+// consensus rules differ.
+func CanonicalNetworkID(p *Params) (string, error) {
+	if p == nil {
+		return "", errors.New("nil network params")
+	}
+	switch *p {
+	case canonicalMainNetParams():
+		return MainNetMachineID, nil
+	case canonicalRegTestParams():
+		return RegTestMachineID, nil
+	default:
+		return "", fmt.Errorf("noncanonical network params %q", p.Name)
+	}
 }
 
 // MaxTarget returns the easiest-allowed PoW target for the network.
