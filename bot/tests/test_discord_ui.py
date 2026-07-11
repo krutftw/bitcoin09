@@ -690,6 +690,44 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await bot.close()
 
+    async def test_disabled_registration_marks_only_blocked_new_order_commands_paused(
+        self,
+    ) -> None:
+        ui = DiscordTradeUI(
+            self.service, admin_ids={9001}, accepting_orders=False, executor=self._run
+        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=".*asyncio.iscoroutinefunction.*",
+                category=DeprecationWarning,
+            )
+            bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+            try:
+                group = register_trade_ui(bot, ui)
+                descriptions = {
+                    command.name: command.description for command in group.commands
+                }
+                self.assertTrue(group.description.startswith("PAUSED:"))
+                for name in ("sell", "buy", "accept"):
+                    self.assertTrue(descriptions[name].startswith("PAUSED:"))
+                self.assertIn("new offers paused", descriptions["list"].lower())
+                for name in ("deposit", "confirm-sent", "confirm-received", "dispute"):
+                    self.assertFalse(descriptions[name].startswith("PAUSED:"))
+
+                for name in ("sell", "buy"):
+                    command = bot.tree.get_command(name)
+                    self.assertIsNotNone(command)
+                    self.assertTrue(command.description.startswith("PAUSED:"))
+                orders = bot.tree.get_command("orders")
+                self.assertIsNotNone(orders)
+                self.assertIn("new offers paused", orders.description.lower())
+                deposit = bot.tree.get_command("deposit")
+                self.assertIsNotNone(deposit)
+                self.assertFalse(deposit.description.startswith("PAUSED:"))
+            finally:
+                await bot.close()
+
     async def test_restart_registers_persistent_views_for_durable_orders(self) -> None:
         class ViewBot:
             def __init__(self) -> None:

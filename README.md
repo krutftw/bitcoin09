@@ -196,11 +196,11 @@ Any node can serve its own explorer with `-explorer :8009`.
 
 There is no official 09C price. Early trading is community OTC only.
 
-Discord has `#💱-otc-trading` for quick negotiation and an optional OTC escrow
-bot for small trades. The bot can hold the seller's 09C, verify the order's
-deposit address, and release after both sides confirm. Payment in USDT/BTC/fiat
-still happens directly between buyer and seller, so disputes still need human
-review.
+Discord has `#💱-otc-trading` for English WTB/WTS negotiation. New bot escrow
+orders are paused while the replacement trade system completes safety testing.
+Do not send 09C to an old bot deposit address. The planned capped 0% pilot will
+hold 09C only; AUD, USD, CNY, USDT, USDC, BTC, ETH, and custom settlement funds
+will move directly between buyer and seller. Disputes still need human review.
 
 The public OTC board at https://btc09.org/markets.html lets
 users draft buy offers, sell offers, and completed-trade references on the

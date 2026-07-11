@@ -972,9 +972,17 @@ async def register_persistent_order_views(
 
 
 def register_trade_ui(bot: Any, controller: DiscordTradeUI) -> app_commands.Group:
-    group = app_commands.Group(name="trade", description="Buy and sell Bitcoin 09")
+    pause_prefix = "" if controller.accepting_orders else "PAUSED: "
+    group = app_commands.Group(
+        name="trade",
+        description=(
+            "Buy and sell Bitcoin 09"
+            if controller.accepting_orders
+            else "PAUSED: new Bitcoin 09 OTC offers"
+        ),
+    )
 
-    @group.command(name="sell", description="Create a WTS offer")
+    @group.command(name="sell", description=f"{pause_prefix}Create a WTS offer")
     @app_commands.autocomplete(asset=_asset_autocomplete)
     async def trade_sell(interaction: discord.Interaction, amount: str | None = None, total_price: str | None = None, asset: str | None = None, method: str | None = None, network: str | None = None, receive_address: str | None = None) -> None:
         if None in (amount, total_price, asset, method):
@@ -982,7 +990,7 @@ def register_trade_ui(bot: Any, controller: DiscordTradeUI) -> app_commands.Grou
             return
         await controller.create_sell(interaction, amount, total_price, asset, method, network, receive_address)
 
-    @group.command(name="buy", description="Create a WTB offer")
+    @group.command(name="buy", description=f"{pause_prefix}Create a WTB offer")
     @app_commands.autocomplete(asset=_asset_autocomplete)
     async def trade_buy(interaction: discord.Interaction, amount: str | None = None, total_price: str | None = None, asset: str | None = None, method: str | None = None, network: str | None = None, receive_address: str | None = None) -> None:
         if None in (amount, total_price, asset, method):
@@ -990,7 +998,14 @@ def register_trade_ui(bot: Any, controller: DiscordTradeUI) -> app_commands.Grou
             return
         await controller.create_buy(interaction, amount, total_price, asset, method, network, receive_address)
 
-    @group.command(name="list", description="List open WTS and WTB offers")
+    @group.command(
+        name="list",
+        description=(
+            "List open WTS and WTB offers"
+            if controller.accepting_orders
+            else "List existing WTS and WTB offers (new offers paused)"
+        ),
+    )
     async def trade_list(interaction: discord.Interaction) -> None:
         await controller.list_orders(interaction)
 
@@ -998,7 +1013,7 @@ def register_trade_ui(bot: Any, controller: DiscordTradeUI) -> app_commands.Grou
     async def trade_view(interaction: discord.Interaction, order_id: int) -> None:
         await controller.view_order(interaction, order_id)
 
-    @group.command(name="accept", description="Accept an open order")
+    @group.command(name="accept", description=f"{pause_prefix}Accept an open order")
     async def trade_accept(interaction: discord.Interaction, order_id: int, receive_address: str | None = None) -> None:
         await controller.accept(interaction, order_id, receive_address)
 
@@ -1065,17 +1080,29 @@ def register_trade_ui(bot: Any, controller: DiscordTradeUI) -> app_commands.Grou
 
 def _register_legacy_wrappers(bot: Any, controller: DiscordTradeUI) -> None:
     tree = bot.tree
+    pause_prefix = "" if controller.accepting_orders else "PAUSED: "
 
-    @tree.command(name="sell", description="Compatibility wrapper; use /trade sell")
+    @tree.command(
+        name="sell", description=f"{pause_prefix}Compatibility wrapper; use /trade sell"
+    )
     @app_commands.autocomplete(asset=_asset_autocomplete)
     async def sell(interaction: discord.Interaction, amount: str, total_price: str, asset: str, method: str, network: str | None = None, receive_address: str | None = None) -> None:
         await controller.create_sell(interaction, amount, total_price, asset, method, network, receive_address)
 
-    @tree.command(name="orders", description="Compatibility wrapper; use /trade list")
+    @tree.command(
+        name="orders",
+        description=(
+            "Compatibility wrapper; use /trade list"
+            if controller.accepting_orders
+            else "Compatibility wrapper; use /trade list (new offers paused)"
+        ),
+    )
     async def orders(interaction: discord.Interaction) -> None:
         await controller.list_orders(interaction)
 
-    @tree.command(name="buy", description="Compatibility wrapper; use /trade accept")
+    @tree.command(
+        name="buy", description=f"{pause_prefix}Compatibility wrapper; use /trade accept"
+    )
     async def buy(interaction: discord.Interaction, order_id: int, receive_address: str | None = None) -> None:
         await controller.accept(interaction, order_id, receive_address)
 
