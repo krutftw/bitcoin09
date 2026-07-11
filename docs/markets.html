@@ -368,7 +368,7 @@ code {
 <img src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
 <div>
 <h1>09C OTC Board</h1>
-<p class="tag">Public WTB/WTS records are open. New Discord bot escrow orders are paused during controlled safety testing.</p>
+<p class="tag">Public WTB/WTS records are open. The replacement bot is staged, but new escrow orders remain paused pending credential rotation and the funded pilot.</p>
 </div>
 </div>
 <div class="wrap nav">
@@ -379,7 +379,7 @@ code {
 <main>
 <div class="wrap">
 <div class="notice">
-<strong>Escrow pilot paused.</strong> This page is a public noticeboard, not an exchange or escrow. Do not send 09C to an old bot deposit address. The replacement will be announced after funded testing; it will hold 09C only, while fiat, stablecoins, BTC, ETH, and other payment funds move directly between buyer and seller.
+<strong>Escrow pilot paused.</strong> This page is a public noticeboard, not an exchange or escrow. Do not send 09C to an old bot deposit address. Disabled production staging is complete, but the replacement will be announced only after credential rotation and funded testing pass. It will hold 09C only, while fiat, stablecoins, BTC, ETH, and other payment funds move directly between buyer and seller.
 </div>
 
 <section class="tape" aria-live="polite">
@@ -717,7 +717,7 @@ function renderBotFeed(data) {
   note.className = 'muted';
   note.textContent = botRows.length
     ? 'Showing sanitized historical Discord escrow orders. New orders are paused; no user IDs, wallet addresses, or payment details are published.' + (generated ? ' Last sync: ' + generated + '.' : '')
-    : 'No public escrow orders. New bot orders are paused during controlled safety testing.';
+    : 'No public escrow orders. The replacement is staged, but new bot orders remain paused pending credential rotation and the funded pilot.';
   list.innerHTML = botRows.slice(0, 20).map(renderBotRow).join('');
 }
 
