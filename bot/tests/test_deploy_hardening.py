@@ -1517,9 +1517,53 @@ class NginxReadinessTests(unittest.TestCase):
             "audit_headers",
             "https://btc09.org/otc-bot-feed.json",
             "https://btc09.org/otc-feed-healthz",
-            'health.stdout == "404"',
+            'health.stdout != "404"',
         ):
             self.assertIn(fragment, source)
+
+    def test_live_probe_records_bounded_failure_category(self) -> None:
+        module = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            probe = module.LocalTlsProbe(
+                curl="curl",
+                headers_path=Path(directory) / "headers",
+                audit_headers=lambda _headers: None,
+                clock=lambda: 0.0,
+            )
+            probe._run = MagicMock(
+                return_value=subprocess.CompletedProcess([], 7, "", "connection failed")
+            )
+
+            self.assertFalse(probe(1.0))
+            self.assertEqual(probe.last_failure, "feed transport")
+
+    def test_partial_success_timeout_reports_incomplete_streak(self) -> None:
+        module = self._module()
+        now = [0.0]
+        outcomes = iter((False, True, True))
+
+        class Probe:
+            last_failure: str | None = "feed headers"
+
+            def __call__(self, _remaining: float) -> bool:
+                outcome = next(outcomes)
+                self.last_failure = None if outcome else "feed headers"
+                return outcome
+
+        probe = Probe()
+        ready = module.wait_until_ready(
+            probe,
+            timeout=0.75,
+            consecutive=3,
+            interval=0.25,
+            clock=lambda: now[0],
+            pause=lambda seconds: now.__setitem__(0, now[0] + seconds),
+        )
+
+        self.assertFalse(ready)
+        self.assertEqual(
+            module.readiness_failure_reason(probe), "readiness streak timeout"
+        )
 
 
 class CredentialBoundaryTests(unittest.TestCase):

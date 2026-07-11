@@ -84,6 +84,7 @@ class LocalTlsProbe:
         self.headers_path = headers_path
         self.audit_headers = audit_headers
         self.clock = clock
+        self.last_failure: str | None = "not probed"
 
     @staticmethod
     def _curl_timeout(deadline: float, clock: Callable[[], float]) -> float:
@@ -129,10 +130,19 @@ class LocalTlsProbe:
                 ],
                 deadline,
             )
-            if feed.returncode != 0 or self.clock() >= deadline:
+            if feed.returncode != 0:
+                self.last_failure = "feed transport"
                 return False
-            self.audit_headers(self.headers_path.read_text(encoding="ascii"))
             if self.clock() >= deadline:
+                self.last_failure = "feed deadline"
+                return False
+            try:
+                self.audit_headers(self.headers_path.read_text(encoding="ascii"))
+            except (OSError, UnicodeError, ValueError):
+                self.last_failure = "feed headers"
+                return False
+            if self.clock() >= deadline:
+                self.last_failure = "header deadline"
                 return False
             health = self._run(
                 [
@@ -145,15 +155,31 @@ class LocalTlsProbe:
                 ],
                 deadline,
             )
-            return health.returncode == 0 and health.stdout == "404"
-        except (OSError, UnicodeError, ValueError, subprocess.SubprocessError):
+            if health.returncode != 0:
+                self.last_failure = "health transport"
+                return False
+            if health.stdout != "404":
+                self.last_failure = "health status"
+                return False
+            self.last_failure = None
+            return True
+        except subprocess.SubprocessError:
+            self.last_failure = "probe timeout"
             return False
+        except (OSError, UnicodeError, ValueError):
+            self.last_failure = "probe io"
+            return False
+
+
+def readiness_failure_reason(probe: LocalTlsProbe) -> str:
+    return probe.last_failure or "readiness streak timeout"
 
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2 or getattr(os, "geteuid", lambda: -1)() != 0:
         print("OTC nginx readiness failed", file=sys.stderr)
         return 1
+    failure = "setup"
     try:
         patch = _load_patch_helper(Path(argv[1]))
         curl = shutil.which("curl")
@@ -168,10 +194,11 @@ def main(argv: list[str]) -> int:
                 audit_headers=patch.audit_tls_headers,
             )
             ready = wait_until_ready(probe)
+            failure = readiness_failure_reason(probe)
     except (OSError, ValueError, ImportError):
         ready = False
     if not ready:
-        print("OTC nginx readiness failed", file=sys.stderr)
+        print(f"OTC nginx readiness failed: {failure}", file=sys.stderr)
         return 1
     print("OTC nginx readiness passed")
     return 0
