@@ -464,10 +464,8 @@ release v0.1.19</pre>
 
 <section class="panel dark stats" aria-live="polite">
 <h2>Network Now</h2>
-<p id="stats-note" class="muted">Loading live chain and pool stats...</p>
+<p id="stats-note" class="muted">Loading live chain stats...</p>
 <div class="stat-grid">
-<div class="stat"><b id="stat-miners">-</b><span>active pool miner addresses</span></div>
-<div class="stat"><b id="stat-pool-hashrate">-</b><span>pool hashrate</span></div>
 <div class="stat"><b id="stat-height">-</b><span>chain height</span></div>
 <div class="stat"><b id="stat-peers">-</b><span>node peers</span></div>
 <div class="stat"><b id="stat-difficulty">-</b><span>difficulty</span></div>
@@ -476,6 +474,12 @@ release v0.1.19</pre>
 <div class="stat"><b id="stat-retarget">-</b><span>blocks to retarget</span></div>
 <div class="stat"><b id="stat-next-diff">-</b><span>est. next difficulty</span></div>
 <div class="stat"><b id="stat-supply">-</b><span>circulating 09C</span></div>
+</div>
+<h3 id="pool-heading">Community pool <a href="https://www.ntmminer.com/btc09">ntmminer.com</a> <small>(third-party, not run by 09C)</small></h3>
+<p id="pool-note" class="muted">Pool data is from a community-operated third-party pool and may lag or be unavailable. Chain data above comes from the official 09C node.</p>
+<div class="stat-grid">
+<div class="stat"><b id="stat-miners">-</b><span>active pool miner addresses</span></div>
+<div class="stat"><b id="stat-pool-hashrate">-</b><span>pool hashrate</span></div>
 <div class="stat"><b id="stat-blocks">-</b><span>pool blocks found</span></div>
 <div class="stat"><b id="stat-paid">-</b><span>09C paid by pool</span></div>
 </div>
@@ -688,13 +692,20 @@ async function refreshStats() {
     text('stat-blocks', pool ? Number(pool.totalBlocks ?? 0).toLocaleString() : '-');
     text('stat-paid', pool ? fixed(pool.totalPaid, 2) : '-');
     note.className = 'muted';
-    note.textContent = 'Live chain data from the official explorer and pool data from ntmminer.com. Difficulty retargets every ' + Number(status?.retarget_interval ?? 2016).toLocaleString() + ' blocks, Bitcoin-style. Miner count means pool payout addresses, not guaranteed unique people. Updated ' + updated.toLocaleTimeString() + '.';
+    note.textContent = 'Live chain data from the official 09C node. Difficulty retargets every ' + Number(status?.retarget_interval ?? 2016).toLocaleString() + ' blocks, Bitcoin-style. Updated ' + updated.toLocaleTimeString() + '.';
+    const poolNote = document.getElementById('pool-note');
+    if (poolNote) {
+      poolNote.className = pool ? 'muted' : 'error';
+      poolNote.textContent = pool
+        ? 'Pool data from the community-operated third-party pool (ntmminer.com). Miner count means pool payout addresses, not guaranteed unique people. Updated ' + updated.toLocaleTimeString() + '.'
+        : 'Community pool data is unavailable right now (the third-party pool API did not respond). Chain data above is unaffected.';
+    }
 
     renderMiners(miners);
     setLiveSummary(status, pool, miners);
   } catch (error) {
     note.className = 'error';
-    note.textContent = 'Live stats are unavailable right now. Use the pool or explorer links below.';
+    note.textContent = 'Live chain stats are unavailable right now. Use the explorer link below.';
   }
 }
 
