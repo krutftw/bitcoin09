@@ -971,13 +971,23 @@ async def register_persistent_order_views(
     return len(values)
 
 
-def register_trade_ui(bot: Any, controller: DiscordTradeUI) -> app_commands.Group:
-    pause_prefix = "" if controller.accepting_orders else "PAUSED: "
+def register_trade_ui(
+    bot: Any,
+    controller: DiscordTradeUI,
+    *,
+    accepting_orders_requested: bool | None = None,
+) -> app_commands.Group:
+    advertised_live = (
+        controller.accepting_orders
+        if accepting_orders_requested is None
+        else bool(accepting_orders_requested)
+    )
+    pause_prefix = "" if advertised_live else "PAUSED: "
     group = app_commands.Group(
         name="trade",
         description=(
             "Buy and sell Bitcoin 09"
-            if controller.accepting_orders
+            if advertised_live
             else "PAUSED: new Bitcoin 09 OTC offers"
         ),
     )
@@ -1002,7 +1012,7 @@ def register_trade_ui(bot: Any, controller: DiscordTradeUI) -> app_commands.Grou
         name="list",
         description=(
             "List open WTS and WTB offers"
-            if controller.accepting_orders
+            if advertised_live
             else "List existing WTS and WTB offers (new offers paused)"
         ),
     )
@@ -1074,13 +1084,20 @@ def register_trade_ui(bot: Any, controller: DiscordTradeUI) -> app_commands.Grou
             callback=controller.translate_message,
         )
     )
-    _register_legacy_wrappers(bot, controller)
+    _register_legacy_wrappers(
+        bot, controller, accepting_orders_requested=advertised_live
+    )
     return group
 
 
-def _register_legacy_wrappers(bot: Any, controller: DiscordTradeUI) -> None:
+def _register_legacy_wrappers(
+    bot: Any,
+    controller: DiscordTradeUI,
+    *,
+    accepting_orders_requested: bool,
+) -> None:
     tree = bot.tree
-    pause_prefix = "" if controller.accepting_orders else "PAUSED: "
+    pause_prefix = "" if accepting_orders_requested else "PAUSED: "
 
     @tree.command(
         name="sell", description=f"{pause_prefix}Compatibility wrapper; use /trade sell"
@@ -1093,7 +1110,7 @@ def _register_legacy_wrappers(bot: Any, controller: DiscordTradeUI) -> None:
         name="orders",
         description=(
             "Compatibility wrapper; use /trade list"
-            if controller.accepting_orders
+            if accepting_orders_requested
             else "Compatibility wrapper; use /trade list (new offers paused)"
         ),
     )

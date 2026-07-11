@@ -95,7 +95,7 @@ class TranslationExecutor:
             self._executor.shutdown(wait=True, cancel_futures=True)
 
     async def aclose(self) -> None:
-        self.shutdown()
+        await asyncio.to_thread(self.shutdown)
 
 
 def _parse_url(url: object) -> SplitResult:

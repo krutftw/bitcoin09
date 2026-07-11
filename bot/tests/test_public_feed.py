@@ -360,6 +360,35 @@ class PublicFeedTests(unittest.TestCase):
                 )
             self.assertEqual(loads.call_count, 1)
 
+    def test_cache_uses_open_descriptor_identity_not_changing_path(self) -> None:
+        target = Path(self.temporary.name) / "feed.json"
+        payload = build_public_feed(
+            self.store,
+            generated_at=1_700_000_400,
+            runtime_health=self.healthy_external(),
+        )
+        write_public_feed(target, payload)
+        cache = ValidatedFeedCache()
+        path_entry = target.stat()
+        replacement_entry = type(path_entry)(
+            (
+                path_entry.st_mode,
+                path_entry.st_ino + 1,
+                path_entry.st_dev,
+                path_entry.st_nlink,
+                path_entry.st_uid,
+                path_entry.st_gid,
+                path_entry.st_size,
+                path_entry.st_atime,
+                path_entry.st_mtime,
+                path_entry.st_ctime,
+            )
+        )
+
+        with patch.object(Path, "stat", side_effect=(path_entry, replacement_entry)):
+            loaded = cache.load(target)
+        self.assertEqual(loaded["health_timestamp"], payload["health_timestamp"])
+
     def test_feed_server_returns_503_when_worker_capacity_is_saturated(self) -> None:
         entered = threading.Event()
         release = threading.Event()

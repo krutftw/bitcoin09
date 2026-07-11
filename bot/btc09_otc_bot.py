@@ -511,7 +511,11 @@ class OTCBot(commands.Bot):
             max_workers=1, thread_name_prefix="btc09-feed"
         )
         self._closing = False
-        register_trade_ui(self, runtime.controller)
+        register_trade_ui(
+            self,
+            runtime.controller,
+            accepting_orders_requested=config.accepting_orders_requested,
+        )
 
     async def setup_hook(self) -> None:
         try:
@@ -547,7 +551,7 @@ class OTCBot(commands.Bot):
             self._reconciler.cancel()
             await asyncio.gather(self._reconciler, return_exceptions=True)
         self._feed_executor.shutdown(wait=True, cancel_futures=True)
-        self.runtime.controller.translation_executor.shutdown()
+        await self.runtime.controller.close_translation()
         try:
             invalidate_public_feed(self.runtime.public_feed_path)
         finally:
