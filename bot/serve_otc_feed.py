@@ -67,21 +67,21 @@ class ValidatedFeedCache:
         )
 
     def load(self, path: Path) -> dict[str, object]:
-        before = path.stat()
-        key = self._stat_key(before)
         with self._lock:
-            if self._key == key and self._payload is not None:
-                return copy.deepcopy(self._payload)
             for attempt in range(10):
                 try:
                     with path.open("rb") as handle:
+                        opened = os.fstat(handle.fileno())
+                        key = self._stat_key(opened)
+                        if self._key == key and self._payload is not None:
+                            return copy.deepcopy(self._payload)
                         encoded = handle.read(MAX_FEED_BYTES + 1)
+                        after = os.fstat(handle.fileno())
                     break
                 except PermissionError:
                     if os.name != "nt" or attempt == 9:
                         raise
                     time.sleep(0.001)
-            after = path.stat()
             if key != self._stat_key(after):
                 raise ValueError("feed changed while being read")
             if len(encoded) > MAX_FEED_BYTES:

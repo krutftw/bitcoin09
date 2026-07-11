@@ -197,11 +197,13 @@ Any node can serve its own explorer with `-explorer :8009`.
 There is no official 09C price. Early trading is community OTC only.
 
 Discord has `#💱-otc-trading` for English WTB/WTS negotiation, and the bot
-escrow is live. Use `/trade sell` to list 09C or `/trade buy` to accept an open
-order; the bot holds 09C in escrow at a 1% fee. Only send 09C to the deposit
-address the bot gives you for a specific order. AUD, USD, CNY, USDT, USDC, BTC,
-ETH, and custom settlement funds move directly between buyer and seller. The bot
-never takes custody of those funds. Disputes still need human review.
+escrow is live. Use `/trade sell` to create a WTS offer.
+Use `/trade buy` to create a WTB offer. Use `/trade accept <order_id>` to accept
+an open offer. The bot holds 09C in escrow at a 1% fee. Only send 09C to the
+deposit address the bot
+gives you for a specific order. AUD, USD, CNY, USDT, USDC, BTC, ETH, and custom
+settlement funds move directly between buyer and seller. The bot never takes
+custody of those funds. Disputes still need human review.
 
 The public OTC board at https://btc09.org/markets.html lets
 users draft buy offers, sell offers, and completed-trade references on the

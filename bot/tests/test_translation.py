@@ -222,6 +222,36 @@ class TranslationTests(unittest.TestCase):
 
 
 class TranslationExecutorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_aclose_does_not_block_the_event_loop(self) -> None:
+        executor = TranslationExecutor(
+            DisabledTranslationProvider(), max_workers=1, max_admitted=1
+        )
+        event_loop_progressed = threading.Event()
+        release_shutdown = threading.Event()
+        blocked = []
+
+        def observe_progress() -> None:
+            blocked.append(not event_loop_progressed.wait(0.2))
+            release_shutdown.set()
+
+        def blocking_shutdown() -> None:
+            if not release_shutdown.wait(2):
+                raise RuntimeError("test shutdown release timed out")
+
+        observer = threading.Thread(target=observe_progress)
+        observer.start()
+        try:
+            with patch.object(executor, "shutdown", side_effect=blocking_shutdown):
+                closing = asyncio.create_task(executor.aclose())
+                await asyncio.sleep(0)
+                event_loop_progressed.set()
+                await closing
+        finally:
+            release_shutdown.set()
+            observer.join(2)
+            executor.shutdown()
+        self.assertEqual(blocked, [False])
+
     async def test_executor_is_bounded_busy_and_default_work_stays_responsive(self) -> None:
         started = threading.Event()
         release = threading.Event()

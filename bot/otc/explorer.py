@@ -10,8 +10,6 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
-
 from bot.otc.domain import MAX_09C_UNITS
 
 

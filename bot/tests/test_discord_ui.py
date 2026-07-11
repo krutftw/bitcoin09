@@ -363,7 +363,7 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
         )
         rendered = ast.unparse(close)
         self.assertIn("_feed_executor.shutdown", rendered)
-        self.assertIn("translation_executor", rendered)
+        self.assertIn("await self.runtime.controller.close_translation()", rendered)
         self.assertLess(
             rendered.index("_feed_executor.shutdown"),
             rendered.index("invalidate_public_feed"),
@@ -727,6 +727,48 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(deposit.description.startswith("PAUSED:"))
             finally:
                 await bot.close()
+
+    async def test_requested_live_registration_does_not_advertise_runtime_pause(
+        self,
+    ) -> None:
+        ui = DiscordTradeUI(
+            self.service, admin_ids={9001}, accepting_orders=False, executor=self._run
+        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=".*asyncio.iscoroutinefunction.*",
+                category=DeprecationWarning,
+            )
+            bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+            try:
+                group = register_trade_ui(
+                    bot, ui, accepting_orders_requested=True
+                )
+                descriptions = {
+                    command.name: command.description for command in group.commands
+                }
+                self.assertFalse(group.description.startswith("PAUSED:"))
+                for name in ("sell", "buy", "accept"):
+                    self.assertFalse(descriptions[name].startswith("PAUSED:"))
+                self.assertNotIn("paused", descriptions["list"].lower())
+                self.assertFalse(ui.accepting_orders)
+            finally:
+                await bot.close()
+
+    def test_live_trade_copy_distinguishes_wtb_creation_from_order_acceptance(
+        self,
+    ) -> None:
+        root = Path(__file__).resolve().parents[2]
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        home = (root / "docs" / "index.html").read_text(encoding="utf-8")
+        markets = (root / "docs" / "markets.html").read_text(encoding="utf-8")
+
+        self.assertIn("`/trade buy` to create a WTB offer", readme)
+        self.assertIn("`/trade accept <order_id>` to accept", readme)
+        for page in (home, markets):
+            self.assertIn("<code>/trade buy</code> to create a WTB offer", page)
+            self.assertIn("<code>/trade accept &lt;order_id&gt;</code> to accept", page)
 
     async def test_restart_registers_persistent_views_for_durable_orders(self) -> None:
         class ViewBot:
