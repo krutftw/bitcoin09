@@ -504,8 +504,8 @@ release v0.1.19</pre>
 </div>
 <div class="command">
 <h3>Pool mine</h3>
-<p>Use your 09C payout address at the public pool.</p>
-<pre>bitcoin09.tutuit.xyz</pre>
+<p>Use your 09C payout address at the public pool. Stratum port 18344 (PPLNS) or 18345 (solo).</p>
+<pre>bitcoin09.tutuit.xyz:18344</pre>
 </div>
 <div class="command">
 <h3>Run a node</h3>
@@ -575,8 +575,8 @@ curl https://explorer.btc09.org/api/circulating_supply</pre>
 </main>
 
 <script>
-const poolApi = 'https://bitcoin09.tutuit.xyz/api/pools/09c';
-const minerApi = 'https://bitcoin09.tutuit.xyz/api/pools/09c/miners?pageSize=20';
+const poolApi = 'https://www.ntmminer.com/api-btc09/pools/btc09';
+const minerApi = 'https://www.ntmminer.com/api-btc09/pools/btc09/miners?pageSize=20';
 const explorerApi = 'https://explorer.btc09.org/api/status';
 
 function text(id, value) {
@@ -625,7 +625,7 @@ function setLiveSummary(status, pool, miners) {
   const retarget = status?.blocks_to_retarget != null ? ', retarget in ' + Number(status.blocks_to_retarget).toLocaleString() + ' blocks' : '';
   live.replaceChildren(
     document.createTextNode('network now: height ' + height + ', peers ' + peers + ', difficulty ' + difficulty + retarget + ', active pool miner addresses ' + active + '. '),
-    Object.assign(document.createElement('a'), { href: 'https://bitcoin09.tutuit.xyz', textContent: 'pool' }),
+    Object.assign(document.createElement('a'), { href: 'https://www.ntmminer.com/btc09', textContent: 'pool' }),
     document.createTextNode(' / '),
     Object.assign(document.createElement('a'), { href: 'https://explorer.btc09.org', textContent: 'explorer' }),
     document.createTextNode(' / '),
@@ -685,10 +685,10 @@ async function refreshStats() {
     text('stat-supply', status ? fixed(status.circulating_supply, 2) : '-');
     text('stat-miners', pool ? Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString() : '-');
     text('stat-pool-hashrate', pool ? hashRate(pool.poolStats?.poolHashrate) : '-');
-    text('stat-blocks', pool ? Number(pool.blocksFound ?? 0).toLocaleString() : '-');
+    text('stat-blocks', pool ? Number(pool.totalBlocks ?? 0).toLocaleString() : '-');
     text('stat-paid', pool ? fixed(pool.totalPaid, 2) : '-');
     note.className = 'muted';
-    note.textContent = 'Live chain data from the official explorer and pool data from bitcoin09.tutuit.xyz. Difficulty retargets every ' + Number(status?.retarget_interval ?? 2016).toLocaleString() + ' blocks, Bitcoin-style. Miner count means pool payout addresses, not guaranteed unique people. Updated ' + updated.toLocaleTimeString() + '.';
+    note.textContent = 'Live chain data from the official explorer and pool data from ntmminer.com. Difficulty retargets every ' + Number(status?.retarget_interval ?? 2016).toLocaleString() + ' blocks, Bitcoin-style. Miner count means pool payout addresses, not guaranteed unique people. Updated ' + updated.toLocaleTimeString() + '.';
 
     renderMiners(miners);
     setLiveSummary(status, pool, miners);
