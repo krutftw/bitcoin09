@@ -13,8 +13,8 @@ StateDirectory=btc09-otc
 StateDirectoryMode=0700
 LoadCredential=otc-secrets:/etc/btc09/otc-secrets.env
 Environment=OTC_SECRETS_FILE=%d/otc-secrets
-Environment=OTC_FEE_BPS=0
-Environment=OTC_ACCEPTING_ORDERS=0
+Environment=OTC_FEE_BPS=100
+Environment=OTC_ACCEPTING_ORDERS=1
 Environment=BTC09_BIN=/opt/btc09/btc09
 Environment=BTC09_DATADIR=/opt/btc09/data
 Environment=BTC09_NETWORK=btc09-mainnet

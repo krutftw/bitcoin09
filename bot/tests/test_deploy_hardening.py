@@ -130,7 +130,7 @@ class ServiceUnitTests(unittest.TestCase):
             "StateDirectoryMode=0700",
             "ConditionPathExists=!/var/lib/btc09-otc-maintenance/active",
             "WorkingDirectory=/opt/btc09/bitcoin09",
-            "Environment=OTC_ACCEPTING_ORDERS=0",
+            "Environment=OTC_ACCEPTING_ORDERS=1",
             "Environment=DB_PATH=/var/lib/btc09-otc/otc_bot.db",
             "Environment=BTC09_WALLET_PATH=/var/lib/btc09-otc/wallet-mainnet.json",
             "Environment=PUBLIC_FEED_PATH=/var/lib/btc09-otc-public/otc-bot-feed.json",
@@ -1766,7 +1766,7 @@ class CredentialBoundaryTests(unittest.TestCase):
         config = Config.from_environment(
             {
                 "OTC_SECRETS_FILE": path,
-                "OTC_ACCEPTING_ORDERS": "0",
+                "OTC_ACCEPTING_ORDERS": "1",
                 "DB_PATH": "/var/lib/btc09-otc/otc_bot.db",
                 "BOT_TOKEN": "environment-token-must-be-ignored",
             }
@@ -1885,7 +1885,7 @@ class EffectiveEnvironmentTests(unittest.TestCase):
     @staticmethod
     def _expected() -> dict[str, str]:
         return {
-            "OTC_ACCEPTING_ORDERS": "0",
+            "OTC_ACCEPTING_ORDERS": "1",
             "DB_PATH": "/var/lib/btc09-otc/otc_bot.db",
             "BTC09_WALLET_PATH": "/var/lib/btc09-otc/wallet-mainnet.json",
             "PUBLIC_FEED_PATH": "/var/lib/btc09-otc-public/otc-bot-feed.json",
@@ -1908,7 +1908,7 @@ class EffectiveEnvironmentTests(unittest.TestCase):
         valid = self._expected()
         cases = []
         mismatch = dict(valid)
-        mismatch["OTC_ACCEPTING_ORDERS"] = "1"
+        mismatch["OTC_ACCEPTING_ORDERS"] = "0"
         cases.append(mismatch)
         missing = dict(valid)
         del missing["DB_PATH"]
@@ -1920,7 +1920,7 @@ class EffectiveEnvironmentTests(unittest.TestCase):
             )
             with self.assertRaises(module.EnvironmentVerificationError):
                 module.verify_environment_blob(blob)
-        duplicate = b"OTC_ACCEPTING_ORDERS=0\x00OTC_ACCEPTING_ORDERS=1\x00"
+        duplicate = b"OTC_ACCEPTING_ORDERS=1\x00OTC_ACCEPTING_ORDERS=0\x00"
         with self.assertRaises(module.EnvironmentVerificationError):
             module.verify_environment_blob(duplicate)
         with self.assertRaises(module.EnvironmentVerificationError):

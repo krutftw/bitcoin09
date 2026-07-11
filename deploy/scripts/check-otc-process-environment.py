@@ -11,7 +11,7 @@ from pathlib import Path
 MAX_ENVIRON_BYTES = 1_048_576
 SERVICE = "btc09-otc-bot.service"
 EXPECTED = {
-    "OTC_ACCEPTING_ORDERS": "0",
+    "OTC_ACCEPTING_ORDERS": "1",
     "DB_PATH": "/var/lib/btc09-otc/otc_bot.db",
     "BTC09_WALLET_PATH": "/var/lib/btc09-otc/wallet-mainnet.json",
     "PUBLIC_FEED_PATH": "/var/lib/btc09-otc-public/otc-bot-feed.json",

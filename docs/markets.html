@@ -368,7 +368,7 @@ code {
 <img src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
 <div>
 <h1>09C OTC Board</h1>
-<p class="tag">Public WTB/WTS records are open. The replacement bot is staged, but new escrow orders remain paused pending credential rotation and the funded pilot.</p>
+<p class="tag">Public WTB/WTS records are open and the Discord bot escrow is live. Trade 09C safely at a 1% escrow fee.</p>
 </div>
 </div>
 <div class="wrap nav">
@@ -379,12 +379,12 @@ code {
 <main>
 <div class="wrap">
 <div class="notice">
-<strong>Escrow pilot paused.</strong> This page is a public noticeboard, not an exchange or escrow. Do not send 09C to an old bot deposit address. Disabled production staging is complete, but the replacement will be announced only after credential rotation and funded testing pass. It will hold 09C only, while fiat, stablecoins, BTC, ETH, and other payment funds move directly between buyer and seller.
+<strong>Escrow is live.</strong> The Discord bot now holds 09C in escrow for two-sided WTS/WTB trades at a 1% fee. Fiat, stablecoins, BTC, ETH, and other payment funds move directly between buyer and seller; only 09C passes through escrow. Only send 09C to the deposit address the bot gives you for a specific order.
 </div>
 
 <section class="tape" aria-live="polite">
 <div class="ticker"><b id="open-count">-</b><span>open offers</span></div>
-<div class="ticker"><b id="escrow-count">-</b><span>escrow pilot orders (paused)</span></div>
+<div class="ticker"><b id="escrow-count">-</b><span>bot escrow orders</span></div>
 <div class="ticker"><b id="receipt-count">-</b><span>completed records</span></div>
 <div class="ticker"><b id="last-record">loading</b><span>latest public record</span></div>
 <div class="ticker"><b id="data-age">loading</b><span>board snapshot</span></div>
@@ -432,7 +432,7 @@ Public proof or 09C tx
 </label>
 <label class="wide">
 Terms or public notes
-<textarea id="notes" placeholder="Trade small first. State the payment network/method clearly. Bot escrow is currently paused."></textarea>
+<textarea id="notes" placeholder="Trade small first. State the payment network/method clearly."></textarea>
 </label>
 </div>
 
@@ -446,7 +446,7 @@ Terms or public notes
 <p class="muted" id="copy-status" aria-live="polite"></p>
 <pre class="preview" id="discord-preview">WTB 09C for USDT
 Contact: Discord @name
-Notes: Trade small first. Bot escrow is currently paused.</pre>
+Notes: Trade small first. State the payment network/method clearly.</pre>
 </section>
 
 <section class="panel">
@@ -455,8 +455,8 @@ Notes: Trade small first. Bot escrow is currently paused.</pre>
 <ol>
 <li>Draft the trade record on this page.</li>
 <li>Use the copied text in Discord <code>#💱-otc-trading</code> if you want quick negotiation.</li>
-<li>Community posts and DMs are not bot escrow. New escrow orders stay paused until the controlled pilot is announced in Discord.</li>
-<li>When launched, the bot will create a fresh order-specific 09C address. Never send to an address copied from an old message.</li>
+<li>For a protected trade, use the bot escrow in Discord: <code>/trade sell</code> to list 09C or <code>/trade buy</code> to accept an order. The bot creates a fresh order-specific 09C deposit address and charges a 1% escrow fee.</li>
+<li>Never send 09C to an address copied from an old message or a community post. Only the address the bot gives you for a specific order is valid.</li>
 <li>Open the public GitHub record when the offer or completed trade should be visible on the board.</li>
 <li>Add only public proof: 09C tx link, redacted screenshot, or short note. Do not upload private payment account details.</li>
 </ol>
@@ -465,8 +465,8 @@ Notes: Trade small first. Bot escrow is currently paused.</pre>
 <section class="panel">
 <div class="board-head">
 <div>
-<h2>Escrow Pilot Status</h2>
-<p class="muted" id="bot-feed-note">Loading sanitized historical order status. New orders are paused.</p>
+<h2>Escrow Status</h2>
+<p class="muted" id="bot-feed-note">Loading live bot escrow order status.</p>
 </div>
 <p class="muted"><a href="https://discord.gg/fUuGzwRTzP">open Discord</a></p>
 </div>
@@ -716,8 +716,8 @@ function renderBotFeed(data) {
   document.getElementById('escrow-count').textContent = active.length.toLocaleString();
   note.className = 'muted';
   note.textContent = botRows.length
-    ? 'Showing sanitized historical Discord escrow orders. New orders are paused; no user IDs, wallet addresses, or payment details are published.' + (generated ? ' Last sync: ' + generated + '.' : '')
-    : 'No public escrow orders. The replacement is staged, but new bot orders remain paused pending credential rotation and the funded pilot.';
+    ? 'Showing live bot escrow orders. No user IDs, wallet addresses, or payment details are published.' + (generated ? ' Last sync: ' + generated + '.' : '')
+    : 'No open bot escrow orders yet. Use /trade sell or /trade buy in Discord to start one.';
   list.innerHTML = botRows.slice(0, 20).map(renderBotRow).join('');
 }
 
@@ -802,7 +802,7 @@ function discordPost(item) {
   if (item.proof) lines.push('Proof: ' + item.proof);
   if (item.notes) lines.push('Notes: ' + item.notes);
   lines.push('Public record goes on the 09C OTC board.');
-  lines.push('Community post only. Not bot escrow. New escrow orders are paused.');
+  lines.push('For a protected trade, use /trade sell or /trade buy in Discord for bot escrow.');
   return lines.join('\n');
 }
 
@@ -901,7 +901,7 @@ async function loadBotFeed() {
   } catch (error) {
     document.getElementById('escrow-count').textContent = '-';
     document.getElementById('bot-feed-note').className = 'error';
-    document.getElementById('bot-feed-note').textContent = 'Could not load the escrow status feed. New bot orders remain paused; check Discord announcements.';
+    document.getElementById('bot-feed-note').textContent = 'Could not load the escrow status feed. Check Discord for live bot escrow orders.';
     document.getElementById('bot-feed-list').innerHTML = '';
   }
 }
