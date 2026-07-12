@@ -159,6 +159,7 @@ Default bootstrap seeds are built into the client:
 
 ```text
 seed.btc09.org:9009
+178.128.52.20:9009
 178.128.105.41:9009
 103.80.18.140:9009
 108.190.240.138:9009
@@ -288,17 +289,16 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.21 is current. It adds the native open-source remote-solo coordinator and
-miner, keeps Discord network stats working when a third-party pool is offline,
-and correctly routes the registered `/stats` command. It retains the
-chain-derived mining transparency and exchange integration work from v0.1.20.
-There are no consensus changes.
+v0.1.22 is current. It moves the primary public seed onto a dedicated P2P-only
+host and adds its direct address while retaining the former seed as a fallback.
+It also fixes Discord OTC replies that could stay on “thinking” when no button
+view was attached. There are no consensus or wallet changes.
 
 Network:
 
 ```text
 site:     https://btc09.org
-seeds:    seed.btc09.org:9009, 178.128.105.41:9009, 103.80.18.140:9009, 108.190.240.138:9009
+seeds:    seed.btc09.org:9009, 178.128.52.20:9009, 178.128.105.41:9009, 103.80.18.140:9009, 108.190.240.138:9009
 explorer: https://explorer.btc09.org
 release:  https://github.com/krutftw/bitcoin09/releases/latest
 discord:  https://discord.gg/fUuGzwRTzP

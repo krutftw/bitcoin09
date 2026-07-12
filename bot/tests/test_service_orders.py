@@ -413,6 +413,10 @@ class TradeServiceOrderTests(unittest.TestCase):
             network=None,
         )
 
+    def test_accept_missing_order_points_to_bot_order_list(self):
+        with self.assertRaisesRegex(ValueError, r"bot escrow.*?/trade list"):
+            self.service.accept(7, actor_id=2, actor_name="Buyer 2")
+
     def test_wtb_creation_spam_is_stopped_by_durable_maker_capacity(self):
         capped = TradeService(
             store=self.store,

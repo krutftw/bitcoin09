@@ -64,8 +64,8 @@ At the 12 July 2026 review, mainnet was above height 7,370 with more than
 - **Default P2P port:** `9009/tcp`
 - **Address version:** `0x09`; current addresses start with `4k`
 - **Seed:** `seed.btc09.org:9009`
-- **Additional public peers:** `178.128.105.41:9009`,
-  `103.80.18.140:9009`, `108.190.240.138:9009`
+- **Additional public peers:** `178.128.52.20:9009`,
+  `178.128.105.41:9009`, `103.80.18.140:9009`, `108.190.240.138:9009`
 - **Mainnet genesis:**
   `ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f`
 

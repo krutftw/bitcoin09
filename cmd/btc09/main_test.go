@@ -635,10 +635,10 @@ func TestNewExplorerServerPropagatesCanonicalNetworkFailure(t *testing.T) {
 
 func TestDefaultMainnetSeeds(t *testing.T) {
 	seeds := defaultSeeds(paramsFor("mainnet"))
-	if len(seeds) < 4 {
-		t.Fatalf("default mainnet seeds = %v, want at least 4", seeds)
+	if len(seeds) < 5 {
+		t.Fatalf("default mainnet seeds = %v, want at least 5", seeds)
 	}
-	for _, seed := range []string{"seed.btc09.org:9009", "178.128.105.41:9009", "103.80.18.140:9009", "108.190.240.138:9009"} {
+	for _, seed := range []string{"seed.btc09.org:9009", "178.128.52.20:9009", "178.128.105.41:9009", "103.80.18.140:9009", "108.190.240.138:9009"} {
 		found := false
 		for _, got := range seeds {
 			if got == seed {
@@ -738,9 +738,9 @@ func TestReleaseNewer(t *testing.T) {
 	}
 }
 
-func TestNodeVersionMatchesV021Release(t *testing.T) {
-	if nodeVersion != "v0.1.21" {
-		t.Fatalf("nodeVersion = %q, want v0.1.21", nodeVersion)
+func TestNodeVersionMatchesV022Release(t *testing.T) {
+	if nodeVersion != "v0.1.22" {
+		t.Fatalf("nodeVersion = %q, want v0.1.22", nodeVersion)
 	}
 }
 

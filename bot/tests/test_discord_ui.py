@@ -483,6 +483,24 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
         await self.ui.dispute(FakeInteraction(3, 333), 42, "A detailed private reason")
         self.assertEqual(self.service.calls, [])
 
+    async def test_error_followup_omits_absent_view_for_discord_webhook(self) -> None:
+        class StrictFollowup(FakeFollowup):
+            async def send(self, content: str, **kwargs: object) -> None:
+                if "view" in kwargs and kwargs["view"] is None:
+                    raise TypeError("expected view parameter to be of type View not NoneType")
+                self.sent.append(
+                    (
+                        content,
+                        bool(kwargs.get("ephemeral", False)),
+                        kwargs.get("view"),
+                    )
+                )
+
+        outsider = FakeInteraction(991140, 333)
+        outsider.followup = StrictFollowup()
+        await self.ui.check_deposit(outsider, 42)
+        self.assertIn("only the assigned seller", outsider.followup.sent[-1][0])
+
     async def test_only_configured_admin_can_resolve(self) -> None:
         denied = FakeInteraction(4, 42)
         await self.ui.resolve(denied, 42, "buyer", "A sufficiently detailed reason", confirmed=True)

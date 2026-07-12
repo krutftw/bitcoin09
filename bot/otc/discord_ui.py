@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
@@ -814,8 +815,20 @@ class DiscordTradeUI:
         *,
         private: bool,
     ) -> str:
+        interaction_id = self._interaction_id(interaction)
+        started = time.monotonic()
+        phase = "service"
+        print(
+            f"[INFO] OTC interaction started id={interaction_id} action={key}",
+            flush=True,
+        )
         try:
             result = await self._run_once(interaction, key, call)
+            print(
+                f"[INFO] OTC service completed id={interaction_id} action={key} "
+                f"elapsed={time.monotonic() - started:.3f}s",
+                flush=True,
+            )
             if not isinstance(result, OrderResult):
                 raise RuntimeError("trade service returned an invalid order result")
             content = (
@@ -824,15 +837,36 @@ class DiscordTradeUI:
                 else render_public_order(result)
             )
             action_view = OrderActionView(self, result)
+            phase = "followup"
             await self._followup(
                 interaction,
                 content,
                 ephemeral=private,
                 view=action_view if action_view.children else None,
             )
+            print(
+                f"[INFO] OTC interaction completed id={interaction_id} action={key} "
+                f"elapsed={time.monotonic() - started:.3f}s",
+                flush=True,
+            )
             return content
         except Exception as exc:
-            return await self._error(interaction, exc)
+            print(
+                f"[ERROR] OTC interaction failed id={interaction_id} action={key} "
+                f"phase={phase} error={type(exc).__name__} "
+                f"elapsed={time.monotonic() - started:.3f}s",
+                flush=True,
+            )
+            try:
+                return await self._error(interaction, exc)
+            except Exception as response_exc:
+                print(
+                    f"[ERROR] OTC error response failed id={interaction_id} "
+                    f"action={key} error={type(response_exc).__name__} "
+                    f"detail={response_exc!r}",
+                    flush=True,
+                )
+                raise
 
     async def _run_once(
         self, interaction: Any, action: str, call: Callable[[], object]
@@ -909,6 +943,9 @@ class DiscordTradeUI:
         ephemeral: bool = False,
         view: discord.ui.View | None = None,
     ) -> None:
+        if view is None:
+            await interaction.followup.send(content, ephemeral=ephemeral)
+            return
         await interaction.followup.send(content, ephemeral=ephemeral, view=view)
 
     async def _error(self, interaction: Any, exc: Exception) -> str:

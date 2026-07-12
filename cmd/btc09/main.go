@@ -35,7 +35,7 @@ import (
 )
 
 // nodeVersion is the release version; bump alongside git tags.
-const nodeVersion = "v0.1.21"
+const nodeVersion = "v0.1.22"
 
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
@@ -371,6 +371,7 @@ func defaultSeeds(p *core.Params) []string {
 	if p.Name == "mainnet" {
 		return []string{
 			"seed.btc09.org:9009",
+			"178.128.52.20:9009",
 			"178.128.105.41:9009",
 			"103.80.18.140:9009",
 			"108.190.240.138:9009",

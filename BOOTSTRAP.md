@@ -12,7 +12,7 @@ their computers on.
 - v0.1.20 binaries are published
 - website is online at `https://btc09.org`
 - mainnet genesis is fixed
-- bootstrap seeds are online at `seed.btc09.org:9009`, `178.128.105.41:9009`, `103.80.18.140:9009`, and `108.190.240.138:9009`
+- bootstrap seeds are online at `seed.btc09.org:9009`, `178.128.52.20:9009`, `178.128.105.41:9009`, `103.80.18.140:9009`, and `108.190.240.138:9009`
 - explorer is online at `https://explorer.btc09.org`
 - Discord is live at `https://discord.gg/fUuGzwRTzP`
 - OTC board is online at `https://btc09.org/markets.html`
@@ -62,7 +62,7 @@ public node: IP:9009
 Those addresses can then be passed to `-seeds`:
 
 ```bash
-btc09 node -mine -seeds seed.btc09.org:9009,178.128.105.41:9009,103.80.18.140:9009,108.190.240.138:9009
+btc09 node -mine -seeds seed.btc09.org:9009,178.128.52.20:9009,178.128.105.41:9009,103.80.18.140:9009,108.190.240.138:9009
 ```
 
 ## When there are a few stable peers

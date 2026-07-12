@@ -395,7 +395,9 @@ class TradeService:
         self._positive_actor(actor_id)
         initial = self.store.get_order(order_id=order_id)
         if initial is None:
-            raise ValueError("order does not exist")
+            raise ValueError(
+                "order does not exist in bot escrow; use /trade list for current bot order IDs"
+            )
         if initial["state"] != "open" or actor_id == initial["maker_id"]:
             return self._order_result(initial, accepted=False)
         if initial["side"] == OrderSide.BUY.value and (
@@ -435,7 +437,9 @@ class TradeService:
         if accepted is None:
             current = self.store.get_order(order_id=order_id)
             if current is None:
-                raise ValueError("order does not exist")
+                raise ValueError(
+                    "order does not exist in bot escrow; use /trade list for current bot order IDs"
+                )
             return self._order_result(current, accepted=False)
         if accepted["state"] == "address_pending":
             self.reconcile_pending_address()
