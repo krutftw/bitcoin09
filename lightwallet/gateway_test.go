@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -136,6 +137,103 @@ func TestGatewaySnapshotRejectsUnboundedAndNoncanonicalRequests(t *testing.T) {
 	}
 }
 
+func TestGatewayBroadcastValidatesAdmitsAndRelaysSignedTransaction(t *testing.T) {
+	chain, transaction := gatewaySpendTransaction(t)
+	broadcaster := &gatewayTestBroadcaster{writes: 2}
+	handler, err := NewGateway(chain, broadcaster)
+	if err != nil {
+		t.Fatalf("NewGateway: %v", err)
+	}
+	transactionID := transaction.ID()
+	txID := hex.EncodeToString(transactionID[:])
+	request := BroadcastRequest{TransactionHex: hex.EncodeToString(transaction.Bytes()), ExpectedTxID: txID}
+
+	for attempt, wantAdmission := range []string{string(core.TxAcceptanceAdded), string(core.TxAcceptanceAlreadyKnown)} {
+		rr := gatewayJSONRequest(t, handler, BroadcastPath, request)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("attempt %d status = %d, body=%s", attempt, rr.Code, rr.Body.String())
+		}
+		var response BroadcastResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if response.TxID != txID || response.Admission != wantAdmission || response.PeerWrites != 2 || response.Status != "submitted" {
+			t.Fatalf("attempt %d response = %#v", attempt, response)
+		}
+	}
+	if len(broadcaster.txs) != 2 || broadcaster.txs[0].ID() != transaction.ID() || broadcaster.txs[1].ID() != transaction.ID() {
+		t.Fatalf("broadcast calls = %#v", broadcaster.txs)
+	}
+}
+
+func TestGatewayBroadcastRejectsMalformedOrUnsafeTransactions(t *testing.T) {
+	chain, transaction := gatewaySpendTransaction(t)
+	txHex := hex.EncodeToString(transaction.Bytes())
+	transactionID := transaction.ID()
+	txID := hex.EncodeToString(transactionID[:])
+	coinbase := core.NewCoinbase(1, 1, [20]byte{1}, "no")
+	coinbaseID := coinbase.ID()
+	tests := []struct {
+		name    string
+		request BroadcastRequest
+		status  int
+		code    string
+	}{
+		{name: "bad hex", request: BroadcastRequest{TransactionHex: "xyz", ExpectedTxID: txID}, status: http.StatusBadRequest, code: "invalid_transaction"},
+		{name: "uppercase", request: BroadcastRequest{TransactionHex: strings.ToUpper(txHex), ExpectedTxID: txID}, status: http.StatusBadRequest, code: "invalid_transaction"},
+		{name: "wrong txid", request: BroadcastRequest{TransactionHex: txHex, ExpectedTxID: strings.Repeat("0", 64)}, status: http.StatusBadRequest, code: "txid_mismatch"},
+		{name: "uppercase txid", request: BroadcastRequest{TransactionHex: txHex, ExpectedTxID: strings.ToUpper(txID)}, status: http.StatusBadRequest, code: "invalid_txid"},
+		{name: "coinbase", request: BroadcastRequest{TransactionHex: hex.EncodeToString(coinbase.Bytes()), ExpectedTxID: hex.EncodeToString(coinbaseID[:])}, status: http.StatusUnprocessableEntity, code: "transaction_rejected"},
+		{name: "oversized", request: BroadcastRequest{TransactionHex: strings.Repeat("00", MaxSignedTransactionBytes+1), ExpectedTxID: txID}, status: http.StatusRequestEntityTooLarge, code: "transaction_too_large"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			broadcaster := &gatewayTestBroadcaster{writes: 1}
+			handler, err := NewGateway(chain, broadcaster)
+			if err != nil {
+				t.Fatalf("NewGateway: %v", err)
+			}
+			rr := gatewayJSONRequest(t, handler, BroadcastPath, test.request)
+			if rr.Code != test.status {
+				t.Fatalf("status = %d, want %d, body=%s", rr.Code, test.status, rr.Body.String())
+			}
+			var response ErrorResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil || response.ErrorCode != test.code {
+				t.Fatalf("error response = %#v, err=%v, want %q", response, err, test.code)
+			}
+			if len(broadcaster.txs) != 0 {
+				t.Fatalf("rejected transaction was broadcast %d times", len(broadcaster.txs))
+			}
+		})
+	}
+}
+
+func TestGatewayBroadcastLeavesAdmittedTransactionRetryableWhenNoPeerWriteSucceeds(t *testing.T) {
+	chain, transaction := gatewaySpendTransaction(t)
+	broadcaster := &gatewayTestBroadcaster{writes: 0}
+	handler, err := NewGateway(chain, broadcaster)
+	if err != nil {
+		t.Fatalf("NewGateway: %v", err)
+	}
+	transactionID := transaction.ID()
+	txID := hex.EncodeToString(transactionID[:])
+	request := BroadcastRequest{TransactionHex: hex.EncodeToString(transaction.Bytes()), ExpectedTxID: txID}
+
+	first := gatewayJSONRequest(t, handler, BroadcastPath, request)
+	if first.Code != http.StatusServiceUnavailable {
+		t.Fatalf("first status = %d, body=%s", first.Code, first.Body.String())
+	}
+	broadcaster.writes = 1
+	second := gatewayJSONRequest(t, handler, BroadcastPath, request)
+	if second.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, body=%s", second.Code, second.Body.String())
+	}
+	var response BroadcastResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &response); err != nil || response.Admission != string(core.TxAcceptanceAlreadyKnown) {
+		t.Fatalf("retry response = %#v, err=%v", response, err)
+	}
+}
+
 func gatewayTestChain(t *testing.T) (*core.Chain, []string) {
 	t.Helper()
 	chain, err := core.NewChain(&core.RegTest)
@@ -172,4 +270,59 @@ func mustJSON(t *testing.T, value any) string {
 		t.Fatalf("json marshal: %v", err)
 	}
 	return string(encoded)
+}
+
+func gatewayJSONRequest(t *testing.T, handler http.Handler, path string, value any) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(mustJSON(t, value)))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func gatewaySpendTransaction(t *testing.T) (*core.Chain, *core.Tx) {
+	t.Helper()
+	chain, err := core.NewChain(&core.RegTest)
+	if err != nil {
+		t.Fatalf("NewChain: %v", err)
+	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	owner := core.PubKeyHash20(public)
+	for height := int64(0); height < core.RegTest.CoinbaseMaturity+1; height++ {
+		template := core.BuildBlockTemplate(chain, owner, "broadcast-test")
+		result := core.Mine(context.Background(), chain, template, 1)
+		if result.Block == nil {
+			t.Fatal("regtest mining returned no block")
+		}
+		if err := chain.AcceptBlock(result.Block); err != nil {
+			t.Fatalf("AcceptBlock: %v", err)
+		}
+	}
+	var outpoint core.OutPoint
+	var entry core.UTXOEntry
+	for candidate, candidateEntry := range chain.UTXOsForPKH(owner) {
+		outpoint, entry = candidate, candidateEntry
+		break
+	}
+	if entry.Value <= 1000 {
+		t.Fatal("missing mature spendable output")
+	}
+	_, recipientPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey recipient: %v", err)
+	}
+	recipient := core.PubKeyHash20(recipientPrivate.Public().(ed25519.PublicKey))
+	transaction := &core.Tx{
+		Version: 1,
+		Ins:     []core.TxIn{{Prev: outpoint}},
+		Outs:    []core.TxOut{{Value: entry.Value - 1000, PubKeyHash: recipient}},
+	}
+	if err := transaction.Sign([]ed25519.PrivateKey{private}); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	return chain, transaction
 }

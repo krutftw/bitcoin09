@@ -38,7 +38,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if r.URL.Path != SnapshotPath {
+	if r.URL.Path != SnapshotPath && r.URL.Path != BroadcastPath {
 		g.writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
@@ -56,7 +56,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type")
 		return
 	}
-	g.handleSnapshot(w, r)
+	switch r.URL.Path {
+	case SnapshotPath:
+		g.handleSnapshot(w, r)
+	case BroadcastPath:
+		g.handleBroadcast(w, r)
+	}
 }
 
 func (g *Gateway) handleSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +145,89 @@ func canonicalPKHs(addresses []string) ([][20]byte, error) {
 		pkhs[index] = pkh
 	}
 	return pkhs, nil
+}
+
+func (g *Gateway) handleBroadcast(w http.ResponseWriter, r *http.Request) {
+	var request BroadcastRequest
+	if err := decodeStrictJSON(r.Body, &request); err != nil {
+		status := http.StatusBadRequest
+		code := "bad_request"
+		if errors.Is(err, errRequestTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+			code = "request_too_large"
+		}
+		g.writeError(w, status, code)
+		return
+	}
+	if len(request.TransactionHex) > MaxSignedTransactionBytes*2 {
+		g.writeError(w, http.StatusRequestEntityTooLarge, "transaction_too_large")
+		return
+	}
+	wire, err := decodeCanonicalTransactionHex(request.TransactionHex)
+	if err != nil {
+		g.writeError(w, http.StatusBadRequest, "invalid_transaction")
+		return
+	}
+	expected, err := decodeCanonicalHash(request.ExpectedTxID)
+	if err != nil {
+		g.writeError(w, http.StatusBadRequest, "invalid_txid")
+		return
+	}
+	transaction, err := core.DecodeTx(wire)
+	if err != nil || transaction.IsCoinbase() || !bytes.Equal(transaction.Bytes(), wire) {
+		if transaction != nil && transaction.IsCoinbase() {
+			g.writeError(w, http.StatusUnprocessableEntity, "transaction_rejected")
+			return
+		}
+		g.writeError(w, http.StatusBadRequest, "invalid_transaction")
+		return
+	}
+	transactionID := transaction.ID()
+	if transactionID != expected {
+		g.writeError(w, http.StatusBadRequest, "txid_mismatch")
+		return
+	}
+	admission, err := g.chain.AcceptTxWithResult(transaction)
+	if err != nil || (admission != core.TxAcceptanceAdded && admission != core.TxAcceptanceAlreadyKnown) {
+		g.writeError(w, http.StatusUnprocessableEntity, "transaction_rejected")
+		return
+	}
+	writes := 0
+	if g.broadcaster != nil {
+		writes = g.broadcaster.BroadcastTx(transaction)
+	}
+	if writes < 1 {
+		g.writeError(w, http.StatusServiceUnavailable, "transaction_not_relayed")
+		return
+	}
+	g.writeJSON(w, http.StatusOK, BroadcastResponse{
+		SchemaVersion: SchemaVersion, Network: g.network,
+		TxID: request.ExpectedTxID, Admission: string(admission), Status: "submitted", PeerWrites: writes,
+	})
+}
+
+func decodeCanonicalTransactionHex(value string) ([]byte, error) {
+	if value == "" || len(value)%2 != 0 || value != strings.ToLower(value) {
+		return nil, errors.New("noncanonical transaction hex")
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) == 0 || len(decoded) > MaxSignedTransactionBytes {
+		return nil, errors.New("invalid transaction hex")
+	}
+	return decoded, nil
+}
+
+func decodeCanonicalHash(value string) (core.Hash32, error) {
+	var hash core.Hash32
+	if len(value) != hex.EncodedLen(len(hash)) || value != strings.ToLower(value) {
+		return hash, errors.New("noncanonical hash")
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) != len(hash) {
+		return hash, errors.New("invalid hash")
+	}
+	copy(hash[:], decoded)
+	return hash, nil
 }
 
 var errRequestTooLarge = errors.New("request too large")

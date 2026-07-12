@@ -1,12 +1,13 @@
 package lightwallet
 
 const (
-	SchemaVersion        = 1
-	SnapshotPath         = "/api/wallet/v1/snapshot"
-	BroadcastPath        = "/api/wallet/v1/broadcast"
-	MaxSnapshotAddresses = 100
-	MaxRequestBytes      = 64 << 10
-	MaxResponseBytes     = 1 << 20
+	SchemaVersion             = 1
+	SnapshotPath              = "/api/wallet/v1/snapshot"
+	BroadcastPath             = "/api/wallet/v1/broadcast"
+	MaxSnapshotAddresses      = 100
+	MaxRequestBytes           = 64 << 10
+	MaxResponseBytes          = 1 << 20
+	MaxSignedTransactionBytes = 10_000
 )
 
 type SnapshotRequest struct {
@@ -38,4 +39,18 @@ type ErrorResponse struct {
 	SchemaVersion int    `json:"schema_version"`
 	Network       string `json:"network"`
 	ErrorCode     string `json:"error_code"`
+}
+
+type BroadcastRequest struct {
+	TransactionHex string `json:"tx_hex"`
+	ExpectedTxID   string `json:"expected_txid"`
+}
+
+type BroadcastResponse struct {
+	SchemaVersion int    `json:"schema_version"`
+	Network       string `json:"network"`
+	TxID          string `json:"txid"`
+	Admission     string `json:"admission"`
+	Status        string `json:"status"`
+	PeerWrites    int    `json:"peer_writes"`
 }
