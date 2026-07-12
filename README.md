@@ -259,10 +259,11 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.19 is current. It prevents duplicate hostname/IP seed connections from
-filling peer slots, caps in-flight dials, and rejects private or malformed
-addresses received through peer gossip. The node, miner, wallet, P2P sync,
-built-in seeds, block explorer and supply APIs are live.
+v0.1.20 is current. It adds chain-derived network hashrate and recent payout
+address concentration to the explorer, plus a tested exchange integration
+guide and read-only readiness check. It retains the peer deduplication,
+bounded dialing, and address-gossip hardening from v0.1.19. The node, miner,
+wallet, P2P sync, built-in seeds, block explorer and supply APIs are live.
 
 Network:
 
