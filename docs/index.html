@@ -340,6 +340,37 @@ p {
   font-size: 15px;
 }
 
+.solo-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(260px, 1.3fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.solo-grid label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.solo-grid input {
+  width: 100%;
+  padding: 10px;
+  font: inherit;
+  color: var(--ink);
+  background: #fff8e6;
+  border: 1px solid #9a8758;
+  border-radius: 0;
+}
+
+.solo-result {
+  min-height: 76px;
+  padding: 10px 12px;
+  color: var(--green);
+  background: #0b0e0a;
+  border: 1px solid #3f371f;
+}
+
 .command pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -430,6 +461,10 @@ pre {
   .panel {
     padding: 13px;
   }
+
+  .solo-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
 </head>
@@ -503,6 +538,9 @@ release v0.1.19</pre>
 <div class="stat"><b id="stat-retarget">-</b><span>blocks to retarget</span></div>
 <div class="stat"><b id="stat-next-diff">-</b><span>est. next difficulty</span></div>
 <div class="stat"><b id="stat-supply">-</b><span>circulating 09C</span></div>
+<div class="stat"><b id="stat-network-hashrate">-</b><span>estimated network hashrate</span></div>
+<div class="stat"><b id="stat-top-share-100">-</b><span>top payout address, last 100 blocks</span></div>
+<div class="stat"><b id="stat-distinct-100">-</b><span>payout addresses, last 100 blocks</span></div>
 </div>
 <h3 id="pool-heading">Community pool <a href="https://www.ntmminer.com/btc09">ntmminer.com</a> <small>(third-party, not run by 09C)</small></h3>
 <p id="pool-note" class="muted">Pool data is from a community-operated third-party pool and may lag or be unavailable. Chain data above comes from the official 09C node.</p>
@@ -525,6 +563,18 @@ release v0.1.19</pre>
 <h2>Difficulty Retarget</h2>
 <p>09C follows the old Bitcoin rhythm: difficulty changes every 2,016 blocks and can only move by up to 4x per adjustment. If a lot of miners arrive early, blocks can run faster than the 10 minute target until the next retarget catches up.</p>
 <p class="muted">That is why the site shows both the target and the observed average for the current retarget window. The target is the rule; the observed average is what miners are seeing right now.</p>
+</section>
+
+<section class="panel">
+<h2>Solo Mining Odds</h2>
+<p>Enter your measured hashrate. This uses the official chain estimate, not the pool dashboard.</p>
+<div class="solo-grid">
+<label for="solo-hashrate">Your hashrate in H/s
+<input id="solo-hashrate" type="number" min="0" step="0.01" inputmode="decimal" placeholder="100">
+</label>
+<div id="solo-estimate" class="solo-result">Enter your hashrate to estimate your share and block odds.</div>
+</div>
+<p class="muted">Expected time, not a guarantee. Solo mining has high variance. A pool smooths payouts but does not increase your expected share before fees.</p>
 </section>
 
 <section class="panel">
@@ -599,8 +649,8 @@ curl https://explorer.btc09.org/api/circulating_supply</pre>
 </section>
 
 <section class="panel warning">
-<h2>No Promises</h2>
-<p>09C is worth nothing. Bitcoin was worth nothing in 2009 too, that's the whole idea. No premine, no allocation, no promises. The genesis reward is burned, so every coin that will ever exist gets mined by someone's CPU. Mine it because it's fun and you missed 2009.</p>
+<h2>No Premine. No Guarantees.</h2>
+<p>09C launched without an ICO, team allocation, or treasury. The genesis reward is burned, so circulating coins start with public mining after genesis. There is no guaranteed price or return. Mine or trade only if you understand the risk.</p>
 </section>
 
 <p class="genesis">genesis: <code>ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f</code></p>
@@ -611,6 +661,7 @@ curl https://explorer.btc09.org/api/circulating_supply</pre>
 const poolApi = 'https://www.ntmminer.com/api-btc09/pools/btc09';
 const minerApi = 'https://www.ntmminer.com/api-btc09/pools/btc09/miners?pageSize=20';
 const explorerApi = 'https://explorer.btc09.org/api/status';
+let currentNetworkStatus = null;
 
 function text(id, value) {
   document.getElementById(id).textContent = value;
@@ -641,6 +692,61 @@ function secondsText(value) {
   return fixed(n, 0) + 's';
 }
 
+function durationText(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return '-';
+  if (n >= 31_557_600) return fixed(n / 31_557_600, 2) + ' years';
+  if (n >= 86_400) return fixed(n / 86_400, 2) + ' days';
+  return secondsText(n);
+}
+
+function probabilityText(value) {
+  const percent = Number(value) * 100;
+  if (!Number.isFinite(percent) || percent < 0) return '-';
+  if (percent > 0 && percent < 0.01) return '<0.01%';
+  return fixed(percent, 2) + '%';
+}
+
+function soloEstimate(minerHashrate, networkHashrate, blockSeconds) {
+  const miner = Number(minerHashrate);
+  const network = Number(networkHashrate);
+  const seconds = Number(blockSeconds);
+  if (!(miner > 0) || !(network > 0) || !(seconds > 0)) return null;
+  const share = Math.min(miner / network, 1);
+  const expectedSeconds = seconds / share;
+  return {
+    share,
+    expectedSeconds,
+    chanceInOneHour: 1 - Math.exp(-3600 / expectedSeconds),
+    chanceInOneDay: 1 - Math.exp(-86400 / expectedSeconds),
+  };
+}
+
+function renderSoloEstimate() {
+  const input = document.getElementById('solo-hashrate');
+  const output = document.getElementById('solo-estimate');
+  const blockSeconds = Number(currentNetworkStatus?.epoch_average_block_seconds) > 0
+    ? currentNetworkStatus.epoch_average_block_seconds
+    : currentNetworkStatus?.target_block_seconds;
+  const estimate = soloEstimate(
+    input.value,
+    currentNetworkStatus?.estimated_network_hashrate_hps,
+    blockSeconds
+  );
+  if (!estimate) {
+    output.textContent = input.value
+      ? 'The official network estimate is unavailable right now.'
+      : 'Enter your hashrate to estimate your share and block odds.';
+    return;
+  }
+  output.textContent = [
+    'Estimated network share: ' + probabilityText(estimate.share),
+    'Expected block interval: ' + durationText(estimate.expectedSeconds),
+    'Chance within 1 hour: ' + probabilityText(estimate.chanceInOneHour),
+    'Chance within 1 day: ' + probabilityText(estimate.chanceInOneDay),
+  ].join(' | ');
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, { cache: 'no-store' });
   if (!response.ok) throw new Error(url + ' status ' + response.status);
@@ -654,10 +760,10 @@ function setLiveSummary(status, pool, miners) {
   const height = Number(heightValue ?? 0).toLocaleString();
   const difficulty = fixed(difficultyValue, 2);
   const peers = status ? Number(status.peers ?? 0).toLocaleString() : 'unknown';
-  const active = pool ? Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString() : 'pool unavailable';
+  const networkHashrate = status ? hashRate(status.estimated_network_hashrate_hps) : 'unavailable';
   const retarget = status?.blocks_to_retarget != null ? ', retarget in ' + Number(status.blocks_to_retarget).toLocaleString() + ' blocks' : '';
   live.replaceChildren(
-    document.createTextNode('network now: height ' + height + ', peers ' + peers + ', difficulty ' + difficulty + retarget + ', active pool miner addresses ' + active + '. '),
+    document.createTextNode('network now: height ' + height + ', peers ' + peers + ', difficulty ' + difficulty + retarget + ', estimated hashrate ' + networkHashrate + '. '),
     Object.assign(document.createElement('a'), { href: 'https://www.ntmminer.com/btc09', textContent: 'pool' }),
     document.createTextNode(' / '),
     Object.assign(document.createElement('a'), { href: 'https://explorer.btc09.org', textContent: 'explorer' }),
@@ -716,12 +822,20 @@ async function refreshStats() {
     text('stat-retarget', status?.blocks_to_retarget != null ? Number(status.blocks_to_retarget).toLocaleString() : '-');
     text('stat-next-diff', fixed(status?.estimated_next_difficulty, 2));
     text('stat-supply', status ? fixed(status.circulating_supply, 2) : '-');
+    const payoutWindows = Array.isArray(status?.payout_address_windows) ? status.payout_address_windows : [];
+    const window100 = payoutWindows.find((window) => Number(window.requested_blocks) === 100);
+    text('stat-network-hashrate', status ? hashRate(status.estimated_network_hashrate_hps) : '-');
+    text('stat-top-share-100', window100 ? fixed(window100.top_share_percent, 1) + '%' : '-');
+    text('stat-distinct-100', window100 ? Number(window100.distinct_payout_addresses).toLocaleString() : '-');
     text('stat-miners', pool ? Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString() : '-');
     text('stat-pool-hashrate', pool ? hashRate(pool.poolStats?.poolHashrate) : '-');
     text('stat-blocks', pool ? Number(pool.totalBlocks ?? 0).toLocaleString() : '-');
     text('stat-paid', pool ? fixed(pool.totalPaid, 2) : '-');
     note.className = 'muted';
-    note.textContent = 'Live chain data from the official 09C node. Difficulty retargets every ' + Number(status?.retarget_interval ?? 2016).toLocaleString() + ' blocks, Bitcoin-style. Updated ' + updated.toLocaleTimeString() + '.';
+    const hashrateWindow = status?.hashrate_observation_blocks > 0
+      ? ' Estimated hashrate uses ' + Number(status.hashrate_observation_blocks).toLocaleString() + ' observed blocks.'
+      : '';
+    note.textContent = 'Live chain data from the official 09C node.' + hashrateWindow + ' Difficulty retargets every ' + Number(status?.retarget_interval ?? 2016).toLocaleString() + ' blocks, Bitcoin-style. Updated ' + updated.toLocaleTimeString() + '.';
     const poolNote = document.getElementById('pool-note');
     if (poolNote) {
       poolNote.className = pool ? 'muted' : 'error';
@@ -731,6 +845,8 @@ async function refreshStats() {
     }
 
     renderMiners(miners);
+    currentNetworkStatus = status;
+    renderSoloEstimate();
     setLiveSummary(status, pool, miners);
   } catch (error) {
     note.className = 'error';
@@ -738,6 +854,7 @@ async function refreshStats() {
   }
 }
 
+document.getElementById('solo-hashrate').addEventListener('input', renderSoloEstimate);
 refreshStats();
 setInterval(refreshStats, 60000);
 </script>
