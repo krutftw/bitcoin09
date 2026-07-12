@@ -1,0 +1,193 @@
+package main
+
+import (
+	"context"
+	"crypto/ed25519"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/krutftw/bitcoin09/core"
+	"github.com/krutftw/bitcoin09/desktop"
+	"github.com/krutftw/bitcoin09/wallet"
+)
+
+type appTestPeers struct {
+	count  int
+	writes int
+}
+
+func (p *appTestPeers) PeerCount() int           { return p.count }
+func (p *appTestPeers) BroadcastTx(*core.Tx) int { return p.writes }
+
+func newAppTestService(t *testing.T) (*appService, *core.Chain, string) {
+	t.Helper()
+	dataDir := filepath.Join(t.TempDir(), "chain")
+	walletPath := filepath.Join(t.TempDir(), "wallet-regtest.json")
+	chain, err := core.NewChain(&core.RegTest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := newAppService(appServiceConfig{
+		Version: "test", Network: core.RegTestMachineID, Params: &core.RegTest,
+		DataDir: dataDir, WalletFile: walletPath, Chain: chain, Peers: &appTestPeers{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service, chain, walletPath
+}
+
+func TestAppServiceFirstRunCreatesNoWalletUntilApproved(t *testing.T) {
+	service, _, walletPath := newAppTestService(t)
+	status, err := service.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.WalletExists || len(status.Addresses) != 0 || status.Network != core.RegTestMachineID || status.WalletPath != walletPath {
+		t.Fatalf("unexpected first-run status: %+v", status)
+	}
+	if _, err := os.Stat(walletPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("status created wallet: %v", err)
+	}
+
+	created, err := service.CreateWallet(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.WalletExists || len(created.Addresses) != 1 || created.Addresses[0] == "" {
+		t.Fatalf("created status: %+v", created)
+	}
+	opened, err := wallet.Open(walletPath, core.RegTestMachineID)
+	if err != nil || opened.Addresses()[0] != created.Addresses[0] {
+		t.Fatalf("durable wallet mismatch: %v", err)
+	}
+}
+
+func TestAppServiceCreatesDurableReceiveAddressAndBackup(t *testing.T) {
+	service, _, walletPath := newAppTestService(t)
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	address, err := service.NewAddress(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := wallet.Open(walletPath, core.RegTestMachineID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addresses := opened.Addresses()
+	if len(addresses) != 2 || addresses[1] != address.Address {
+		t.Fatalf("addresses = %v, result = %+v", addresses, address)
+	}
+
+	backupPath := filepath.Join(t.TempDir(), "offline-wallet-backup.json")
+	backup, err := service.Backup(context.Background(), backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backup.Destination != backupPath {
+		t.Fatalf("backup destination = %q", backup.Destination)
+	}
+	backedUp, err := wallet.Open(backupPath, core.RegTestMachineID)
+	if err != nil || strings.Join(backedUp.Addresses(), ",") != strings.Join(addresses, ",") {
+		t.Fatalf("backup wallet mismatch: %v", err)
+	}
+	if _, err := service.Backup(context.Background(), backupPath); err == nil {
+		t.Fatal("backup overwrote an existing file")
+	}
+	if _, err := service.Backup(context.Background(), walletPath); err == nil {
+		t.Fatal("backup accepted source wallet as destination")
+	}
+}
+
+func TestAppServicePreviewsAndConfirmsExactAnchoredPayment(t *testing.T) {
+	service, chain, walletPath := newAppTestService(t)
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w, err := wallet.Open(walletPath, core.RegTestMachineID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := int64(0); i < core.RegTest.CoinbaseMaturity+2; i++ {
+		mineCLITestBlock(t, chain, w.PrimaryPKH())
+	}
+	externalKey, err := core.NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := core.EncodeAddress(core.PubKeyHash20(externalKey.Public().(ed25519.PublicKey)))
+	service.now = func() time.Time { return time.Unix(1000, 0) }
+	var submitted *core.Tx
+	service.submit = func(tx *core.Tx) (core.TxAcceptanceResult, int, error) {
+		submitted = tx
+		result, err := wallet.SubmitPayment(chain, tx)
+		return result, 3, err
+	}
+
+	preview, err := service.PreviewSend(context.Background(), desktop.SendRequest{
+		Destination: destination, Amount: "1.25000000", Fee: "0.00010000",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.PendingID == "" || preview.Destination != destination || preview.AmountUnits != 125000000 || preview.FeeUnits != 10000 || preview.TotalUnits != 125010000 || len(preview.SelectedInputs) == 0 || preview.ExpiresAtUnix != 1300 || len(preview.ConfirmationCode) != 6 {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if len(chain.MempoolTxs()) != 0 {
+		t.Fatal("preview submitted transaction before confirmation")
+	}
+	result, err := service.ConfirmSend(context.Background(), preview.PendingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if submitted == nil || result.TxID != preview.TxID || result.Status != "submitted" || result.PeerWrites != 3 || len(chain.MempoolTxs()) != 1 {
+		t.Fatalf("result=%+v submitted=%v mempool=%d", result, submitted != nil, len(chain.MempoolTxs()))
+	}
+	if _, err := service.ConfirmSend(context.Background(), preview.PendingID); err == nil {
+		t.Fatal("confirmation replay succeeded")
+	}
+}
+
+func TestAppServiceKeepsPreparedPaymentAfterTransientSubmitFailure(t *testing.T) {
+	service, chain, walletPath := newAppTestService(t)
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w, err := wallet.Open(walletPath, core.RegTestMachineID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := int64(0); i < core.RegTest.CoinbaseMaturity+2; i++ {
+		mineCLITestBlock(t, chain, w.PrimaryPKH())
+	}
+	externalKey, err := core.NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := core.EncodeAddress(core.PubKeyHash20(externalKey.Public().(ed25519.PublicKey)))
+	preview, err := service.PreviewSend(context.Background(), desktop.SendRequest{Destination: destination, Amount: "1", Fee: "0.0001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	service.submit = func(tx *core.Tx) (core.TxAcceptanceResult, int, error) {
+		attempts++
+		if attempts == 1 {
+			return "", 0, errors.New("peer temporarily unavailable")
+		}
+		result, err := wallet.SubmitPayment(chain, tx)
+		return result, 1, err
+	}
+	if _, err := service.ConfirmSend(context.Background(), preview.PendingID); err == nil {
+		t.Fatal("transient submit failure was hidden")
+	}
+	if _, err := service.ConfirmSend(context.Background(), preview.PendingID); err != nil {
+		t.Fatalf("prepared payment was not retryable: %v", err)
+	}
+}
