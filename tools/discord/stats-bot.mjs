@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { redactDiscordPath } from "./discord-api.mjs";
 import { DiscordGatewayWatcher, fetchGatewayWithRetry } from "./gateway-watcher.mjs";
 
 const API_BASE = "https://discord.com/api/v10";
-const POOL_ID = "09c";
-const POOL_BASE = "https://bitcoin09.tutuit.xyz/api/pools/" + POOL_ID;
+const POOL_ID = "btc09";
+const POOL_BASE = "https://www.ntmminer.com/api-btc09/pools/" + POOL_ID;
 const EXPLORER_STATUS = "https://explorer.btc09.org/api/status";
 const DISCORD_INVITE = "https://discord.gg/fUuGzwRTzP";
 const MESSAGE_MARKER = "Bitcoin 09 live mining stats";
@@ -36,10 +36,12 @@ if (args.has("--help")) {
   process.exit(0);
 }
 
-main().catch((error) => {
-  console.error(error.message || error);
-  process.exitCode = error.exitCode ?? 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error.message || error);
+    process.exitCode = error.exitCode ?? 1;
+  });
+}
 
 async function main() {
   if (args.size === 0) {
@@ -146,9 +148,15 @@ async function watchGateway() {
 }
 
 async function handleInteraction(interaction) {
-  if (interaction.type === 3 && interaction.data?.custom_id?.startsWith("role:toggle:")) {
-    await handleRoleButtonInteraction(interaction);
-  }
+	const action = classifyInteraction(interaction);
+	if (action === "stats") await handleStatsInteraction(interaction);
+	if (action === "role") await handleRoleButtonInteraction(interaction);
+}
+
+export function classifyInteraction(interaction) {
+	if (interaction?.type === 2 && interaction.data?.name === "stats") return "stats";
+	if (interaction?.type === 3 && interaction.data?.custom_id?.startsWith("role:toggle:")) return "role";
+	return null;
 }
 
 async function handleStatsInteraction(interaction) {
@@ -235,74 +243,95 @@ async function getMemberRoleIds(guildId, userId, interactionMember) {
   return member.roles ?? [];
 }
 
-async function getStats() {
-  const [poolData, miners, blocks, payments, explorer] = await Promise.all([
-    json(POOL_BASE),
-    json(`${POOL_BASE}/miners?pageSize=20`),
-    json(`${POOL_BASE}/blocks?pageSize=50`),
-    json(`${POOL_BASE}/payments?pageSize=50`),
-    json(EXPLORER_STATUS).catch(() => null),
+export async function getStats(fetchImpl = fetch) {
+  const explorer = await json(EXPLORER_STATUS, undefined, fetchImpl);
+  const optional = await Promise.allSettled([
+    json(POOL_BASE, undefined, fetchImpl),
+    json(`${POOL_BASE}/miners?pageSize=20`, undefined, fetchImpl),
+    json(`${POOL_BASE}/blocks?pageSize=50`, undefined, fetchImpl),
+    json(`${POOL_BASE}/payments?pageSize=50`, undefined, fetchImpl),
   ]);
-
-  const uniqueBlockMiners = unique(blocks.map((block) => block.miner));
-  const uniquePaymentAddresses = unique(payments.map((payment) => payment.address));
+  const poolData = settled(optional[0], null);
+  const miners = settled(optional[1], []);
+  const blocks = settled(optional[2], []);
+  const payments = settled(optional[3], []);
+  const pool = poolData?.pool ?? null;
 
   return {
     checkedAt: new Date(),
-    pool: poolData.pool,
-    miners,
+    pool,
+    miners: Array.isArray(miners) ? miners : [],
     explorer,
-    uniqueBlockMiners,
-    uniquePaymentAddresses,
+    uniqueBlockMiners: Array.isArray(blocks) ? unique(blocks.map((block) => block.miner)) : [],
+    uniquePaymentAddresses: Array.isArray(payments) ? unique(payments.map((payment) => payment.address)) : [],
   };
 }
 
-function formatStatsMessage(stats) {
-  const pool = stats.pool;
-  const network = pool.networkStats ?? {};
-  const poolStats = pool.poolStats ?? {};
-  const activeMinerCount = Number(poolStats.connectedMiners ?? stats.miners.length);
-  const topMiners = stats.miners
-    .slice(0, 5)
-    .map((miner, index) => `${index + 1}. \`${miner.miner}\` - ${formatHashrate(miner.hashrate)}`)
-    .join("\n");
-  const explorerPeers = stats.explorer ? Number(stats.explorer.peers).toLocaleString() : "unavailable";
-  const explorerHeight = stats.explorer ? Number(stats.explorer.height).toLocaleString() : "unavailable";
-  const retargetBlocks = stats.explorer?.blocks_to_retarget ?? null;
-  const nextRetargetHeight = stats.explorer?.next_retarget_height ?? null;
-
-  return [
+export function formatStatsMessage(stats) {
+  const explorer = stats.explorer;
+  const retargetBlocks = explorer.blocks_to_retarget ?? null;
+  const nextRetargetHeight = explorer.next_retarget_height ?? null;
+  const payoutWindows = Array.isArray(explorer.payout_address_windows) ? explorer.payout_address_windows : [];
+  const window100 = payoutWindows.find((window) => Number(window.requested_blocks) === 100);
+  const lines = [
     MESSAGE_MARKER,
     "",
-    `Active pool miner addresses: **${activeMinerCount.toLocaleString()}**`,
-    `Pool hashrate: **${formatHashrate(poolStats.poolHashrate)}**`,
-    `Pool-reported height: **${Number(network.blockHeight ?? 0).toLocaleString()}**`,
-    `Explorer height / peers: **${explorerHeight} / ${explorerPeers}**`,
-    `Difficulty: **${formatNumber(network.networkDifficulty, 2)}**`,
-    `Target / avg this window: **${formatDuration(stats.explorer?.target_block_seconds)} / ${formatDuration(stats.explorer?.epoch_average_block_seconds)}**`,
+    `Network height / peers: **${Number(explorer.height).toLocaleString()} / ${Number(explorer.peers).toLocaleString()}**`,
+    `Estimated network hashrate: **${formatHashrate(explorer.estimated_network_hashrate_hps)}**`,
+    `Difficulty: **${formatNumber(explorer.difficulty, 2)}**`,
+    `Target / avg this window: **${formatDuration(explorer.target_block_seconds)} / ${formatDuration(explorer.epoch_average_block_seconds)}**`,
     `Retarget: **${retargetBlocks == null ? "unavailable" : Number(retargetBlocks).toLocaleString() + " blocks"}**${nextRetargetHeight == null ? "" : `, height **${Number(nextRetargetHeight).toLocaleString()}**`}`,
-    `Est. next difficulty: **${formatNumber(stats.explorer?.estimated_next_difficulty, 2)}**`,
-    `Pool blocks found: **${Number(pool.blocksFound ?? 0).toLocaleString()}**`,
-    `Pool paid: **${formatNumber(pool.totalPaid, 4)} 09C**`,
-    `Recent block winner addresses: **${stats.uniqueBlockMiners.length.toLocaleString()}**`,
-    `Recent payout addresses: **${stats.uniquePaymentAddresses.length.toLocaleString()}**`,
+    `Est. next difficulty: **${formatNumber(explorer.estimated_next_difficulty, 2)}**`,
+  ];
+
+  if (window100) {
+    lines.push(
+      `Top payout address, last 100 blocks: **${formatNumber(window100.top_share_percent, 1)}%** (${Number(window100.top_payout_blocks).toLocaleString()} of ${Number(window100.observed_blocks).toLocaleString()}; ${Number(window100.distinct_payout_addresses).toLocaleString()} payout address${Number(window100.distinct_payout_addresses) === 1 ? "" : "es"})`,
+    );
+  }
+
+  if (stats.pool) {
+    const poolStats = stats.pool.poolStats ?? {};
+    const activeMinerCount = Number(poolStats.connectedMiners ?? stats.miners.length);
+    const topMiners = stats.miners
+      .slice(0, 5)
+      .map((miner, index) => `${index + 1}. \`${miner.miner}\` - ${formatHashrate(miner.hashrate)}`)
+      .join("\n");
+    lines.push(
+      "",
+      "Community pool (third-party)",
+      `Active pool payout addresses: **${activeMinerCount.toLocaleString()}**`,
+      `Pool hashrate: **${formatHashrate(poolStats.poolHashrate)}**`,
+      `Pool blocks found: **${Number(stats.pool.totalBlocks ?? stats.pool.blocksFound ?? 0).toLocaleString()}**`,
+      `Pool paid: **${formatNumber(stats.pool.totalPaid, 4)} 09C**`,
+      `Recent block winner addresses: **${stats.uniqueBlockMiners.length.toLocaleString()}**`,
+      `Recent payout addresses: **${stats.uniquePaymentAddresses.length.toLocaleString()}**`,
+      "",
+      "Top active pool addresses:",
+      topMiners || "No active pool miners reported.",
+    );
+  }
+
+  lines.push(
     "",
-    "Top active pool addresses:",
-    topMiners || "No active pool miners reported.",
-    "",
-    "Difficulty retargets every 2,016 blocks, Bitcoin-style. Miner count means public-pool payout addresses, not guaranteed unique people.",
-    `Pool: https://bitcoin09.tutuit.xyz | Explorer: https://explorer.btc09.org | Discord: ${DISCORD_INVITE}`,
+    "Chain figures come from the official 09C node. A payout address is not necessarily one person.",
+    `Explorer: https://explorer.btc09.org${stats.pool ? " | Community pool: https://www.ntmminer.com/btc09" : ""} | Discord: ${DISCORD_INVITE}`,
     `Updated: <t:${Math.floor(stats.checkedAt.getTime() / 1000)}:R>`,
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
-async function json(url, options) {
-  const response = await fetch(url, options);
+async function json(url, options, fetchImpl = fetch) {
+  const response = await fetchImpl(url, options);
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`${url} failed with ${response.status}: ${text}`);
   }
   return response.json();
+}
+
+function settled(result, fallback) {
+  return result.status === "fulfilled" ? result.value : fallback;
 }
 
 async function discord(method, path, body, options = {}, attempt = 0) {
