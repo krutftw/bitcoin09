@@ -35,7 +35,7 @@ import (
 )
 
 // nodeVersion is the release version; bump alongside git tags.
-const nodeVersion = "v0.1.22"
+const nodeVersion = "v0.1.23"
 
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
@@ -167,37 +167,44 @@ func coins(units int64) string {
 
 func main() {
 	log.SetFlags(log.Ltime)
-	if len(os.Args) < 2 {
-		usage()
-	}
-	switch os.Args[1] {
+	command, args := selectCommand(os.Args[1:])
+	switch command {
+	case "app":
+		cmdApp(args)
 	case "node":
-		cmdNode(os.Args[2:])
+		cmdNode(args)
 	case "wallet":
-		cmdWallet(os.Args[2:])
+		cmdWallet(args)
 	case "send":
-		cmdSend(os.Args[2:])
+		cmdSend(args)
 	case "mine-pool":
-		cmdMinePool(os.Args[2:])
+		cmdMinePool(args)
 	case "prepare-send":
-		if code := runMachineCommand("prepare-send", os.Args[2:], os.Stdin, os.Stdout); code != 0 {
+		if code := runMachineCommand("prepare-send", args, os.Stdin, os.Stdout); code != 0 {
 			os.Exit(code)
 		}
 	case "inspect-tx":
-		if code := runMachineCommand("inspect-tx", os.Args[2:], os.Stdin, os.Stdout); code != 0 {
+		if code := runMachineCommand("inspect-tx", args, os.Stdin, os.Stdout); code != 0 {
 			os.Exit(code)
 		}
 	case "broadcast-tx":
-		if code := runMachineCommand("broadcast-tx", os.Args[2:], os.Stdin, os.Stdout); code != 0 {
+		if code := runMachineCommand("broadcast-tx", args, os.Stdin, os.Stdout); code != 0 {
 			os.Exit(code)
 		}
 	case "genesis-mine":
-		cmdGenesisMine(os.Args[2:])
+		cmdGenesisMine(args)
 	case "version":
 		fmt.Printf("%s (%s) reference node %s\n", core.CoinName, core.Ticker, nodeVersion)
 	default:
 		usage()
 	}
+}
+
+func selectCommand(args []string) (string, []string) {
+	if len(args) == 0 {
+		return "app", nil
+	}
+	return args[0], args[1:]
 }
 
 func runMachineCommand(command string, args []string, stdin io.Reader, stdout io.Writer) int {
@@ -224,6 +231,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `%s (%s): the coin that you can mine like it's 2009
 
 usage:
+  btc09 app    [-network mainnet|regtest] [-datadir DIR] [-wallet-file FILE] [-seeds HOSTS] [-no-browser]
   btc09 node   [-mine] [-listen :9009] [-solo-api 127.0.0.1:9010] [-seeds host:port,...] [-network mainnet|regtest] [-datadir DIR] [-wallet-file FILE] [-tag TEXT] [-no-update-check]
   btc09 wallet new|list [-network mainnet|regtest] [-datadir DIR] [-wallet-file FILE]
   btc09 wallet new -wallet-file FILE -network btc09-mainnet|btc09-regtest -json

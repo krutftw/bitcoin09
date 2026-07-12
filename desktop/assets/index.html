@@ -9,160 +9,129 @@
 </head>
 <body>
   <div class="signal-field" aria-hidden="true"></div>
-  <div class="app-shell">
-    <aside class="status-rail" aria-label="BTC09 status">
+  <div class="wallet-frame">
+    <header class="topbar">
       <a class="wordmark" href="#top" aria-label="BTC09 Wallet home">
         <span class="wordmark-mark">09</span>
-        <span>BTC09<br><small>WALLET</small></span>
+        <span><strong>BTC09</strong><small>WALLET</small></span>
       </a>
-      <div class="rail-readout">
-        <span class="readout-label">Network</span>
-        <strong id="network-state">STARTING</strong>
-      </div>
-      <div class="rail-readout">
-        <span class="readout-label">Chain</span>
-        <strong id="chain-height">—</strong>
-      </div>
-      <div class="rail-readout">
-        <span class="readout-label">Peers</span>
-        <strong id="peer-count">—</strong>
-      </div>
-      <div class="rail-footer">
+      <div class="topbar-account">
         <span class="status-lamp" id="status-lamp" aria-hidden="true"></span>
-        <span id="sync-state">Connecting</span>
+        <span id="network-state">STARTING</span>
       </div>
-    </aside>
+    </header>
 
-    <main id="top">
-      <header class="masthead">
+    <div class="app-shell">
+      <aside class="status-rail" aria-label="BTC09 status">
         <div>
-          <p class="eyebrow">THE COIN YOU CAN MINE LIKE IT'S 2009</p>
-          <h1>Your 09C,<br><em>under your control.</em></h1>
+          <p class="rail-heading">LOCAL NODE</p>
+          <div class="rail-readout"><span>Connection</span><strong id="sync-state">Connecting</strong></div>
+          <div class="rail-readout"><span>Block height</span><strong id="chain-height">—</strong></div>
+          <div class="rail-readout"><span>Peers</span><strong id="peer-count">—</strong></div>
         </div>
-        <div class="version-stamp" aria-label="Application version">
-          <span>REFERENCE WALLET</span>
-          <strong id="app-version">—</strong>
+        <div class="privacy-note">
+          <span aria-hidden="true">●</span>
+          <p>Keys stay on this computer. No cloud account.</p>
         </div>
-      </header>
+        <div class="version-stamp"><span>REFERENCE WALLET</span><strong id="app-version">—</strong></div>
+      </aside>
 
-      <section id="loading-view" class="loading-panel" aria-live="polite">
-        <span class="loader" aria-hidden="true"></span>
-        <p>Opening your local wallet…</p>
-      </section>
+      <main id="top">
+        <section id="loading-view" class="loading-panel" aria-live="polite">
+          <span class="loader" aria-hidden="true"></span>
+          <p>Opening your wallet…</p>
+        </section>
 
-      <section id="first-run" class="first-run" hidden>
-        <div class="section-number" aria-hidden="true">01</div>
-        <div class="first-run-copy">
-          <p class="kicker">FIRST RUN</p>
-          <h2>Create your BTC09 wallet</h2>
-          <p>This creates a private wallet file on this computer. BTC09 never sends your keys to a website or server.</p>
+        <section id="first-run" class="first-run" hidden>
+          <div class="setup-mark" aria-hidden="true">09</div>
+          <p class="kicker">WELCOME TO BTC09</p>
+          <h1>Create your wallet</h1>
+          <p class="setup-intro">Your private keys are stored in one wallet file on this computer. BTC09 never uploads them.</p>
           <div class="file-location">
             <span>WALLET FILE</span>
             <code id="first-run-path">—</code>
           </div>
           <label class="safety-check">
             <input id="wallet-safety-ack" type="checkbox">
-            <span>I understand that I need an offline backup of this file. Anyone with the file can spend my 09C.</span>
+            <span>I understand that I need an offline backup. Anyone with the wallet file can spend my 09C.</span>
           </label>
-          <button id="create-wallet" class="primary-action" type="button" disabled>
-            <span>Create wallet</span><span aria-hidden="true">→</span>
-          </button>
-        </div>
-      </section>
+          <button id="create-wallet" class="primary-action full-action" type="button" disabled>Create wallet</button>
+        </section>
 
-      <section id="wallet-view" class="wallet-view" hidden>
-        <div class="balance-band">
-          <div>
-            <span class="balance-label">AVAILABLE BALANCE</span>
+        <section id="wallet-view" class="wallet-view" hidden>
+          <header class="account-bar">
+            <div>
+              <span class="account-label">MAIN WALLET</span>
+              <strong>Account 1</strong>
+            </div>
+            <button id="copy-address" class="address-chip" type="button" aria-label="Copy receive address">
+              <span id="address-chip-text">Loading address…</span><b aria-hidden="true">▣</b>
+            </button>
+          </header>
+
+          <section class="account-summary">
+            <span class="balance-label">TOTAL BALANCE</span>
             <p class="balance-value"><strong id="balance-major">0</strong><span id="balance-minor">.00000000</span> <b>09C</b></p>
-          </div>
-          <div class="balance-note">
-            <span id="balance-state">LOCAL CHAIN BALANCE</span>
-            <small id="tip-hash">Tip —</small>
-          </div>
-        </div>
+            <p class="balance-note"><span id="balance-state">LOCAL CHAIN BALANCE</span><small id="tip-hash">Tip —</small></p>
+          </section>
 
-        <div class="ledger">
-          <nav class="ledger-tabs" aria-label="Wallet actions">
-            <button class="ledger-tab is-active" type="button" data-panel="receive-panel">Receive</button>
-            <button class="ledger-tab" type="button" data-panel="send-panel">Send</button>
-            <button class="ledger-tab" type="button" data-panel="safety-panel">Backup</button>
+          <nav class="quick-actions" aria-label="Wallet actions">
+            <button class="ledger-tab is-active" type="button" data-panel="receive-panel"><span aria-hidden="true">↓</span><b>Receive</b></button>
+            <button class="ledger-tab" type="button" data-panel="send-panel"><span aria-hidden="true">↑</span><b>Send</b></button>
+            <button class="ledger-tab" type="button" data-panel="safety-panel"><span aria-hidden="true">◇</span><b>Backup</b></button>
           </nav>
 
-          <section id="receive-panel" class="ledger-panel receive-panel">
-            <div class="panel-heading">
-              <span class="section-number" aria-hidden="true">02</span>
-              <div><p class="kicker">RECEIVE 09C</p><h2>Your receive address</h2></div>
-            </div>
-            <div class="receive-layout">
-              <div class="qr-frame"><img id="receive-qr" alt="QR code for the current receive address"></div>
-              <div class="address-block">
-                <span class="field-label">CURRENT ADDRESS</span>
-                <code id="receive-address" tabindex="0">—</code>
-                <div class="button-row">
-                  <button id="copy-address" class="primary-action compact" type="button">Copy address</button>
-                  <button id="new-address" class="quiet-action" type="button">New address</button>
+          <div class="ledger">
+            <section id="receive-panel" class="ledger-panel receive-panel">
+              <div class="panel-heading"><div><p class="kicker">RECEIVE</p><h2>Deposit 09C</h2></div></div>
+              <p class="panel-intro">Share this address or QR code with the sender.</p>
+              <div class="receive-layout">
+                <div class="qr-frame"><img id="receive-qr" alt="QR code for the current receive address"></div>
+                <div class="address-block">
+                  <span class="field-label">YOUR BTC09 ADDRESS</span>
+                  <code id="receive-address" tabindex="0">—</code>
+                  <div class="button-row">
+                    <button id="new-address" class="quiet-action" type="button">Create new address</button>
+                  </div>
+                  <p class="field-note">A new address still belongs to this wallet. Never share the wallet file itself.</p>
                 </div>
-                <p class="field-note">Share the address, never the wallet file. A fresh address still belongs to this same wallet.</p>
               </div>
-            </div>
-          </section>
+            </section>
 
-          <section id="send-panel" class="ledger-panel" hidden>
-            <div class="panel-heading">
-              <span class="section-number" aria-hidden="true">03</span>
-              <div><p class="kicker">SEND 09C</p><h2>Prepare a payment</h2></div>
-            </div>
-            <form id="send-form" novalidate>
-              <label class="field wide-field">
-                <span class="field-label">DESTINATION ADDRESS</span>
-                <input id="send-destination" name="destination" autocomplete="off" spellcheck="false" required>
-              </label>
-              <div class="field-pair">
-                <label class="field">
-                  <span class="field-label">AMOUNT</span>
-                  <span class="amount-input"><input id="send-amount" name="amount" inputmode="decimal" placeholder="0.00000000" required><b>09C</b></span>
-                </label>
-                <label class="field">
-                  <span class="field-label">NETWORK FEE</span>
-                  <span class="amount-input"><input id="send-fee" name="fee" inputmode="decimal" value="0.00010000" required><b>09C</b></span>
-                </label>
+            <section id="send-panel" class="ledger-panel" hidden>
+              <div class="panel-heading"><div><p class="kicker">SEND</p><h2>Send 09C</h2></div></div>
+              <p class="panel-intro">You will review the exact amount, fee, and destination before broadcast.</p>
+              <form id="send-form" novalidate>
+                <label class="field wide-field"><span class="field-label">DESTINATION ADDRESS</span><input id="send-destination" name="destination" autocomplete="off" spellcheck="false" required></label>
+                <div class="field-pair">
+                  <label class="field"><span class="field-label">AMOUNT</span><span class="amount-input"><input id="send-amount" name="amount" inputmode="decimal" placeholder="0.00000000" required><b>09C</b></span></label>
+                  <label class="field"><span class="field-label">NETWORK FEE</span><span class="amount-input"><input id="send-fee" name="fee" inputmode="decimal" value="0.00010000" required><b>09C</b></span></label>
+                </div>
+                <p id="send-availability" class="field-note">Checking chain and peer connection…</p>
+                <button class="primary-action full-action" id="preview-send" type="submit">Review payment</button>
+              </form>
+            </section>
+
+            <section id="safety-panel" class="ledger-panel" hidden>
+              <div class="panel-heading"><div><p class="kicker">SECURITY</p><h2>Back up your wallet</h2></div></div>
+              <p class="panel-intro">Save a copy to a disconnected USB drive or another offline location.</p>
+              <div class="backup-copy">
+                <label class="field wide-field"><span class="field-label">BACKUP FILE</span><input id="backup-destination" autocomplete="off" spellcheck="false"></label>
+                <button id="backup-wallet" class="primary-action full-action" type="button">Create backup</button>
+                <p class="field-note">BTC09 will not overwrite an existing file.</p>
               </div>
-              <p id="send-availability" class="field-note">Checking the local chain and peer connection…</p>
-              <button class="primary-action" id="preview-send" type="submit"><span>Review payment</span><span aria-hidden="true">→</span></button>
-            </form>
-          </section>
-
-          <section id="safety-panel" class="ledger-panel" hidden>
-            <div class="panel-heading">
-              <span class="section-number" aria-hidden="true">04</span>
-              <div><p class="kicker">KEY SAFETY</p><h2>Make an offline backup</h2></div>
-            </div>
-            <div class="backup-copy">
-              <p>Your wallet file contains the keys that control your 09C. Save a copy to a disconnected USB drive or another offline location.</p>
-              <label class="field wide-field">
-                <span class="field-label">BACKUP FILE</span>
-                <input id="backup-destination" autocomplete="off" spellcheck="false">
-              </label>
-              <button id="backup-wallet" class="primary-action" type="button"><span>Create backup</span><span aria-hidden="true">↗</span></button>
-              <p class="field-note">BTC09 will not overwrite an existing file.</p>
-            </div>
-          </section>
-        </div>
-      </section>
-
-      <footer class="app-footer">
-        <span>LOCAL INTERFACE • NO CLOUD ACCOUNT</span>
-        <span>btc09.org</span>
-      </footer>
-    </main>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
   </div>
 
   <dialog id="review-payment" class="review-sheet" aria-labelledby="review-title">
     <form method="dialog" class="review-card">
       <div class="review-header"><p class="kicker">FINAL REVIEW</p><button class="icon-button" value="cancel" aria-label="Close payment review">×</button></div>
-      <h2 id="review-title">Check every detail</h2>
-      <p>BTC09 will broadcast exactly this signed transaction. Payments cannot be undone.</p>
+      <h2 id="review-title">Confirm payment</h2>
+      <p>Payments cannot be undone. Check every detail before broadcasting.</p>
       <dl class="review-ledger">
         <div><dt>TO</dt><dd id="review-destination">—</dd></div>
         <div><dt>AMOUNT</dt><dd id="review-amount">—</dd></div>
@@ -171,10 +140,7 @@
         <div><dt>CHAIN HEIGHT</dt><dd id="review-height">—</dd></div>
         <div><dt>CHECK CODE</dt><dd id="review-code">—</dd></div>
       </dl>
-      <div class="review-actions">
-        <button class="quiet-action" value="cancel">Go back</button>
-        <button id="confirm-send" class="primary-action" type="button">Broadcast payment</button>
-      </div>
+      <div class="review-actions"><button class="quiet-action" value="cancel">Go back</button><button id="confirm-send" class="primary-action" type="button">Broadcast payment</button></div>
     </form>
   </dialog>
 

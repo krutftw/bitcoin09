@@ -37,6 +37,28 @@ back.
 
 ## Quick start
 
+### Desktop wallet
+
+Download the binary for your system and open it. Running BTC09 without a
+command starts the local desktop wallet in your browser:
+
+```powershell
+.\btc09-windows-amd64.exe
+```
+
+You can also start it explicitly with `btc09 app`. The app creates and backs
+up your wallet, shows balance and sync status, generates receive addresses and
+QR codes, and reviews each payment before broadcasting it. It runs only on a
+random `127.0.0.1` port, keeps wallet keys on this computer, and does not use a
+cloud account or external web assets.
+
+The app uses the same wallet file and chain data as the command-line tools, so
+existing users do not need to move or import anything. Leave it open while it
+syncs. Sending becomes available after the local chain has data and a peer is
+connected.
+
+### Build or run the node
+
 You need [Go 1.25+](https://go.dev/dl/).
 
 ```
@@ -95,8 +117,8 @@ contents into the command line. `send` spends from the wallet file in your data
 directory.
 
 09C is a native chain coin, not an Ethereum or Solana token. MetaMask,
-Phantom, and token-contract wallets do not support it. Use the `btc09` wallet
-for now.
+Phantom, and token-contract wallets do not support it. Use the BTC09 desktop
+wallet or command-line wallet.
 
 Balance notes:
 
@@ -289,10 +311,11 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.22 is current. It moves the primary public seed onto a dedicated P2P-only
-host and adds its direct address while retaining the former seed as a fallback.
-It also fixes Discord OTC replies that could stay on “thinking” when no button
-view was attached. There are no consensus or wallet changes.
+v0.1.23 is current. It adds the first BTC09 desktop wallet: a compact local app
+for wallet creation and backup, balance and sync status, receive addresses and
+QR codes, and reviewed transaction broadcast. It uses the existing wallet file
+and consensus code, binds only to a random loopback port, and is included in the
+same Windows, macOS, and Linux binaries. There are no consensus changes.
 
 Network:
 

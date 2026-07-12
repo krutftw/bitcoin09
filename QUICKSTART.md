@@ -30,8 +30,34 @@ with `.\btc09-windows-amd64.exe` unless you renamed or installed the binary.
 Current release:
 
 ```text
-Bitcoin 09 (09C) reference node v0.1.22
+Bitcoin 09 (09C) reference node v0.1.23
 ```
+
+## Open the Desktop Wallet
+
+Double-click the downloaded BTC09 program, or run it without a command:
+
+```powershell
+.\btc09-windows-amd64.exe
+```
+
+BTC09 opens a local wallet interface in your normal browser. It can create and
+back up the wallet, show your balance and sync status, make receive addresses
+and QR codes, and review and send payments. It binds only to `127.0.0.1` on a
+random port. Your private keys remain in the wallet file on this computer.
+
+The first screen shows the exact wallet file location. Create an offline backup
+before using the wallet for meaningful funds. The app never overwrites an
+existing backup file.
+
+If the browser does not open automatically, start it from a terminal with:
+
+```powershell
+.\btc09-windows-amd64.exe app
+```
+
+Leave BTC09 open while the chain syncs. The Send screen unlocks when the local
+chain has data and at least one peer is connected.
 
 ## Run a Full Node
 
@@ -118,7 +144,7 @@ show a balance later than the public explorer while it catches up.
 ## Send 09C
 
 09C is a native chain coin, not an Ethereum or Solana token. MetaMask and
-Phantom do not support it. Use the `btc09` wallet/node.
+Phantom do not support it. Use the BTC09 desktop wallet or command-line node.
 
 List your wallet addresses and local balance:
 

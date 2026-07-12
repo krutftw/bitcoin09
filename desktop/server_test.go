@@ -99,6 +99,9 @@ func launchSession(t *testing.T, server http.Handler) (*http.Cookie, string) {
 	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode || cookie.Path != "/" {
 		t.Fatalf("unsafe session cookie: %#v", cookie)
 	}
+	if cookie.MaxAge <= 0 || cookie.MaxAge > 24*60*60 {
+		t.Fatalf("session cookie has unsafe lifetime: %#v", cookie)
+	}
 
 	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	statusReq.Host = "127.0.0.1:49152"
@@ -123,6 +126,22 @@ func launchSession(t *testing.T, server http.Handler) (*http.Cookie, string) {
 	return cookie, envelope.Data.CSRF
 }
 
+func TestSessionExpiresServerSide(t *testing.T) {
+	server := testServer(t)
+	now := int64(1_000)
+	server.nowUnix = func() int64 { return now }
+	cookie, _ := launchSession(t, server)
+	now += 8*60*60 + 1
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Host = "127.0.0.1:49152"
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	server.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized || !strings.Contains(rr.Body.String(), "session_required") {
+		t.Fatalf("expired session status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestServerRejectsNonLoopbackHost(t *testing.T) {
 	server := testServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/?token="+strings.Repeat("a", 64), nil)
@@ -134,6 +153,26 @@ func TestServerRejectsNonLoopbackHost(t *testing.T) {
 	}
 	if strings.Contains(rr.Body.String(), "token") {
 		t.Fatalf("response leaked launch material: %s", rr.Body.String())
+	}
+}
+
+func TestServerSetsStrictBrowserSecurityHeaders(t *testing.T) {
+	server := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "127.0.0.1:49152"
+	rr := httptest.NewRecorder()
+	server.ServeHTTP(rr, req)
+	for _, header := range []string{
+		"Content-Security-Policy", "Cross-Origin-Opener-Policy", "Cross-Origin-Resource-Policy",
+		"Permissions-Policy", "Referrer-Policy", "X-Content-Type-Options", "X-Frame-Options",
+	} {
+		if rr.Header().Get(header) == "" {
+			t.Errorf("missing security header %s", header)
+		}
+	}
+	csp := rr.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "unsafe-inline") || strings.Contains(csp, "unsafe-eval") || !strings.Contains(csp, "object-src 'none'") {
+		t.Fatalf("unsafe CSP: %q", csp)
 	}
 }
 

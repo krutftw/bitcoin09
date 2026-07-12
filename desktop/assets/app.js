@@ -80,6 +80,7 @@ function renderStatus(status) {
   byId("balance-state").textContent = status.peer_count > 0 ? "CONNECTED LOCAL CHAIN" : "OFFLINE LOCAL CHAIN";
   const address = status.addresses?.[status.addresses.length - 1] || "";
   byId("receive-address").textContent = address || "No receive address";
+  byId("address-chip-text").textContent = address ? `${address.slice(0, 7)}…${address.slice(-5)}` : "No address";
   byId("receive-qr").src = address ? `/api/v1/receive-qr?address=${encodeURIComponent(address)}` : "";
   byId("backup-destination").value ||= suggestedBackupPath(status.wallet_path);
   const canSend = Boolean(status.send_available);

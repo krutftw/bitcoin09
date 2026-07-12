@@ -23,6 +23,7 @@ import (
 const (
 	sessionCookieName = "btc09_session"
 	maxRequestBytes   = 64 << 10
+	sessionLifetime   = 8 * 60 * 60
 )
 
 //go:embed assets/*
@@ -36,8 +37,9 @@ type Config struct {
 }
 
 type session struct {
-	token string
-	csrf  string
+	token     string
+	csrf      string
+	expiresAt int64
 }
 
 type pendingSend struct {
@@ -233,10 +235,11 @@ func (s *Server) exchangeLaunchToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.launchConsumed = true
-	s.sessions[token] = session{token: token, csrf: csrf}
+	expiresAt := s.nowUnix() + sessionLifetime
+	s.sessions[token] = session{token: token, csrf: csrf, expiresAt: expiresAt}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookieName, Value: token, Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteStrictMode, MaxAge: sessionLifetime, Expires: time.Unix(expiresAt, 0),
 	})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -246,9 +249,14 @@ func (s *Server) authenticate(r *http.Request) (session, bool) {
 	if err != nil || !validSecret(cookie.Value) {
 		return session{}, false
 	}
-	s.mu.RLock()
+	s.mu.Lock()
 	current, ok := s.sessions[cookie.Value]
-	s.mu.RUnlock()
+	if ok && current.expiresAt <= s.nowUnix() {
+		delete(s.sessions, cookie.Value)
+		delete(s.pending, cookie.Value)
+		ok = false
+	}
+	s.mu.Unlock()
 	return current, ok
 }
 
@@ -498,8 +506,10 @@ func (s *Server) writeError(w http.ResponseWriter, status int, code, message str
 
 func (s *Server) setSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; worker-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")

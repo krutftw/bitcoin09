@@ -29,6 +29,7 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 		`id="create-wallet"`, `id="receive-address"`, `id="copy-address"`,
 		`id="new-address"`, `id="backup-wallet"`, `id="send-form"`,
 		`id="review-payment"`, `id="confirm-send"`, `id="send-result"`,
+		`class="wallet-frame"`, `class="account-summary"`, `class="quick-actions"`,
 	} {
 		if !strings.Contains(html, required) {
 			t.Errorf("index is missing %q", required)
@@ -37,12 +38,15 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 	if strings.Contains(html, "style=") || strings.Contains(html, "onclick=") {
 		t.Fatal("index uses inline presentation or event handlers")
 	}
+	if strings.Contains(html, "Your 09C,<") {
+		t.Fatal("interface still contains the oversized marketing masthead")
+	}
 
 	javascript := contents["assets/app.js"]
 	for _, required := range []string{
 		`/api/v1/status`, `/api/v1/wallet/create`, `/api/v1/wallet/address`,
 		`/api/v1/wallet/backup`, `/api/v1/send/preview`, `/api/v1/send/confirm`,
-		`X-BTC09-CSRF`, `navigator.clipboard`, `pending_id`, `formatCoins`,
+		`X-BTC09-CSRF`, `navigator.clipboard`, `pending_id`, `formatCoins`, `address-chip-text`,
 	} {
 		if !strings.Contains(javascript, required) {
 			t.Errorf("app script is missing %q", required)
@@ -53,6 +57,7 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 	for _, required := range []string{
 		`--ink:`, `--copper:`, `@media (max-width:`, `prefers-reduced-motion: reduce`,
 		`:focus-visible`, `.signal-field`, `.ledger`, `.review-sheet`,
+		`--text-xs: 12px;`, `--text-sm: 14px;`, `--display-max: 76px;`,
 	} {
 		if !strings.Contains(css, required) {
 			t.Errorf("app stylesheet is missing %q", required)

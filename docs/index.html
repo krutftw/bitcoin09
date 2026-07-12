@@ -493,10 +493,10 @@ seed 178.128.105.41:9009
 seed 103.80.18.140:9009
 seed 108.190.240.138:9009
 pool ntmminer.com/btc09 (third-party)
-release v0.1.22</pre>
+release v0.1.23</pre>
 <div class="status-card">
 <b>09C mainnet</b>
-<span>The official site and explorer are live, with a separate P2P-only public seed in Singapore.</span>
+<span>The official desktop wallet, site, explorer, and separate P2P-only public seed are live.</span>
 <span><a href="https://github.com/krutftw/bitcoin09/releases/latest">download</a> / <a href="https://discord.gg/fUuGzwRTzP">discord</a> / <a href="https://explorer.btc09.org">explorer</a></span>
 </div>
 </div>
@@ -506,7 +506,7 @@ release v0.1.22</pre>
 
 <main class="content">
 <div class="wrap">
-<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.org">live explorer</a>. Current release: v0.1.22. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
+<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.org">live explorer</a>. Current release: v0.1.23 with the new desktop wallet. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
 
 <section class="panel">
 <h2>What It Is</h2>
@@ -579,6 +579,17 @@ release v0.1.22</pre>
 </section>
 
 <section class="panel">
+<h2>Desktop Wallet</h2>
+<p>BTC09 now has a proper local wallet app for Windows, macOS, and Linux. Open the downloaded program with no command and it launches a compact wallet in your normal browser. Create and back up the wallet, see balance and sync state, receive with an address or QR code, and review the exact amount, fee, and destination before sending.</p>
+<pre>.\btc09-windows-amd64.exe
+
+# or explicitly
+btc09 app</pre>
+<p class="muted">The interface binds only to a random <code>127.0.0.1</code> port. It has no cloud account, analytics, CDN, or remote web assets. Private keys stay in the existing local wallet file, so current users do not need to import or migrate anything.</p>
+<p><a href="https://github.com/krutftw/bitcoin09/releases/latest">Download the latest BTC09 wallet</a></p>
+</section>
+
+<section class="panel">
 <h2>Start Mining</h2>
 <div class="command-grid">
 <div class="command">
@@ -617,9 +628,10 @@ release v0.1.22</pre>
 
 <section class="panel">
 <h2>Wallet And Sending</h2>
-<p>09C is a native chain coin, not an Ethereum or Solana token. MetaMask and Phantom do not support it. Use the <code>btc09</code> wallet/node for now.</p>
+<p>09C is a native chain coin, not an Ethereum or Solana token. MetaMask and Phantom do not support it. Use the BTC09 desktop wallet, or the command line when scripting and operating a node.</p>
 <p class="muted">Windows PowerShell needs the downloaded file name. If you downloaded <code>btc09-windows-amd64.exe</code>, use <code>.\btc09-windows-amd64.exe</code>. <code>btc09</code> by itself only works after renaming the file or adding it to PATH.</p>
-<pre>.\btc09-windows-amd64.exe wallet list
+<pre>.\btc09-windows-amd64.exe
+.\btc09-windows-amd64.exe wallet list
 .\btc09-windows-amd64.exe wallet new
 .\btc09-windows-amd64.exe send -to THEIR_09C_ADDRESS -amount 100 -seeds seed.btc09.org:9009</pre>
 <p class="muted">The default fee is 0.0001 09C. <code>-seeds</code> is plural and means peer nodes to broadcast through, not a wallet seed phrase. Do not paste private keys, seed phrases, or wallet file contents into the command line. <code>send</code> spends from the wallet file in your data directory, and your local chain must be synced enough to see spendable coins.</p>
