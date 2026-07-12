@@ -3,9 +3,11 @@ package desktop
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net"
@@ -14,12 +16,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 const (
 	sessionCookieName = "btc09_session"
 	maxRequestBytes   = 64 << 10
 )
+
+//go:embed assets/*
+var assetsFS embed.FS
 
 type Config struct {
 	LaunchToken string
@@ -89,6 +96,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.exchangeLaunchToken(w, r)
 		return
 	}
+	if r.URL.Path == "/" || r.URL.Path == "/assets/app.css" || r.URL.Path == "/assets/app.js" {
+		s.handleAsset(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/receive-qr" {
+		s.handleReceiveQR(w, r)
+		return
+	}
 	if r.URL.Path == "/api/v1/status" {
 		s.handleStatus(w, r)
 		return
@@ -114,6 +129,53 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeError(w, http.StatusNotFound, "not_found", "That BTC09 Wallet page was not found.")
+}
+
+func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authorizeRead(w, r); !ok {
+		return
+	}
+	name := "assets/index.html"
+	contentType := "text/html; charset=utf-8"
+	switch r.URL.Path {
+	case "/":
+	case "/assets/app.css":
+		name, contentType = "assets/app.css", "text/css; charset=utf-8"
+	case "/assets/app.js":
+		name, contentType = "assets/app.js", "text/javascript; charset=utf-8"
+	default:
+		s.writeError(w, http.StatusNotFound, "not_found", "That BTC09 Wallet page was not found.")
+		return
+	}
+	body, err := assetsFS.ReadFile(name)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "interface_unavailable", "The wallet interface is unavailable.")
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+func (s *Server) handleReceiveQR(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authorizeRead(w, r); !ok {
+		return
+	}
+	address := r.URL.Query().Get("address")
+	if len(address) < 8 || len(address) > 256 || strings.ContainsAny(address, "\r\n\t ") {
+		s.writeError(w, http.StatusBadRequest, "address_invalid", "The receive address was not valid.")
+		return
+	}
+	png, err := qrcode.Encode(address, qrcode.Medium, 256)
+	if err != nil || len(png) == 0 || len(png) > 100_000 {
+		s.writeError(w, http.StatusInternalServerError, "qr_unavailable", "BTC09 could not create that receive QR code.")
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Length", fmt.Sprint(len(png)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(png)
 }
 
 func (s *Server) allowedHost(hostport string) bool {
