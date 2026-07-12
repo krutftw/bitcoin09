@@ -3,21 +3,85 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/krutftw/bitcoin09/core"
 	"github.com/krutftw/bitcoin09/desktop"
+	"github.com/krutftw/bitcoin09/lightwallet"
 	"github.com/krutftw/bitcoin09/wallet"
 )
 
 type appTestPeers struct {
 	count  int
 	writes int
+}
+
+type appTestGateway struct {
+	lastBroadcast *core.Tx
+}
+
+func (g *appTestGateway) Snapshot(_ context.Context, addresses []string) (lightwallet.SnapshotResponse, error) {
+	sorted := append([]string(nil), addresses...)
+	sort.Strings(sorted)
+	return lightwallet.SnapshotResponse{
+		SchemaVersion: lightwallet.SchemaVersion, Network: core.RegTestMachineID,
+		Tip: lightwallet.Tip{Hash: strings.Repeat("1", 64), Height: 42}, Addresses: sorted,
+		Outputs:        []lightwallet.SnapshotOutput{{TxID: strings.Repeat("2", 64), AmountUnits: 2 * core.UnitsPerCoin, Address: sorted[0]}},
+		SpendableUnits: 2 * core.UnitsPerCoin,
+	}, nil
+}
+
+func (g *appTestGateway) Broadcast(_ context.Context, transaction *core.Tx) (lightwallet.BroadcastResponse, error) {
+	g.lastBroadcast = transaction
+	id := transaction.ID()
+	return lightwallet.BroadcastResponse{
+		SchemaVersion: lightwallet.SchemaVersion, Network: core.RegTestMachineID,
+		TxID: fmt.Sprintf("%x", id), Admission: string(core.TxAcceptanceAdded), Status: "submitted", PeerWrites: 2,
+	}, nil
+}
+
+func TestAppServiceFastModeReadsRemoteFundsAndSignsLocally(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "chain")
+	walletPath := filepath.Join(t.TempDir(), "wallet-regtest.json")
+	gateway := &appTestGateway{}
+	service, err := newAppService(appServiceConfig{
+		Version: "test", Network: core.RegTestMachineID, Params: &core.RegTest,
+		Mode: "fast", DataDir: dataDir, WalletFile: walletPath, Gateway: gateway,
+	})
+	if err != nil {
+		t.Fatalf("newAppService: %v", err)
+	}
+	status, err := service.CreateWallet(context.Background())
+	if err != nil {
+		t.Fatalf("CreateWallet: %v", err)
+	}
+	if status.Mode != "fast" || status.BalanceUnits != 2*core.UnitsPerCoin || status.Height != 42 || !status.SendAvailable || status.PeerCount != 0 {
+		t.Fatalf("fast status = %+v", status)
+	}
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := core.EncodeAddress(core.PubKeyHash20(public))
+	preview, err := service.PreviewSend(context.Background(), desktop.SendRequest{Destination: destination, Amount: "1", Fee: "0.00001"})
+	if err != nil {
+		t.Fatalf("PreviewSend: %v", err)
+	}
+	result, err := service.ConfirmSend(context.Background(), preview.PendingID)
+	if err != nil {
+		t.Fatalf("ConfirmSend: %v", err)
+	}
+	if gateway.lastBroadcast == nil || result.TxID != preview.TxID || result.PeerWrites != 2 {
+		t.Fatalf("result=%+v broadcast=%v", result, gateway.lastBroadcast != nil)
+	}
 }
 
 func (p *appTestPeers) PeerCount() int           { return p.count }

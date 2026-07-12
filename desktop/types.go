@@ -5,6 +5,7 @@ import "context"
 type Status struct {
 	Version       string   `json:"version"`
 	Network       string   `json:"network"`
+	Mode          string   `json:"mode"`
 	WalletExists  bool     `json:"wallet_exists"`
 	WalletPath    string   `json:"wallet_path"`
 	Addresses     []string `json:"addresses"`

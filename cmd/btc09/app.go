@@ -19,8 +19,11 @@ import (
 
 	"github.com/krutftw/bitcoin09/core"
 	"github.com/krutftw/bitcoin09/desktop"
+	"github.com/krutftw/bitcoin09/lightwallet"
 	"github.com/krutftw/bitcoin09/p2p"
 )
+
+const defaultMainnetWalletGateway = "https://btc09.org"
 
 type appOptions struct {
 	network    string
@@ -28,6 +31,8 @@ type appOptions struct {
 	walletFile string
 	seeds      []string
 	noBrowser  bool
+	mode       string
+	gatewayURL string
 }
 
 type appRuntimeInfo struct {
@@ -43,6 +48,8 @@ func parseAppOptions(args []string) (appOptions, error) {
 	fs.StringVar(&options.dataDir, "datadir", defaultDataDir(), "data directory")
 	fs.StringVar(&options.walletFile, "wallet-file", "", "wallet file")
 	seedsText := fs.String("seeds", "", "comma-separated seed peers")
+	fs.StringVar(&options.mode, "mode", "", "wallet mode: fast or full")
+	fs.StringVar(&options.gatewayURL, "gateway", "", "Fast mode HTTPS wallet gateway")
 	fs.BoolVar(&options.noBrowser, "no-browser", false, "do not open the system browser")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
 		return appOptions{}, errors.New("invalid app arguments")
@@ -55,6 +62,32 @@ func parseAppOptions(args []string) (appOptions, error) {
 		return appOptions{}, errors.New("app data directory is required")
 	}
 	options.walletFile = resolveHumanWalletPath(options.walletFile, os.Getenv("BTC09_WALLET_PATH"), options.dataDir, params.Name)
+	if options.mode == "" {
+		if params.Name == "mainnet" {
+			options.mode = "fast"
+		} else {
+			options.mode = "full"
+		}
+	}
+	if options.mode != "fast" && options.mode != "full" {
+		return appOptions{}, errors.New("wallet mode must be fast or full")
+	}
+	if options.gatewayURL == "" {
+		if params.Name == "mainnet" {
+			options.gatewayURL = defaultMainnetWalletGateway
+		} else {
+			options.gatewayURL = "http://127.0.0.1:8010"
+		}
+	}
+	if options.mode == "fast" {
+		networkID, networkErr := core.CanonicalNetworkID(params)
+		if networkErr != nil {
+			return appOptions{}, networkErr
+		}
+		if _, clientErr := lightwallet.NewClient(lightwallet.ClientConfig{BaseURL: options.gatewayURL, Network: networkID}); clientErr != nil {
+			return appOptions{}, clientErr
+		}
+	}
 	if *seedsText == "" {
 		options.seeds = defaultSeeds(params)
 	} else {
@@ -153,33 +186,60 @@ func runDesktopApp(ctx context.Context, options appOptions, ready chan<- appRunt
 	if err != nil {
 		return err
 	}
-	chain, err := core.NewChain(params)
-	if err != nil {
-		return fmt.Errorf("chain init: %w", err)
-	}
-	store, err := core.NewStore(dataDir, params.Name)
-	if err != nil {
-		return fmt.Errorf("store init: %w", err)
-	}
-	if _, err := store.LoadInto(chain); err != nil {
-		return fmt.Errorf("loading blocks: %w", err)
-	}
-	node := p2p.NewNode(chain, "127.0.0.1:0", log.Default())
-	previousTipHook := chain.OnNewTip
-	chain.OnNewTip = func(block *core.Block, height int64) {
-		if previousTipHook != nil {
-			previousTipHook(block, height)
-		}
-		if err := store.SaveSnapshot(chain); err != nil {
-			log.Printf("wallet chain persist error: %v", err)
+	mode := options.mode
+	if mode == "" {
+		if params.Name == "mainnet" {
+			mode = "fast"
+		} else {
+			mode = "full"
 		}
 	}
-	if err := node.Start(ctx, options.seeds); err != nil {
-		return fmt.Errorf("p2p start: %w", err)
+	var chain *core.Chain
+	var peers appPeerSet
+	var gateway appGateway
+	if mode == "fast" {
+		gatewayURL := options.gatewayURL
+		if gatewayURL == "" {
+			if params.Name == "mainnet" {
+				gatewayURL = defaultMainnetWalletGateway
+			} else {
+				gatewayURL = "http://127.0.0.1:8010"
+			}
+		}
+		gateway, err = lightwallet.NewClient(lightwallet.ClientConfig{BaseURL: gatewayURL, Network: networkID})
+		if err != nil {
+			return err
+		}
+	} else {
+		chain, err = core.NewChain(params)
+		if err != nil {
+			return fmt.Errorf("chain init: %w", err)
+		}
+		store, storeErr := core.NewStore(dataDir, params.Name)
+		if storeErr != nil {
+			return fmt.Errorf("store init: %w", storeErr)
+		}
+		if _, loadErr := store.LoadInto(chain); loadErr != nil {
+			return fmt.Errorf("loading blocks: %w", loadErr)
+		}
+		node := p2p.NewNode(chain, "127.0.0.1:0", log.Default())
+		previousTipHook := chain.OnNewTip
+		chain.OnNewTip = func(block *core.Block, height int64) {
+			if previousTipHook != nil {
+				previousTipHook(block, height)
+			}
+			if saveErr := store.SaveSnapshot(chain); saveErr != nil {
+				log.Printf("wallet chain persist error: %v", saveErr)
+			}
+		}
+		if startErr := node.Start(ctx, options.seeds); startErr != nil {
+			return fmt.Errorf("p2p start: %w", startErr)
+		}
+		peers = node
 	}
 	service, err := newAppService(appServiceConfig{
 		Version: nodeVersion, Network: networkID, Params: params, DataDir: dataDir,
-		WalletFile: walletFile, Chain: chain, Peers: node,
+		Mode: mode, WalletFile: walletFile, Chain: chain, Peers: peers, Gateway: gateway,
 	})
 	if err != nil {
 		return err

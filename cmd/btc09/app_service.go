@@ -16,6 +16,7 @@ import (
 
 	"github.com/krutftw/bitcoin09/core"
 	"github.com/krutftw/bitcoin09/desktop"
+	"github.com/krutftw/bitcoin09/lightwallet"
 	"github.com/krutftw/bitcoin09/wallet"
 )
 
@@ -29,14 +30,21 @@ type appPeerSet interface {
 	BroadcastTx(*core.Tx) int
 }
 
+type appGateway interface {
+	Snapshot(context.Context, []string) (lightwallet.SnapshotResponse, error)
+	Broadcast(context.Context, *core.Tx) (lightwallet.BroadcastResponse, error)
+}
+
 type appServiceConfig struct {
 	Version    string
 	Network    string
 	Params     *core.Params
+	Mode       string
 	DataDir    string
 	WalletFile string
 	Chain      *core.Chain
 	Peers      appPeerSet
+	Gateway    appGateway
 }
 
 type appPendingPayment struct {
@@ -49,10 +57,12 @@ type appService struct {
 	version    string
 	network    string
 	params     *core.Params
+	mode       string
 	dataDir    string
 	walletFile string
 	chain      *core.Chain
 	peers      appPeerSet
+	gateway    appGateway
 
 	mu      sync.Mutex
 	pending map[string]*appPendingPayment
@@ -61,8 +71,17 @@ type appService struct {
 }
 
 func newAppService(config appServiceConfig) (*appService, error) {
-	if config.Params == nil || config.Chain == nil || config.DataDir == "" || config.WalletFile == "" {
+	if config.Params == nil || config.DataDir == "" || config.WalletFile == "" {
 		return nil, errors.New("incomplete desktop app service configuration")
+	}
+	if config.Mode == "" {
+		config.Mode = "full"
+	}
+	if config.Mode != "fast" && config.Mode != "full" {
+		return nil, errors.New("invalid desktop wallet mode")
+	}
+	if (config.Mode == "full" && config.Chain == nil) || (config.Mode == "fast" && config.Gateway == nil) {
+		return nil, errors.New("desktop wallet mode dependency is missing")
 	}
 	network, err := core.CanonicalNetworkID(config.Params)
 	if err != nil || network != config.Network {
@@ -77,9 +96,9 @@ func newAppService(config appServiceConfig) (*appService, error) {
 		return nil, err
 	}
 	service := &appService{
-		version: config.Version, network: config.Network, params: config.Params,
+		version: config.Version, network: config.Network, params: config.Params, mode: config.Mode,
 		dataDir: filepath.Clean(dataDir), walletFile: filepath.Clean(walletFile),
-		chain: config.Chain, peers: config.Peers, pending: make(map[string]*appPendingPayment),
+		chain: config.Chain, peers: config.Peers, gateway: config.Gateway, pending: make(map[string]*appPendingPayment),
 		now: time.Now,
 	}
 	service.submit = service.submitPayment
@@ -90,22 +109,15 @@ func (s *appService) Status(ctx context.Context) (desktop.Status, error) {
 	if err := ctx.Err(); err != nil {
 		return desktop.Status{}, err
 	}
-	tip, err := s.chain.CanonicalTipSnapshot()
-	if err != nil {
-		return desktop.Status{}, err
-	}
 	status := desktop.Status{
-		Version: s.version, Network: s.network, WalletPath: s.walletFile,
-		Height: tip.Height, TipHash: fmt.Sprintf("%x", tip.Hash), SyncState: "offline",
-	}
-	if s.peers != nil {
-		status.PeerCount = s.peers.PeerCount()
-		if status.PeerCount > 0 {
-			status.SyncState = "connected"
-		}
+		Version: s.version, Network: s.network, Mode: s.mode, WalletPath: s.walletFile,
+		SyncState: "offline",
 	}
 	if _, err := os.Stat(s.walletFile); errors.Is(err, os.ErrNotExist) {
 		status.Addresses = []string{}
+		if s.mode == "fast" {
+			status.SyncState = "ready"
+		}
 		return status, nil
 	} else if err != nil {
 		return desktop.Status{}, err
@@ -118,12 +130,40 @@ func (s *appService) Status(ctx context.Context) (desktop.Status, error) {
 	if err != nil {
 		return desktop.Status{}, err
 	}
+	status.WalletExists = true
+	status.Addresses = addresses
+	if s.mode == "fast" {
+		remote, err := s.gateway.Snapshot(ctx, addresses)
+		if err != nil {
+			return desktop.Status{}, publicAppError(http.StatusServiceUnavailable, "wallet_service_unavailable", "The wallet service is temporarily unavailable. Your funds are safe; try again.", err)
+		}
+		walletSnapshot, err := w.ValidateRemoteSnapshot(remoteWalletSnapshot(remote))
+		if err != nil {
+			return desktop.Status{}, publicAppError(http.StatusServiceUnavailable, "wallet_service_invalid", "The wallet service returned invalid data. Your funds are safe.", err)
+		}
+		status.Height = walletSnapshot.Tip.Height
+		status.TipHash = fmt.Sprintf("%x", walletSnapshot.Tip.Hash)
+		status.BalanceUnits = walletSnapshot.SpendableUnits
+		status.SyncState = "connected"
+		status.SendAvailable = true
+		return status, nil
+	}
+	tip, err := s.chain.CanonicalTipSnapshot()
+	if err != nil {
+		return desktop.Status{}, err
+	}
+	status.Height = tip.Height
+	status.TipHash = fmt.Sprintf("%x", tip.Hash)
+	if s.peers != nil {
+		status.PeerCount = s.peers.PeerCount()
+		if status.PeerCount > 0 {
+			status.SyncState = "connected"
+		}
+	}
 	balance, err := w.BalanceE(s.chain)
 	if err != nil {
 		return desktop.Status{}, err
 	}
-	status.WalletExists = true
-	status.Addresses = addresses
 	status.BalanceUnits = balance
 	status.SendAvailable = tip.Height > 0 && status.PeerCount > 0
 	return status, nil
@@ -244,11 +284,26 @@ func (s *appService) PreviewSend(ctx context.Context, request desktop.SendReques
 	if err != nil {
 		return desktop.SendPreview{}, publicAppError(http.StatusConflict, "wallet_required", "Create the wallet before sending 09C.", err)
 	}
-	tip, err := s.chain.CanonicalTipSnapshot()
-	if err != nil {
-		return desktop.SendPreview{}, err
+	var tip core.ChainTipSnapshot
+	var prepared *wallet.PreparedPayment
+	if s.mode == "fast" {
+		addresses, addressErr := w.AddressesE()
+		if addressErr != nil {
+			return desktop.SendPreview{}, addressErr
+		}
+		remote, snapshotErr := s.gateway.Snapshot(ctx, addresses)
+		if snapshotErr != nil {
+			return desktop.SendPreview{}, publicAppError(http.StatusServiceUnavailable, "wallet_service_unavailable", "The wallet service is temporarily unavailable. Your funds are safe; try again.", snapshotErr)
+		}
+		var walletSnapshot wallet.Snapshot
+		walletSnapshot, prepared, err = w.PrepareFromRemoteSnapshot(remoteWalletSnapshot(remote), request.Destination, amount, fee, nil)
+		tip = walletSnapshot.Tip
+	} else {
+		tip, err = s.chain.CanonicalTipSnapshot()
+		if err == nil {
+			_, prepared, err = w.PrepareAt(s.chain, tip, request.Destination, amount, fee, nil)
+		}
 	}
-	_, prepared, err := w.PrepareAt(s.chain, tip, request.Destination, amount, fee, nil)
 	if err != nil {
 		return desktop.SendPreview{}, publicAppError(http.StatusBadRequest, "payment_invalid", "The payment could not be prepared. Check the address, amount, fee, and balance.", err)
 	}
@@ -324,6 +379,13 @@ func (s *appService) prunePendingLocked(now time.Time) {
 }
 
 func (s *appService) submitPayment(tx *core.Tx) (core.TxAcceptanceResult, int, error) {
+	if s.mode == "fast" {
+		response, err := s.gateway.Broadcast(context.Background(), tx)
+		if err != nil {
+			return "", 0, err
+		}
+		return core.TxAcceptanceResult(response.Admission), response.PeerWrites, nil
+	}
 	if s.peers == nil || s.peers.PeerCount() < 1 {
 		return "", 0, errors.New("no connected peer")
 	}
@@ -336,6 +398,28 @@ func (s *appService) submitPayment(tx *core.Tx) (core.TxAcceptanceResult, int, e
 		return result, 0, errors.New("no peer write succeeded")
 	}
 	return result, writes, nil
+}
+
+func remoteWalletSnapshot(response lightwallet.SnapshotResponse) wallet.RemoteSnapshot {
+	remote := wallet.RemoteSnapshot{
+		Network:   response.Network,
+		Tip:       core.ChainTipSnapshot{Network: response.Network, Height: response.Tip.Height},
+		Addresses: append([]string(nil), response.Addresses...), SpendableUnits: response.SpendableUnits,
+		Outpoints: make([]wallet.RemoteSnapshotOutpoint, 0, len(response.Outputs)),
+	}
+	if decoded, err := hex.DecodeString(response.Tip.Hash); err == nil && len(decoded) == len(remote.Tip.Hash) {
+		copy(remote.Tip.Hash[:], decoded)
+	}
+	for _, output := range response.Outputs {
+		var txID core.Hash32
+		if decoded, err := hex.DecodeString(output.TxID); err == nil && len(decoded) == len(txID) {
+			copy(txID[:], decoded)
+		}
+		remote.Outpoints = append(remote.Outpoints, wallet.RemoteSnapshotOutpoint{
+			TxID: txID, Vout: output.Vout, AmountUnits: output.AmountUnits, Address: output.Address,
+		})
+	}
+	return remote
 }
 
 func appRandomID() (string, error) {

@@ -55,6 +55,31 @@ func TestDesktopOptionsUseStandardWalletAndRejectUnsafeArguments(t *testing.T) {
 	}
 }
 
+func TestDesktopMainnetDefaultsToFastModeAndAllowsExplicitFullNode(t *testing.T) {
+	fast, err := parseAppOptions(nil)
+	if err != nil {
+		t.Fatalf("parse default: %v", err)
+	}
+	if fast.mode != "fast" || fast.gatewayURL != defaultMainnetWalletGateway {
+		t.Fatalf("default options = %+v", fast)
+	}
+	full, err := parseAppOptions([]string{"-mode", "full", "-gateway", "https://ignored.example"})
+	if err != nil {
+		t.Fatalf("parse full: %v", err)
+	}
+	if full.mode != "full" {
+		t.Fatalf("full options = %+v", full)
+	}
+	for _, args := range [][]string{
+		{"-mode", "unknown"},
+		{"-mode", "fast", "-gateway", "http://wallet.example"},
+	} {
+		if _, err := parseAppOptions(args); err == nil {
+			t.Fatalf("parseAppOptions(%v) succeeded", args)
+		}
+	}
+}
+
 func TestDesktopLaunchURLRequiresLoopbackOriginAndSecret(t *testing.T) {
 	token := strings.Repeat("a", 64)
 	launchURL, err := desktopLaunchURL("http://127.0.0.1:49152", token)
