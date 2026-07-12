@@ -30,6 +30,7 @@ import (
 	"github.com/krutftw/bitcoin09/core"
 	"github.com/krutftw/bitcoin09/explorer"
 	"github.com/krutftw/bitcoin09/p2p"
+	"github.com/krutftw/bitcoin09/pool"
 	"github.com/krutftw/bitcoin09/wallet"
 )
 
@@ -176,6 +177,8 @@ func main() {
 		cmdWallet(os.Args[2:])
 	case "send":
 		cmdSend(os.Args[2:])
+	case "mine-pool":
+		cmdMinePool(os.Args[2:])
 	case "prepare-send":
 		if code := runMachineCommand("prepare-send", os.Args[2:], os.Stdin, os.Stdout); code != 0 {
 			os.Exit(code)
@@ -221,11 +224,12 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `%s (%s): the coin that you can mine like it's 2009
 
 usage:
-  btc09 node   [-mine] [-listen :9009] [-seeds host:port,...] [-network mainnet|regtest] [-datadir DIR] [-wallet-file FILE] [-tag TEXT] [-no-update-check]
+  btc09 node   [-mine] [-listen :9009] [-solo-api 127.0.0.1:9010] [-seeds host:port,...] [-network mainnet|regtest] [-datadir DIR] [-wallet-file FILE] [-tag TEXT] [-no-update-check]
   btc09 wallet new|list [-network mainnet|regtest] [-datadir DIR] [-wallet-file FILE]
   btc09 wallet new -wallet-file FILE -network btc09-mainnet|btc09-regtest -json
   btc09 wallet snapshot -wallet-file FILE -datadir DIR -network NETWORK -expected-tip-hash HASH -expected-tip-height HEIGHT -json
   btc09 send   -to ADDRESS -amount DECIMAL [-fee DECIMAL] [-datadir DIR] [-wallet-file FILE] [-seeds host:port,...]
+  btc09 mine-pool -pool https://HOST -address ADDRESS [-worker NAME] [-workers N] [-network mainnet|regtest]
   btc09 prepare-send -to ADDRESS -amount DECIMAL -fee DECIMAL -datadir DIR -network NETWORK -wallet-file FILE -expected-tip-hash HASH -expected-tip-height HEIGHT -exclude-outpoints-json - -json
   btc09 inspect-tx -tx-hex - -network NETWORK -json
   btc09 broadcast-tx -tx-hex - -expected-txid TXID -datadir DIR -network NETWORK -seeds HOSTS -json -require-broadcast=true
@@ -240,6 +244,68 @@ func paramsFor(name string) *core.Params {
 		log.Fatal(err)
 	}
 	return params
+}
+
+type minePoolOptions struct {
+	poolURL           string
+	address           string
+	worker            string
+	workers           int
+	network           string
+	allowInsecureHTTP bool
+}
+
+func parseMinePoolArgs(args []string) (minePoolOptions, error) {
+	var options minePoolOptions
+	fs := flag.NewFlagSet("mine-pool", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&options.poolURL, "pool", "", "remote-solo coordinator URL")
+	fs.StringVar(&options.address, "address", "", "09C payout address")
+	fs.StringVar(&options.worker, "worker", "", "optional worker label")
+	fs.IntVar(&options.workers, "workers", runtime.NumCPU(), "mining threads")
+	fs.StringVar(&options.network, "network", "mainnet", "mainnet or regtest")
+	fs.BoolVar(&options.allowInsecureHTTP, "allow-insecure-http", false, "allow a plain HTTP coordinator")
+	if err := fs.Parse(args); err != nil {
+		return minePoolOptions{}, err
+	}
+	if fs.NArg() != 0 || options.poolURL == "" || options.address == "" {
+		return minePoolOptions{}, errors.New("mine-pool requires -pool and -address with no trailing arguments")
+	}
+	if options.workers < 1 || options.workers > 1024 {
+		return minePoolOptions{}, errors.New("mine-pool workers must be between 1 and 1024")
+	}
+	if _, err := humanParams(options.network); err != nil {
+		return minePoolOptions{}, err
+	}
+	return options, nil
+}
+
+func cmdMinePool(args []string) {
+	options, err := parseMinePoolArgs(args)
+	if err != nil {
+		log.Fatal(err)
+	}
+	params, _ := humanParams(options.network)
+	client, err := pool.NewRemoteClient(pool.RemoteClientConfig{
+		PoolURL:           options.poolURL,
+		Address:           options.address,
+		Worker:            options.worker,
+		Params:            params,
+		Workers:           options.workers,
+		AllowInsecureHTTP: options.allowInsecureHTTP,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	log.Printf("open remote-solo mining with %d threads; payout address %s", options.workers, options.address)
+	err = client.Run(ctx, func(mined pool.MineResult, accepted pool.SubmitResult) {
+		log.Printf("*** BLOCK FOUND *** height=%d id=%s hashes=%d", accepted.Height, accepted.BlockID, mined.Hashes)
+	})
+	if err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatal(err)
+	}
 }
 
 func humanParams(name string) (*core.Params, error) {
@@ -343,6 +409,7 @@ func cmdNode(args []string) {
 	listen := fs.String("listen", ":9009", "p2p listen address")
 	seeds := fs.String("seeds", "", "comma-separated seed peers (host:port)")
 	explorerAddr := fs.String("explorer", "", "serve the block explorer on this address, e.g. :8009")
+	soloAPI := fs.String("solo-api", "", "serve the open remote-solo mining API on this address, e.g. 127.0.0.1:9010")
 	network := fs.String("network", "mainnet", "mainnet or regtest")
 	dataDir := fs.String("datadir", defaultDataDir(), "data directory")
 	walletFile := fs.String("wallet-file", "", "wallet file (legacy datadir wallet by default)")
@@ -407,6 +474,27 @@ func cmdNode(args []string) {
 	}
 	if err := node.Start(ctx, seedList); err != nil {
 		log.Fatalf("p2p: %v", err)
+	}
+
+	if *soloAPI != "" {
+		coordinator, err := pool.NewCoordinator(chain, pool.CoordinatorConfig{Tag: *tag})
+		if err != nil {
+			log.Fatalf("solo mining API: %v", err)
+		}
+		server := pool.NewHTTPServer(*soloAPI, pool.NewHTTPHandler(coordinator, pool.HTTPConfig{}))
+		go func() {
+			log.Printf("open remote-solo mining API on http://%s", *soloAPI)
+			if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("solo mining API: %v", err)
+				stop()
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = server.Shutdown(shutdownCtx)
+		}()
 	}
 
 	if *explorerAddr != "" {

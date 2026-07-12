@@ -756,3 +756,37 @@ func TestRejectSendSeedFlag(t *testing.T) {
 		t.Fatalf("rejectSendSeedFlag(-seeds) = %v, want nil", err)
 	}
 }
+
+func TestMinePoolArgsRequireEndpointAndPayoutAddress(t *testing.T) {
+	if _, err := parseMinePoolArgs(nil); err == nil {
+		t.Fatal("empty mine-pool arguments accepted")
+	}
+	if _, err := parseMinePoolArgs([]string{"-pool", "https://pool.example"}); err == nil {
+		t.Fatal("mine-pool accepted missing payout address")
+	}
+	options, err := parseMinePoolArgs([]string{
+		"-pool", "http://127.0.0.1:9010",
+		"-address", core.EncodeAddress([20]byte{1}),
+		"-worker", "rig-1",
+		"-workers", "3",
+		"-network", "regtest",
+		"-allow-insecure-http",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.poolURL != "http://127.0.0.1:9010" || options.worker != "rig-1" ||
+		options.workers != 3 || options.network != "regtest" || !options.allowInsecureHTTP {
+		t.Fatalf("parsed options = %+v", options)
+	}
+}
+
+func TestMinePoolArgsRejectTrailingAndInvalidWorkerCount(t *testing.T) {
+	base := []string{"-pool", "https://pool.example", "-address", core.EncodeAddress([20]byte{1})}
+	if _, err := parseMinePoolArgs(append(append([]string{}, base...), "unexpected")); err == nil {
+		t.Fatal("trailing mine-pool argument accepted")
+	}
+	if _, err := parseMinePoolArgs(append(append([]string{}, base...), "-workers", "0")); err == nil {
+		t.Fatal("zero workers accepted")
+	}
+}
