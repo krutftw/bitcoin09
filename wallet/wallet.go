@@ -30,6 +30,7 @@ const (
 	MaxPaymentCandidates   = 10_000
 	MaxPaymentInputs       = 10_000
 	MaxSignedTxBytes       = 10_000
+	MaxSnapshotOutpoints   = 10_000
 )
 
 var ErrWalletNotFound = errors.New("wallet file not found")
@@ -616,6 +617,10 @@ func validatePaymentRequest(c *core.Chain, toAddr string, amount, fee int64, exc
 	if c == nil {
 		return [20]byte{}, errors.New("nil chain")
 	}
+	return validatePaymentValues(toAddr, amount, fee, excluded)
+}
+
+func validatePaymentValues(toAddr string, amount, fee int64, excluded map[core.OutPoint]struct{}) ([20]byte, error) {
 	if amount <= 0 || !core.MoneyRange(amount) || fee < 0 || !core.MoneyRange(fee) || amount > core.MaxMoneyUnits-fee {
 		return [20]byte{}, errors.New("amount or fee out of range")
 	}
@@ -781,6 +786,130 @@ type Snapshot struct {
 	Outpoints          []SnapshotOutpoint    `json:"outpoints"`
 	SpendableUnits     int64                 `json:"spendable_units"`
 	WalletSnapshotHash string                `json:"wallet_snapshot_hash"`
+}
+
+// RemoteSnapshot is public chain data returned by a light-wallet gateway. It
+// contains no private key material and is treated as hostile input until the
+// wallet validates every address, outpoint, amount, and ordering invariant.
+type RemoteSnapshot struct {
+	Network        string
+	Tip            core.ChainTipSnapshot
+	Addresses      []string
+	Outpoints      []RemoteSnapshotOutpoint
+	SpendableUnits int64
+}
+
+type RemoteSnapshotOutpoint struct {
+	TxID        core.Hash32
+	Vout        uint32
+	AmountUnits int64
+	Address     string
+}
+
+// ValidateRemoteSnapshot binds untrusted public gateway data to the exact
+// locally held wallet keys and returns the canonical internal representation.
+func (w *Wallet) ValidateRemoteSnapshot(remote RemoteSnapshot) (snapshot Snapshot, err error) {
+	err = w.withKeys(true, func(keys []ed25519.PrivateKey) error {
+		var validationErr error
+		snapshot, validationErr = snapshotFromRemoteWithKeys(w.network, remote, keys)
+		return validationErr
+	})
+	return snapshot, err
+}
+
+// PrepareFromRemoteSnapshot selects and signs entirely on this device. The
+// gateway-provided snapshot is validated while the wallet lock is held, so a
+// concurrent address mutation cannot change the key set being signed against.
+func (w *Wallet) PrepareFromRemoteSnapshot(remote RemoteSnapshot, toAddr string, amount, fee int64, excluded map[core.OutPoint]struct{}) (snapshot Snapshot, prepared *PreparedPayment, err error) {
+	toPKH, err := validatePaymentValues(toAddr, amount, fee, excluded)
+	if err != nil {
+		return Snapshot{}, nil, err
+	}
+	err = w.withKeys(true, func(keys []ed25519.PrivateKey) error {
+		if err := rejectOwnedDestination(keys, toPKH); err != nil {
+			return err
+		}
+		var inner error
+		snapshot, inner = snapshotFromRemoteWithKeys(w.network, remote, keys)
+		if inner != nil {
+			return inner
+		}
+		prepared, inner = buildPaymentFromSnapshot(keys, snapshot, toPKH, amount, fee, excluded)
+		if inner != nil {
+			return inner
+		}
+		return validateSelectedAnchored(prepared.SelectedOutpoints, anchoredOutpoints(snapshot))
+	})
+	return snapshot, prepared, err
+}
+
+func snapshotFromRemoteWithKeys(network string, remote RemoteSnapshot, keys []ed25519.PrivateKey) (Snapshot, error) {
+	if len(keys) == 0 || len(keys) > MaxWalletKeys || remote.Network != network || remote.Tip.Network != network || remote.Tip.Height < 0 ||
+		len(remote.Addresses) != len(keys) || len(remote.Outpoints) > MaxSnapshotOutpoints || !core.MoneyRange(remote.SpendableUnits) {
+		return Snapshot{}, errors.New("remote wallet snapshot identity is inconsistent")
+	}
+	keyAddresses := make([]string, len(keys))
+	keyIndexes := make(map[string]int, len(keys))
+	for index, key := range keys {
+		address := addressForKey(key)
+		if _, duplicate := keyIndexes[address]; duplicate {
+			return Snapshot{}, errors.New("wallet contains duplicate keys")
+		}
+		keyAddresses[index] = address
+		keyIndexes[address] = index
+	}
+	sortedAddresses := append([]string(nil), keyAddresses...)
+	sort.Strings(sortedAddresses)
+	addressIndexes := make(map[string]uint32, len(sortedAddresses))
+	for index, address := range sortedAddresses {
+		if remote.Addresses[index] != address {
+			return Snapshot{}, errors.New("remote wallet snapshot address set changed")
+		}
+		addressIndexes[address] = uint32(index)
+	}
+	snapshot := Snapshot{
+		SchemaVersion: SchemaVersion, Network: network, Tip: remote.Tip,
+		PrimaryAddress: keyAddresses[0], Addresses: sortedAddresses,
+		Outpoints: make([]SnapshotOutpoint, 0, len(remote.Outpoints)),
+	}
+	var total int64
+	var previous core.OutPoint
+	for index, output := range remote.Outpoints {
+		keyIndex, owned := keyIndexes[output.Address]
+		ownerAddressIndex, indexed := addressIndexes[output.Address]
+		ownerPKH, addressErr := core.DecodeAddress(output.Address)
+		outpoint := core.OutPoint{TxID: output.TxID, Idx: output.Vout}
+		if !owned || !indexed || addressErr != nil || core.EncodeAddress(ownerPKH) != output.Address ||
+			pkhForKey(keys[keyIndex]) != ownerPKH || output.AmountUnits <= 0 || !core.MoneyRange(output.AmountUnits) {
+			return Snapshot{}, errors.New("remote wallet snapshot contains an invalid output")
+		}
+		if index > 0 {
+			comparison := bytes.Compare(previous.TxID[:], output.TxID[:])
+			if comparison > 0 || (comparison == 0 && previous.Idx >= output.Vout) {
+				return Snapshot{}, errors.New("remote wallet snapshot outpoints are not strictly sorted")
+			}
+		}
+		if total > core.MaxMoneyUnits-output.AmountUnits {
+			return Snapshot{}, errors.New("remote wallet snapshot amount overflow")
+		}
+		total += output.AmountUnits
+		snapshot.Outpoints = append(snapshot.Outpoints, SnapshotOutpoint{
+			Outpoint: fmt.Sprintf("%x:%d", output.TxID, output.Vout), AmountUnits: output.AmountUnits,
+			Address: output.Address, OutpointRef: outpoint, TxID: output.TxID, Vout: output.Vout,
+			OwnerPKH: ownerPKH, OwnerAddressIndex: ownerAddressIndex, KeyIndex: keyIndex,
+		})
+		previous = outpoint
+	}
+	if total != remote.SpendableUnits {
+		return Snapshot{}, errors.New("remote wallet snapshot spendable total is inconsistent")
+	}
+	snapshot.SpendableUnits = total
+	hash, err := hashSnapshot(snapshot)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snapshot.WalletSnapshotHash = hash
+	return snapshot, nil
 }
 
 // SnapshotAt locks the wallet and derives a deterministic spendable snapshot

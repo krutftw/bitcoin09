@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -786,6 +787,103 @@ func TestSnapshotSpendableSumRejectsOverflow(t *testing.T) {
 	if got, err := addSpendable(core.MaxMoneyUnits-1, 1); err != nil || got != core.MaxMoneyUnits {
 		t.Fatalf("exact max spendable sum = %d, %v", got, err)
 	}
+}
+
+func TestPrepareFromRemoteSnapshotValidatesOwnershipAndSignsLocally(t *testing.T) {
+	walletPath := filepath.Join(t.TempDir(), "wallet.json")
+	w, err := Open(walletPath, core.RegTestMachineID)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := w.NewAddress(); err != nil {
+		t.Fatalf("NewAddress: %v", err)
+	}
+	addresses := w.Addresses()
+	sort.Strings(addresses)
+	var tipHash core.Hash32
+	tipHash[0] = 9
+	var txID core.Hash32
+	txID[0] = 7
+	remote := RemoteSnapshot{
+		Network:   core.RegTestMachineID,
+		Tip:       core.ChainTipSnapshot{Network: core.RegTestMachineID, Hash: tipHash, Height: 42},
+		Addresses: addresses,
+		Outpoints: []RemoteSnapshotOutpoint{{
+			TxID: txID, Vout: 3, AmountUnits: 2 * core.UnitsPerCoin, Address: addresses[0],
+		}},
+		SpendableUnits: 2 * core.UnitsPerCoin,
+	}
+	recipientPublic, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	destination := core.EncodeAddress(core.PubKeyHash20(recipientPublic))
+	snapshot, prepared, err := w.PrepareFromRemoteSnapshot(remote, destination, core.UnitsPerCoin, 1000, nil)
+	if err != nil {
+		t.Fatalf("PrepareFromRemoteSnapshot: %v", err)
+	}
+	if snapshot.SpendableUnits != remote.SpendableUnits || len(prepared.SelectedOutpoints) != 1 || prepared.SelectedOutpoints[0] != (core.OutPoint{TxID: txID, Idx: 3}) {
+		t.Fatalf("snapshot=%#v prepared=%#v", snapshot, prepared)
+	}
+	input := prepared.Tx.Ins[0]
+	digest := prepared.Tx.SigDigest()
+	if core.PubKeyHash20(input.PubKey) != mustDecodeAddress(t, addresses[0]) ||
+		!ed25519.Verify(ed25519.PublicKey(input.PubKey), digest[:], input.Sig) {
+		t.Fatal("payment was not signed by the local owning key")
+	}
+}
+
+func TestPrepareFromRemoteSnapshotRejectsForeignOrInconsistentOutputs(t *testing.T) {
+	walletPath := filepath.Join(t.TempDir(), "wallet.json")
+	w, err := Open(walletPath, core.RegTestMachineID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.NewAddress(); err != nil {
+		t.Fatal(err)
+	}
+	addresses := w.Addresses()
+	sort.Strings(addresses)
+	base := RemoteSnapshot{
+		Network:        core.RegTestMachineID,
+		Tip:            core.ChainTipSnapshot{Network: core.RegTestMachineID, Hash: core.Hash32{1}, Height: 1},
+		Addresses:      addresses,
+		Outpoints:      []RemoteSnapshotOutpoint{{TxID: core.Hash32{2}, AmountUnits: 10, Address: addresses[0]}},
+		SpendableUnits: 10,
+	}
+	destination := core.EncodeAddress([20]byte{8})
+	tests := []struct {
+		name   string
+		mutate func(*RemoteSnapshot)
+	}{
+		{name: "foreign owner", mutate: func(snapshot *RemoteSnapshot) { snapshot.Outpoints[0].Address = core.EncodeAddress([20]byte{9}) }},
+		{name: "wrong total", mutate: func(snapshot *RemoteSnapshot) { snapshot.SpendableUnits++ }},
+		{name: "wrong network", mutate: func(snapshot *RemoteSnapshot) { snapshot.Network = core.MainNetMachineID }},
+		{name: "duplicate outpoint", mutate: func(snapshot *RemoteSnapshot) {
+			snapshot.Outpoints = append(snapshot.Outpoints, snapshot.Outpoints[0])
+			snapshot.SpendableUnits *= 2
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			remote := base
+			remote.Addresses = append([]string(nil), base.Addresses...)
+			remote.Outpoints = append([]RemoteSnapshotOutpoint(nil), base.Outpoints...)
+			test.mutate(&remote)
+			if _, _, err := w.PrepareFromRemoteSnapshot(remote, destination, 1, 0, nil); err == nil {
+				t.Fatal("invalid remote snapshot was accepted")
+			}
+		})
+	}
+}
+
+func mustDecodeAddress(t *testing.T, address string) [20]byte {
+	t.Helper()
+	pkh, err := core.DecodeAddress(address)
+	if err != nil {
+		t.Fatalf("DecodeAddress: %v", err)
+	}
+	return pkh
 }
 
 func TestWalletSnapshotHashFixedCrossLanguageVectorAndNumericVouts(t *testing.T) {

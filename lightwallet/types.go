@@ -5,6 +5,7 @@ const (
 	SnapshotPath              = "/api/wallet/v1/snapshot"
 	BroadcastPath             = "/api/wallet/v1/broadcast"
 	MaxSnapshotAddresses      = 100
+	MaxSnapshotOutputs        = 10_000
 	MaxRequestBytes           = 64 << 10
 	MaxResponseBytes          = 1 << 20
 	MaxSignedTransactionBytes = 10_000

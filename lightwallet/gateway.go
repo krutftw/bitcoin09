@@ -87,7 +87,7 @@ func (g *Gateway) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot, err := g.chain.SpendableOutputsForPKHs(pkhs)
 	if err != nil || !snapshot.Complete || snapshot.Network != g.network ||
-		snapshot.Tip.Network != g.network || snapshot.Tip.Height < 0 {
+		snapshot.Tip.Network != g.network || snapshot.Tip.Height < 0 || len(snapshot.Outputs) > MaxSnapshotOutputs {
 		g.writeError(w, http.StatusServiceUnavailable, "chain_unavailable")
 		return
 	}
