@@ -3,6 +3,7 @@ package explorer
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -31,6 +32,114 @@ func newRegTestServer(t *testing.T) (*Server, *core.Chain) {
 		t.Fatalf("New: %v", err)
 	}
 	return server, chain
+}
+
+func minePayoutRun(t *testing.T, chain *core.Chain, payout [20]byte, blocks int, firstTime int64) int64 {
+	t.Helper()
+	blockTime := firstTime
+	for range blocks {
+		template := core.BuildBlockTemplate(chain, payout, "stats-test")
+		template.Header.Time = blockTime
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		result := core.Mine(ctx, chain, template, 2)
+		cancel()
+		if result.Block == nil {
+			t.Fatal("mining stats fixture timed out")
+		}
+		if err := chain.AcceptBlock(result.Block); err != nil {
+			t.Fatalf("AcceptBlock stats fixture: %v", err)
+		}
+		blockTime += 5
+	}
+	return blockTime
+}
+
+func TestMiningStatsEstimateAndConcentration(t *testing.T) {
+	server, chain := newRegTestServer(t)
+	payoutA := [20]byte{1}
+	payoutB := [20]byte{2}
+	blockTime := time.Now().Unix() - 1000
+	blockTime = minePayoutRun(t, chain, payoutA, 90, blockTime)
+	minePayoutRun(t, chain, payoutB, 30, blockTime)
+
+	stats := server.miningStatsAt(120, retargetData{
+		EpochElapsedBlocks:       120,
+		EpochElapsedSeconds:      600,
+		EpochAverageBlockSeconds: 5,
+	})
+	if stats.EstimatedNetworkHashrateHPS <= 0 || stats.HashrateObservationBlocks != 120 || stats.HashrateObservationSeconds != 600 {
+		t.Fatalf("unexpected estimator: %#v", stats)
+	}
+	if len(stats.Windows) != 2 || stats.Windows[0].RequestedBlocks != 100 || stats.Windows[0].ObservedBlocks != 100 {
+		t.Fatalf("unexpected windows: %#v", stats.Windows)
+	}
+	wantAddress := core.EncodeAddress(payoutA)
+	if got := stats.Windows[0]; got.TopPayoutAddress != wantAddress || got.TopPayoutBlocks != 70 || got.TopSharePercent != 70 || got.DistinctPayoutAddresses != 2 {
+		t.Fatalf("unexpected 100-block concentration: %#v", got)
+	}
+	if got := stats.Windows[1]; got.RequestedBlocks != 500 || got.ObservedBlocks != 120 || got.TopPayoutBlocks != 90 || got.TopSharePercent != 75 || got.DistinctPayoutAddresses != 2 {
+		t.Fatalf("unexpected 500-block concentration: %#v", got)
+	}
+}
+
+func TestMiningStatsEmptyEpochDoesNotInventHashrate(t *testing.T) {
+	server, _ := newRegTestServer(t)
+	stats := server.miningStatsAt(0, retargetData{})
+	if stats.EstimatedNetworkHashrateHPS != 0 || stats.HashrateObservationBlocks != 0 || stats.HashrateObservationSeconds != 0 || len(stats.Windows) != 0 {
+		t.Fatalf("genesis stats must be empty: %#v", stats)
+	}
+}
+
+func TestMiningStatsFallsBackToTrailingWindowAtEpochStart(t *testing.T) {
+	server, chain := newRegTestServer(t)
+	minePayoutRun(t, chain, [20]byte{4}, 12, time.Now().Unix()-100)
+	stats := server.miningStatsAt(12, retargetData{})
+	if stats.EstimatedNetworkHashrateHPS <= 0 || stats.HashrateObservationBlocks != 11 || stats.HashrateObservationSeconds != 55 {
+		t.Fatalf("unexpected trailing estimator: %#v", stats)
+	}
+}
+
+func TestStatusAndHomeExposeMiningStats(t *testing.T) {
+	server, chain := newRegTestServer(t)
+	minePayoutRun(t, chain, [20]byte{3}, 12, time.Now().Unix()-100)
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	response, err := httpServer.Client().Get(httpServer.URL + "/api/status")
+	if err != nil {
+		t.Fatalf("status request: %v", err)
+	}
+	defer response.Body.Close()
+	var status struct {
+		EstimatedNetworkHashrateHPS float64        `json:"estimated_network_hashrate_hps"`
+		HashrateObservationBlocks   int64          `json:"hashrate_observation_blocks"`
+		HashrateObservationSeconds  int64          `json:"hashrate_observation_seconds"`
+		Windows                     []miningWindow `json:"payout_address_windows"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.EstimatedNetworkHashrateHPS <= 0 || status.HashrateObservationBlocks <= 0 || status.HashrateObservationSeconds <= 0 {
+		t.Fatalf("status omitted estimator: %#v", status)
+	}
+	if len(status.Windows) != 2 || status.Windows[0].ObservedBlocks != 12 {
+		t.Fatalf("status omitted mining windows: %#v", status.Windows)
+	}
+
+	home, err := httpServer.Client().Get(httpServer.URL + "/")
+	if err != nil {
+		t.Fatalf("home request: %v", err)
+	}
+	defer home.Body.Close()
+	body, err := io.ReadAll(home.Body)
+	if err != nil {
+		t.Fatalf("read home: %v", err)
+	}
+	for _, want := range []string{"estimated network", "top payout address", "last 12 blocks"} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("home omitted %q: %s", want, body)
+		}
+	}
 }
 
 func assertV1Headers(t *testing.T, header http.Header) {

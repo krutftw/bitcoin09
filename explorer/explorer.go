@@ -790,6 +790,95 @@ type retargetData struct {
 	AdjustmentLimitFactor    float64 `json:"difficulty_adjustment_limit_factor"`
 }
 
+type miningWindow struct {
+	RequestedBlocks         int64   `json:"requested_blocks"`
+	ObservedBlocks          int64   `json:"observed_blocks"`
+	DistinctPayoutAddresses int     `json:"distinct_payout_addresses"`
+	TopPayoutAddress        string  `json:"top_payout_address"`
+	TopPayoutBlocks         int64   `json:"top_payout_blocks"`
+	TopSharePercent         float64 `json:"top_share_percent"`
+}
+
+type miningStats struct {
+	EstimatedNetworkHashrateHPS float64        `json:"estimated_network_hashrate_hps"`
+	HashrateObservationBlocks   int64          `json:"hashrate_observation_blocks"`
+	HashrateObservationSeconds  int64          `json:"hashrate_observation_seconds"`
+	Windows                     []miningWindow `json:"payout_address_windows"`
+}
+
+func expectedHashes(bits uint32) float64 {
+	work := core.WorkFromTarget(core.CompactToTarget(bits))
+	value, _ := new(big.Float).SetInt(work).Float64()
+	return value
+}
+
+func (s *Server) miningStatsAt(tip int64, retarget retargetData) miningStats {
+	var stats miningStats
+	if tip <= 0 {
+		return stats
+	}
+	if block := s.chain.BlockAt(tip); block != nil && retarget.EpochElapsedBlocks > 0 && retarget.EpochElapsedSeconds > 0 {
+		stats.EstimatedNetworkHashrateHPS = expectedHashes(block.Header.Bits) *
+			float64(retarget.EpochElapsedBlocks) / float64(retarget.EpochElapsedSeconds)
+		stats.HashrateObservationBlocks = retarget.EpochElapsedBlocks
+		stats.HashrateObservationSeconds = retarget.EpochElapsedSeconds
+	}
+	if stats.HashrateObservationBlocks == 0 {
+		start := tip - 120
+		if start < 1 {
+			start = 1
+		}
+		startBlock := s.chain.BlockAt(start)
+		tipBlock := s.chain.BlockAt(tip)
+		if startBlock != nil && tipBlock != nil && start < tip {
+			elapsed := tipBlock.Header.Time - startBlock.Header.Time
+			if elapsed > 0 {
+				var totalExpectedHashes float64
+				for height := start + 1; height <= tip; height++ {
+					if block := s.chain.BlockAt(height); block != nil {
+						totalExpectedHashes += expectedHashes(block.Header.Bits)
+					}
+				}
+				stats.HashrateObservationBlocks = tip - start
+				stats.HashrateObservationSeconds = elapsed
+				stats.EstimatedNetworkHashrateHPS = totalExpectedHashes / float64(elapsed)
+			}
+		}
+	}
+
+	for _, requested := range []int64{100, 500} {
+		observed := requested
+		if observed > tip {
+			observed = tip
+		}
+		counts := make(map[string]int64)
+		for height := tip - observed + 1; height <= tip; height++ {
+			row, ok := s.row(height)
+			if ok && row.Miner != "unspendable" {
+				counts[row.Miner]++
+			}
+		}
+		if observed == 0 || len(counts) == 0 {
+			continue
+		}
+		window := miningWindow{
+			RequestedBlocks:         requested,
+			ObservedBlocks:          observed,
+			DistinctPayoutAddresses: len(counts),
+		}
+		for address, blocks := range counts {
+			if blocks > window.TopPayoutBlocks ||
+				(blocks == window.TopPayoutBlocks && (window.TopPayoutAddress == "" || address < window.TopPayoutAddress)) {
+				window.TopPayoutAddress = address
+				window.TopPayoutBlocks = blocks
+			}
+		}
+		window.TopSharePercent = float64(window.TopPayoutBlocks) * 100 / float64(observed)
+		stats.Windows = append(stats.Windows, window)
+	}
+	return stats
+}
+
 func supplyAt(p *core.Params, tip int64) supplyData {
 	totalIssued := totalSubsidyThrough(tip)
 	burnedGenesis := core.SubsidyAt(0)
@@ -910,6 +999,19 @@ func secondsText(seconds float64) string {
 	return fmt.Sprintf("%.0fs", seconds)
 }
 
+func hashrateText(hashesPerSecond float64) string {
+	if hashesPerSecond <= 0 {
+		return "-"
+	}
+	if hashesPerSecond >= 1_000_000 {
+		return fmt.Sprintf("%.2f MH/s", hashesPerSecond/1_000_000)
+	}
+	if hashesPerSecond >= 1_000 {
+		return fmt.Sprintf("%.2f KH/s", hashesPerSecond/1_000)
+	}
+	return fmt.Sprintf("%.2f H/s", hashesPerSecond)
+}
+
 func (s *Server) row(h int64) (blockRow, bool) {
 	b := s.chain.BlockAt(h)
 	if b == nil {
@@ -957,6 +1059,9 @@ type homeData struct {
 	BlockReward             string
 	NextHalvingHeight       int64
 	BlocksToHalving         int64
+	NetworkHashrate         string
+	HashrateObservation     string
+	TopPayoutConcentration  string
 	Blocks                  []blockRow
 }
 
@@ -975,6 +1080,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	if b := s.chain.BlockAt(tip); b != nil {
 		diff := s.difficulty(b.Header.Bits)
 		retarget := s.retargetAt(tip, diff)
+		mining := s.miningStatsAt(tip, retarget)
 		d.Difficulty = fmt.Sprintf("%.2f", diff)
 		d.TargetBlockTime = retarget.TargetBlockSeconds
 		d.RetargetInterval = retarget.RetargetInterval
@@ -982,6 +1088,15 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		d.BlocksToRetarget = retarget.BlocksToRetarget
 		d.EpochAverage = secondsText(retarget.EpochAverageBlockSeconds)
 		d.EstimatedNextDifficulty = fmt.Sprintf("%.2f", retarget.EstimatedNextDifficulty)
+		d.NetworkHashrate = hashrateText(mining.EstimatedNetworkHashrateHPS)
+		if mining.HashrateObservationBlocks > 0 {
+			d.HashrateObservation = fmt.Sprintf("%d blocks / %s", mining.HashrateObservationBlocks, secondsText(float64(mining.HashrateObservationSeconds)))
+		}
+		if len(mining.Windows) > 0 {
+			window := mining.Windows[0]
+			d.TopPayoutConcentration = fmt.Sprintf("%.1f%% (%d of last %d blocks; %d payout addresses)",
+				window.TopSharePercent, window.TopPayoutBlocks, window.ObservedBlocks, window.DistinctPayoutAddresses)
+		}
 	}
 	for h := tip; h > tip-25 && h >= 0; h-- {
 		if row, ok := s.row(h); ok {
@@ -1054,6 +1169,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	supply := supplyAt(s.chain.Params(), tip)
 	retarget := s.retargetAt(tip, diff)
+	mining := s.miningStatsAt(tip, retarget)
 	writeJSON(w, map[string]any{
 		"coin":                               core.CoinName,
 		"ticker":                             core.Ticker,
@@ -1078,6 +1194,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"blocks_to_halving":                  supply.BlocksToHalving,
 		"zero_subsidy_height":                supply.ZeroSubsidyHeight,
 		"genesis_reward_burned":              supply.GenesisRewardBurned,
+		"estimated_network_hashrate_hps":     mining.EstimatedNetworkHashrateHPS,
+		"hashrate_observation_blocks":        mining.HashrateObservationBlocks,
+		"hashrate_observation_seconds":       mining.HashrateObservationSeconds,
+		"payout_address_windows":             mining.Windows,
 	})
 }
 
@@ -1125,12 +1245,14 @@ input { font-family: monospace; width: 24em; }
 <span>difficulty <b>{{.Difficulty}}</b></span>
 <span>target <b>{{.TargetBlockTime}}s</b></span>
 <span>avg this window <b>{{.EpochAverage}}</b></span>
+<span>estimated network <b>{{.NetworkHashrate}}</b></span>
 <span>retarget <b>{{.BlocksToRetarget}}</b> blocks</span>
 <span>supply <b>{{.Supply}} 09C</b></span>
 <span>reward <b>{{.BlockReward}} 09C</b></span>
 <span>halving <b>{{.BlocksToHalving}}</b> blocks</span>
 </p>
 <p>difficulty retargets every {{.RetargetInterval}} blocks. next retarget height {{.NextRetargetHeight}}, estimated next difficulty {{.EstimatedNextDifficulty}} if this window keeps the same average.</p>
+{{if .HashrateObservation}}<p>hashrate estimate uses {{.HashrateObservation}}. top payout address <b>{{.TopPayoutConcentration}}</b>.</p>{{end}}
 <form action="/search"><input name="q" placeholder="block height or address"><button>go</button></form>
 <table>
 <tr><th>height</th><th>time (UTC)</th><th>miner</th><th>txs</th><th>reward</th><th>block id</th></tr>
