@@ -16,8 +16,6 @@ Changes:
   depend on a third-party pool API being online.
 - A hardened seed-only systemd unit and TLS reverse-proxy example are included
   for independent operators.
-- GitHub Actions now runs the Go race detector, `go vet`, Discord tests, and the
-  website contract on every push and pull request.
 
 This is remote solo mining, so it does not smooth payout variance. PPLNS is not
 live in the official software. The planned non-custodial PPLNS phase will not be
