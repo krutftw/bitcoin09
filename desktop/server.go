@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -32,6 +33,11 @@ type session struct {
 	csrf  string
 }
 
+type pendingSend struct {
+	expiresAt int64
+	inFlight  bool
+}
+
 type Server struct {
 	origin      string
 	originHost  string
@@ -42,6 +48,8 @@ type Server struct {
 	mu             sync.RWMutex
 	launchConsumed bool
 	sessions       map[string]session
+	pending        map[string]map[string]*pendingSend
+	nowUnix        func() int64
 }
 
 func NewServer(config Config) (*Server, error) {
@@ -66,6 +74,8 @@ func NewServer(config Config) (*Server, error) {
 		service:     config.Service,
 		launchToken: config.LaunchToken,
 		sessions:    make(map[string]session),
+		pending:     make(map[string]map[string]*pendingSend),
+		nowUnix:     func() int64 { return time.Now().Unix() },
 	}, nil
 }
 
@@ -85,6 +95,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/v1/wallet/create" {
 		s.handleCreateWallet(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/wallet/address" {
+		s.handleNewAddress(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/wallet/backup" {
+		s.handleBackup(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/send/preview" {
+		s.handlePreviewSend(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/send/confirm" {
+		s.handleConfirmSend(w, r)
 		return
 	}
 	s.writeError(w, http.StatusNotFound, "not_found", "That BTC09 Wallet page was not found.")
@@ -235,6 +261,130 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeData(w, http.StatusOK, status)
+}
+
+func (s *Server) handleNewAddress(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authorizeMutation(w, r); !ok {
+		return
+	}
+	if err := decodeJSONRequest(w, r, &struct{}{}); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "The request was not valid.")
+		return
+	}
+	result, err := s.service.NewAddress(r.Context())
+	if err != nil {
+		s.writeServiceError(w, err, "address_create_failed", "BTC09 could not create another receive address.")
+		return
+	}
+	s.writeData(w, http.StatusOK, result)
+}
+
+func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authorizeMutation(w, r); !ok {
+		return
+	}
+	var request struct {
+		Destination string `json:"destination"`
+	}
+	if err := decodeJSONRequest(w, r, &request); err != nil || request.Destination == "" || len(request.Destination) > 4096 {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Choose a valid backup destination.")
+		return
+	}
+	result, err := s.service.Backup(r.Context(), request.Destination)
+	if err != nil {
+		s.writeServiceError(w, err, "backup_failed", "BTC09 could not create that backup.")
+		return
+	}
+	s.writeData(w, http.StatusOK, result)
+}
+
+func (s *Server) handlePreviewSend(w http.ResponseWriter, r *http.Request) {
+	current, ok := s.authorizeMutation(w, r)
+	if !ok {
+		return
+	}
+	var request SendRequest
+	if err := decodeJSONRequest(w, r, &request); err != nil || request.Destination == "" || request.Amount == "" || request.Fee == "" {
+		s.writeError(w, http.StatusBadRequest, "invalid_send", "Enter a destination, amount, and fee.")
+		return
+	}
+	preview, err := s.service.PreviewSend(r.Context(), request)
+	if err != nil {
+		s.writeServiceError(w, err, "send_preview_failed", "BTC09 could not prepare that transaction.")
+		return
+	}
+	now := s.nowUnix()
+	if preview.PendingID == "" || len(preview.PendingID) > 128 || preview.ExpiresAtUnix <= now || preview.ExpiresAtUnix > now+3600 {
+		s.writeError(w, http.StatusInternalServerError, "send_preview_failed", "BTC09 could not prepare that transaction.")
+		return
+	}
+	s.mu.Lock()
+	if s.pending[current.token] == nil {
+		s.pending[current.token] = make(map[string]*pendingSend)
+	}
+	for id, pending := range s.pending[current.token] {
+		if pending.expiresAt <= now {
+			delete(s.pending[current.token], id)
+		}
+	}
+	if _, duplicate := s.pending[current.token][preview.PendingID]; duplicate {
+		s.mu.Unlock()
+		s.writeError(w, http.StatusInternalServerError, "send_preview_failed", "BTC09 could not prepare that transaction.")
+		return
+	}
+	s.pending[current.token][preview.PendingID] = &pendingSend{expiresAt: preview.ExpiresAtUnix}
+	s.mu.Unlock()
+	s.writeData(w, http.StatusOK, preview)
+}
+
+func (s *Server) handleConfirmSend(w http.ResponseWriter, r *http.Request) {
+	current, ok := s.authorizeMutation(w, r)
+	if !ok {
+		return
+	}
+	var request struct {
+		PendingID string `json:"pending_id"`
+	}
+	if err := decodeJSONRequest(w, r, &request); err != nil || request.PendingID == "" || len(request.PendingID) > 128 {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "The transaction preview was not valid.")
+		return
+	}
+	now := s.nowUnix()
+	s.mu.Lock()
+	pending := s.pending[current.token][request.PendingID]
+	if pending == nil {
+		s.mu.Unlock()
+		s.writeError(w, http.StatusConflict, "preview_unavailable", "That transaction preview is no longer available. Review the payment again.")
+		return
+	}
+	if pending.expiresAt <= now {
+		delete(s.pending[current.token], request.PendingID)
+		s.mu.Unlock()
+		s.writeError(w, http.StatusConflict, "preview_expired", "That transaction preview expired. Review the payment again.")
+		return
+	}
+	if pending.inFlight {
+		s.mu.Unlock()
+		s.writeError(w, http.StatusConflict, "confirmation_in_progress", "That transaction is already being submitted.")
+		return
+	}
+	pending.inFlight = true
+	s.mu.Unlock()
+
+	result, err := s.service.ConfirmSend(r.Context(), request.PendingID)
+	if err != nil {
+		s.mu.Lock()
+		if existing := s.pending[current.token][request.PendingID]; existing != nil {
+			existing.inFlight = false
+		}
+		s.mu.Unlock()
+		s.writeServiceError(w, err, "send_confirm_failed", "BTC09 could not submit that transaction.")
+		return
+	}
+	s.mu.Lock()
+	delete(s.pending[current.token], request.PendingID)
+	s.mu.Unlock()
+	s.writeData(w, http.StatusOK, result)
 }
 
 func decodeJSONRequest(w http.ResponseWriter, r *http.Request, destination any) error {
