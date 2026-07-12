@@ -63,10 +63,13 @@ function renderStatus(status) {
   state.csrf = status.csrf_token || state.csrf;
   byId("app-version").textContent = status.version || "—";
   byId("network-state").textContent = (status.network || "unknown").replace("btc09-", "").toUpperCase();
+	const fastMode = status.mode === "fast";
+	byId("wallet-mode").textContent = fastMode ? "FAST MODE" : "FULL NODE";
   byId("chain-height").textContent = Number(status.height || 0).toLocaleString();
-  byId("peer-count").textContent = String(status.peer_count || 0).padStart(2, "0");
   byId("sync-state").textContent = status.sync_state || "offline";
-  byId("status-lamp").classList.toggle("is-online", status.peer_count > 0);
+	const connected = status.sync_state === "connected";
+	byId("status-lamp").classList.toggle("is-online", connected);
+	byId("status-lamp").classList.toggle("is-ready", !connected && status.sync_state === "ready");
   byId("loading-view").hidden = true;
   byId("first-run").hidden = status.wallet_exists;
   byId("wallet-view").hidden = !status.wallet_exists;
@@ -77,7 +80,7 @@ function renderStatus(status) {
   byId("balance-major").textContent = Number(formatted[0]).toLocaleString();
   byId("balance-minor").textContent = `.${formatted[1]}`;
   byId("tip-hash").textContent = status.tip_hash ? `Tip ${status.tip_hash.slice(0, 16)}…` : "Tip —";
-  byId("balance-state").textContent = status.peer_count > 0 ? "CONNECTED LOCAL CHAIN" : "OFFLINE LOCAL CHAIN";
+	byId("balance-state").textContent = fastMode ? "FAST MODE · SIGNING ON THIS DEVICE" : (status.peer_count > 0 ? "FULL NODE · CONNECTED" : "FULL NODE · OFFLINE");
   const address = status.addresses?.[status.addresses.length - 1] || "";
   byId("receive-address").textContent = address || "No receive address";
   byId("address-chip-text").textContent = address ? `${address.slice(0, 7)}…${address.slice(-5)}` : "No address";
@@ -86,8 +89,12 @@ function renderStatus(status) {
   const canSend = Boolean(status.send_available);
   byId("preview-send").disabled = !canSend;
   byId("send-availability").textContent = canSend
-    ? "A connected peer is available. You will review the exact payment before broadcast."
-    : "Sending unlocks after the local chain has data and at least one peer is connected.";
+	  ? (fastMode
+	    ? "Ready. The payment is built and signed on this computer, then sent for relay."
+	    : "A connected peer is available. You will review the exact payment before broadcast.")
+	  : (fastMode
+	    ? "Wallet service is temporarily unavailable. Your funds are safe; try again."
+	    : "Sending unlocks after the local chain has data and at least one peer is connected.");
 }
 
 async function refreshStatus({ quiet = false } = {}) {

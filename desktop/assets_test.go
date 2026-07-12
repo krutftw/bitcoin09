@@ -70,6 +70,27 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 	}
 }
 
+func TestEmbeddedInterfaceExplainsFastAndFullWalletModes(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		required []string
+	}{
+		{name: "assets/index.html", required: []string{`id="wallet-mode"`, `WALLET CONNECTION`, `Keys stay on this computer`}},
+		{name: "assets/app.js", required: []string{`status.mode`, `FAST MODE`, `FULL NODE`, `Wallet service`}},
+		{name: "assets/app.css", required: []string{`.mode-value`, `.status-lamp.is-ready`}},
+	} {
+		body, err := fs.ReadFile(assetsFS, test.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, required := range test.required {
+			if !strings.Contains(string(body), required) {
+				t.Errorf("%s is missing %q", test.name, required)
+			}
+		}
+	}
+}
+
 func TestAuthenticatedRootServesInterfaceAndAssets(t *testing.T) {
 	server := testServer(t)
 	cookie, _ := launchSession(t, server)

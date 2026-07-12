@@ -24,14 +24,14 @@
     <div class="app-shell">
       <aside class="status-rail" aria-label="BTC09 status">
         <div>
-          <p class="rail-heading">LOCAL NODE</p>
+		  <p class="rail-heading">WALLET CONNECTION</p>
+		  <div class="rail-readout"><span>Mode</span><strong id="wallet-mode" class="mode-value">Starting</strong></div>
           <div class="rail-readout"><span>Connection</span><strong id="sync-state">Connecting</strong></div>
-          <div class="rail-readout"><span>Block height</span><strong id="chain-height">—</strong></div>
-          <div class="rail-readout"><span>Peers</span><strong id="peer-count">—</strong></div>
+		  <div class="rail-readout"><span>Latest block</span><strong id="chain-height">—</strong></div>
         </div>
         <div class="privacy-note">
           <span aria-hidden="true">●</span>
-          <p>Keys stay on this computer. No cloud account.</p>
+		  <p>Keys stay on this computer. Payments are signed here.</p>
         </div>
         <div class="version-stamp"><span>REFERENCE WALLET</span><strong id="app-version">—</strong></div>
       </aside>

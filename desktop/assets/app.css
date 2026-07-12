@@ -62,6 +62,7 @@ button { color: inherit; }
 .topbar-account { min-height: 36px; padding: 0 13px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); font: var(--text-xs) var(--mono); letter-spacing: .07em; }
 .status-lamp { width: 8px; height: 8px; border-radius: 50%; background: #b78635; box-shadow: 0 0 0 4px rgba(183, 134, 53, .13); }
 .status-lamp.is-online { background: #5d936d; box-shadow: 0 0 0 4px rgba(93, 147, 109, .14); }
+.status-lamp.is-ready { background: #b78635; box-shadow: 0 0 0 4px rgba(183, 134, 53, .13); }
 
 .app-shell { min-height: 706px; display: grid; grid-template-columns: 220px minmax(0, 1fr); }
 .status-rail { padding: 28px 22px 22px; display: flex; flex-direction: column; background: var(--ink); color: var(--paper-bright); }
@@ -69,6 +70,7 @@ button { color: inherit; }
 .rail-readout { margin-bottom: 20px; padding-bottom: 18px; border-bottom: 1px solid rgba(255,255,255,.13); }
 .rail-readout span { display: block; margin-bottom: 6px; color: #b7baaf; font-size: 13px; }
 .rail-readout strong { display: block; font: 15px/1.4 var(--mono); text-transform: capitalize; overflow-wrap: anywhere; }
+.rail-readout .mode-value { color: #e39a6f; text-transform: uppercase; letter-spacing: .04em; }
 .privacy-note { margin-top: auto; padding: 15px; display: grid; grid-template-columns: 10px 1fr; gap: 9px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; background: rgba(255,255,255,.04); color: #b9bcaf; }
 .privacy-note > span { color: #77a786; font-size: 9px; }
 .privacy-note p { margin: 0; font-size: 13px; line-height: 1.45; }
