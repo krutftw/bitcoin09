@@ -1,104 +1,122 @@
-# Bitcoin 09 (09C) — Exchange Listing Spec
+# Bitcoin 09 (09C) exchange listing spec
 
-Ready-to-paste reference for exchange listing applications. Everything an
-exchange needs to evaluate and integrate 09C is here. Keep this in sync with
-the live chain state when submitting.
+Current, verifiable reference for exchange review. Check the live chain state
+and current release again when submitting.
 
-## Submit to
+## Listing route
 
-Free or low-cost listings that accept CPU / fair-launch coins:
+The first target is SafeTrade. Its official public route is the
+[SafeTrade support request form](https://support.safetrade.com/hc/en-us/requests/new).
+The trading API key on a user account is for that user's orders and balances;
+it does not create a coin listing request.
 
-| Exchange | URL | Notes |
-|----------|-----|-------|
-| TradeOgre | https://tradeogre.com/listing/add | The standard venue for CPU-mined coins. Simple form. |
-| Xeggex | https://xeggex.com/listing/request | Common for new CPU coins. |
-| NonKyc.io | https://nonkyc.io | Privacy-friendly, lists fair-launch coins. |
-| MEXC | https://www.mexc.com/ | Longer shot, but lists small market-cap coins via "Space". |
+Other small exchanges should be approached only after confirming that their
+current listing route is active and that BTC09 can meet their technical and
+commercial requirements. Do not spam several exchanges with stale form links.
 
----
+## Coin summary
 
-## Coin summary (copy-paste)
-
-**Bitcoin 09 (09C)** is a fair-launch, CPU-mineable cryptocurrency that keeps
-Bitcoin's economics and changes one thing: the proof of work is **Argon2id**
-(64 MiB) instead of SHA-256, so ordinary CPUs can mine it and ASICs do not get
-the same kind of advantage. There was no premine, no ICO, no developer
-allocation, and the genesis block reward is burned — every coin that exists was
-or will be mined by someone's CPU.
+Bitcoin 09 (`09C`) is a fair-launch, CPU-accessible cryptocurrency with a
+Bitcoin-style UTXO ledger and Argon2id proof of work. There was no premine, ICO,
+developer allocation, or treasury allocation. The genesis reward is
+unspendable, so every circulating coin was publicly mined after genesis.
 
 - **Ticker:** 09C
 - **Name:** Bitcoin 09
-- **Algorithm:** Argon2id (64 MiB, memory-hard)
-- **Type:** UTXO, Bitcoin-style (not an EVM token; no smart contracts)
-- **Implementation:** Clean-room Go reference node (not a Bitcoin Core fork)
+- **Type:** native UTXO chain, not an EVM or Solana token
+- **Proof of work:** Argon2id, 64 MiB memory cost
+- **Implementation:** clean-room Go reference node
 - **Website:** https://btc09.org
-- **Source code:** https://github.com/krutftw/bitcoin09 (open source, MIT)
+- **Source:** https://github.com/krutftw/bitcoin09 (MIT)
 - **Explorer:** https://explorer.btc09.org
+- **Integration guide:** https://github.com/krutftw/bitcoin09/blob/master/docs/EXCHANGE-INTEGRATION.md
+- **Latest release:** https://github.com/krutftw/bitcoin09/releases/latest
 - **Bitcointalk ANN:** https://bitcointalk.org/index.php?topic=5587640.0
 - **Discord:** https://discord.gg/fUuGzwRTzP
-- **Public mining pool:** https://www.ntmminer.com/btc09 (third-party)
 
 ## Monetary policy
 
-- **Max supply:** 21,000,000 09C (hard cap, same as Bitcoin)
-- **Block reward:** 50 09C (halving every 210,000 blocks)
-- **Block target:** 10 minutes
-- **Difficulty retarget:** every 2,016 blocks, Bitcoin-style (max 4x per adjustment)
-- **Genesis reward:** burned (unspendable), so the effective circulating cap is slightly under 21M
-- **Premine:** none
-- **Allocation:** none — no developer, team, or treasury allocation
+- **Maximum nominal supply:** 21,000,000 09C
+- **Initial block subsidy:** 50 09C
+- **Halving interval:** 210,000 blocks
+- **Target block time:** 600 seconds
+- **Difficulty retarget:** every 2,016 blocks, limited to a 4x change
+- **Coinbase maturity:** 100 blocks
+- **Premine / ICO / team allocation:** none
+- **Genesis reward:** burned and excluded from circulating supply
 
-## Current chain state
+## Live chain state
 
-Fill these in from the live explorer before submitting:
+Use the chain APIs rather than a hard-coded application value:
 
-```
-Chain height:        https://explorer.btc09.org   (top-right)
-Circulating supply:  curl https://explorer.btc09.org/api/circulating_supply
-Difficulty:          https://btc09.org            (Network Now panel)
-Network hashrate:    https://btc09.org            (Network Now panel)
-Circulating coins:   ~350,000 09C as of July 2026
-```
-
-## Network / integration specs
-
-- **Seed nodes:**
-  - `seed.btc09.org:9009`
-  - `178.128.105.41:9009`
-  - `103.80.18.140:9009`
-  - `108.190.240.138:9009`
-- **Default P2P port:** 9009
-- **Address version byte:** 0x09 (addresses start with `4k...`)
-- **Explorer JSON API:**
-  - Tip: `https://explorer.btc09.org/api/status`
-  - Supply: `https://explorer.btc09.org/api/circulating_supply`
-
-## Wallet / node software
-
-Prebuilt binaries for exchange integration:
-
-```
-Linux amd64:   https://github.com/krutftw/bitcoin09/releases/latest (btc09-linux-amd64)
-Linux arm64:   https://github.com/krutftw/bitcoin09/releases/latest (btc09-linux-arm64)
-macOS arm64:   https://github.com/krutftw/bitcoin09/releases/latest (btc09-macos-apple)
-macOS intel:   https://github.com/krutftw/bitcoin09/releases/latest (btc09-macos-intel)
-Windows amd64: https://github.com/krutftw/bitcoin09/releases/latest (btc09-windows-amd64.exe)
+```bash
+curl -fsS https://explorer.btc09.org/api/v1/tip
+curl -fsS https://explorer.btc09.org/api/status
+curl -fsS https://explorer.btc09.org/api/circulating_supply
 ```
 
-All binaries are checksummed; verify with the `SHA256SUMS.txt` alongside each
-release. The reference node supports wallet commands, transaction inspection,
-and broadcast — enough for an exchange to manage deposits/withdrawals without a
-third-party library.
+At the 12 July 2026 review, mainnet was above height 7,370 with more than
+368,000 09C circulating. These numbers change with every block.
 
-## Why list 09C
+## Network
 
-- Genuinely fair launch — no premine, no allocation, verifiable from genesis.
-- CPU-mineable, which draws an active, distributed mining community (not hashrate rentals).
-- Real, working infrastructure from day one: live explorer, seed nodes, a public pool, Discord OTC escrow.
-- Open source from genesis, clean-room Go implementation — auditable in full.
-- The "Bitcoin, but mineable again" narrative has proven audience demand in this category.
+- **Machine network ID:** `btc09-mainnet`
+- **Default P2P port:** `9009/tcp`
+- **Address version:** `0x09`; current addresses start with `4k`
+- **Seed:** `seed.btc09.org:9009`
+- **Additional public peers:** `178.128.105.41:9009`,
+  `103.80.18.140:9009`, `108.190.240.138:9009`
+- **Mainnet genesis:**
+  `ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f`
+
+Versioned read-only integration endpoints:
+
+```text
+GET /api/v1/tip
+GET /api/v1/block/{hash}
+GET /api/v1/transaction/{txid}
+GET /api/v1/address/{address}/outputs?expected_tip_hash={hash}&expected_tip_height={height}
+```
+
+## Software and integration
+
+The latest release includes checksummed Linux amd64/arm64, macOS amd64/arm64,
+and Windows amd64 binaries. `SHA256SUMS.txt` is published beside them.
+
+The operator guide documents the complete flow:
+
+1. verify and pin the release;
+2. run a non-mining exchange node;
+3. allocate unique JSON-returned deposit addresses;
+4. scan outputs against an exact tip;
+5. handle confirmations and reorgs;
+6. prepare, independently inspect, reserve, and broadcast withdrawals;
+7. reconcile and recover after incidents.
+
+Read-only public check:
+
+```bash
+python3 tools/exchange/btc09_exchange_smoke.py \
+  --base-url https://explorer.btc09.org
+```
+
+Recommended starting deposit policy is 100 confirmations while the network is
+young. Each exchange should set and review its own risk policy.
+
+## Why consider 09C
+
+- Fair-launch supply is verifiable from genesis and the emission code.
+- The node, wallet, P2P network, explorer, miner, and transaction flow are live.
+- CPU-accessible Argon2id mining gives ordinary hardware a direct way to join.
+- The implementation and integration tests are small enough to audit in full.
+- The project has public releases, checksums, an active Discord, a Bitcointalk
+  ANN, multiple public peers, and a working community OTC path.
+
+There are no price, volume, or return promises. A listing would give miners and
+new users a safer public transfer path than informal Discord settlement.
 
 ## Contact
 
-Listing inquiries: the official Discord (https://discord.gg/fUuGzwRTzP) or the
-Bitcointalk ANN thread.
+Use the official listing ticket for private contact details. Public technical
+questions can be opened at https://github.com/krutftw/bitcoin09/issues without
+including secrets, wallet data, or exchange account information.
