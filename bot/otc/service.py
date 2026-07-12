@@ -659,6 +659,12 @@ class TradeService:
     def reconcile_pending_address(self) -> Mapping[str, Any] | None:
         """Recover one durable address reservation without holding a DB writer."""
 
+        if (
+            self._address_allocation_issue is None
+            and self.store.pending_address_order() is None
+        ):
+            return None
+
         with self._address_allocation_lock:
             try:
                 with self.wallet.allocation_lock(
@@ -800,6 +806,7 @@ class TradeService:
 
         if (
             self.store.active_wallet_transfer() is None
+            and self.store.has_queued_transfer()
             and not self.store.health_issues()
         ):
             mined = self._mine_once(expected_tip=batch.tip)

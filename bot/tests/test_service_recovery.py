@@ -210,6 +210,20 @@ class TradeServiceRecoveryTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_idle_reconciliation_does_not_scan_wallet_without_queued_work(
+        self,
+    ) -> None:
+        snapshot_calls: list[object] = []
+
+        def forbidden_snapshot(tip: object) -> WalletSnapshot:
+            snapshot_calls.append(tip)
+            raise AssertionError("idle reconciliation scanned the wallet")
+
+        self.wallet.snapshot = forbidden_snapshot  # type: ignore[method-assign]
+
+        self.assertEqual(self.service.reconcile_transfers(), ())
+        self.assertEqual(snapshot_calls, [])
+
     def create_sell(self, *, seller_id: int = 1):
         return self.service.create_sell(
             seller_id=seller_id,

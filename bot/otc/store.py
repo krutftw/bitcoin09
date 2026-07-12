@@ -1506,6 +1506,18 @@ class Store:
         finally:
             conn.close()
 
+    def has_queued_transfer(self) -> bool:
+        conn = self.connect()
+        try:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM transfers WHERE state='queued' LIMIT 1"
+                ).fetchone()
+                is not None
+            )
+        finally:
+            conn.close()
+
     def health_issues(self) -> tuple[str, ...]:
         conn = self.connect()
         try:

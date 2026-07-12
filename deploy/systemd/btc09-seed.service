@@ -1,0 +1,40 @@
+[Unit]
+Description=Bitcoin 09 seed node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/btc09
+ExecStart=/opt/btc09/btc09 node -listen 0.0.0.0:9009 -explorer 127.0.0.1:8009 -datadir /opt/btc09/data -seeds 103.80.18.140:9009,108.190.240.138:9009
+Restart=always
+RestartSec=5
+Nice=10
+MemoryMax=1G
+UMask=0077
+SupplementaryGroups=btc09-otc
+
+CapabilityBoundingSet=
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/opt/btc09/data
+InaccessiblePaths=-/var/lib/btc09-otc -/etc/btc09
+ProtectProc=invisible
+ProcSubset=pid
+
+[Install]
+WantedBy=multi-user.target

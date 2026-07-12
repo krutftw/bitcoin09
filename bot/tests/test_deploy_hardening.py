@@ -40,6 +40,7 @@ DEPLOY_README = ROOT / "deploy" / "README.md"
 REQUIREMENTS_LOCK = ROOT / "bot" / "requirements.lock"
 NGINX_HTTP = ROOT / "deploy" / "nginx" / "bitcoin09-otc-http.conf"
 NGINX_SERVER = ROOT / "deploy" / "nginx" / "bitcoin09-otc-server.conf"
+SEED_UNIT = ROOT / "deploy" / "systemd" / "btc09-seed.service"
 GIT_BASH = Path(r"C:\Program Files\Git\bin\bash.exe")
 SHELLCHECK = Path(
     r"C:\Users\Administrator\AppData\Local\Microsoft\WinGet\Links\shellcheck.exe"
@@ -121,6 +122,37 @@ def _initialized_db(path: Path) -> None:
 
 
 class ServiceUnitTests(unittest.TestCase):
+    def test_seed_unit_exposes_only_p2p_and_keeps_explorer_local(self) -> None:
+        text = SEED_UNIT.read_text(encoding="utf-8")
+        required = {
+            "ExecStart=/opt/btc09/btc09 node -listen 0.0.0.0:9009 -explorer 127.0.0.1:8009 -datadir /opt/btc09/data -seeds 103.80.18.140:9009,108.190.240.138:9009",
+            "Restart=always",
+            "MemoryMax=1G",
+            "UMask=0077",
+            "SupplementaryGroups=btc09-otc",
+            "CapabilityBoundingSet=",
+            "NoNewPrivileges=true",
+            "PrivateTmp=true",
+            "PrivateDevices=true",
+            "ProtectSystem=strict",
+            "ProtectHome=true",
+            "ProtectKernelTunables=true",
+            "ProtectKernelModules=true",
+            "ProtectControlGroups=true",
+            "ProtectClock=true",
+            "ProtectHostname=true",
+            "ProtectKernelLogs=true",
+            "LockPersonality=true",
+            "RestrictSUIDSGID=true",
+            "RestrictNamespaces=true",
+            "RestrictRealtime=true",
+            "ReadWritePaths=/opt/btc09/data",
+            "InaccessiblePaths=-/var/lib/btc09-otc -/etc/btc09",
+            "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+        }
+        self.assertFalse(required.difference(text.splitlines()))
+        self.assertNotIn("-explorer 0.0.0.0:8009", text)
+
     def test_bot_unit_is_dedicated_disabled_and_hardened(self) -> None:
         text = BOT_UNIT.read_text(encoding="utf-8")
         required = {
