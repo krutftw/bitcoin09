@@ -37,6 +37,17 @@ class IndexContractTest(unittest.TestCase):
         )
         self.assertIn("third-party, not run by 09C", self.html)
 
+    def test_open_remote_solo_path_is_explicit_about_limits(self):
+        for token in (
+            "Open-source remote solo mining",
+            "mine-pool",
+            "-solo-api",
+            "does not smooth solo-mining variance",
+            "PPLNS is not live",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

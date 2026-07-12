@@ -59,9 +59,9 @@ is 50 09C and mined rewards become spendable after 100 blocks.
 
 ## Pool Mine
 
-Public pool:
+Community-operated third-party pool:
 
-https://bitcoin09.tutuit.xyz
+https://www.ntmminer.com/btc09
 
 Use the pool's current worker instructions from the pool page.
 
@@ -77,6 +77,31 @@ finds valid blocks, those blocks are valid.
 
 Pool miner count means payout addresses connected to that public pool, not
 guaranteed unique people and not solo miners.
+
+## Open-source Remote Solo Mining
+
+The official client can mine against any independent 09C remote-solo
+coordinator without downloading the chain locally:
+
+```powershell
+btc09 mine-pool -pool https://mine.example.org -address YOUR_09C_ADDRESS -worker rig-1
+```
+
+HTTPS is required by default. Plain HTTP is available only for an explicitly
+trusted local test with `-allow-insecure-http`.
+
+An operator can enable the coordinator API on a synced node and place it behind
+TLS and connection limits:
+
+```powershell
+btc09 node -solo-api 127.0.0.1:9010
+```
+
+The coordinator accepts a payout address, not wallet secrets. It creates the
+canonical block template and accepts only a nonce for a short-lived job. Remote
+solo mining does not smooth solo-mining variance. PPLNS is not live in the
+official software; it requires a separately reviewed non-custodial payout
+implementation.
 
 ## Check Balance
 

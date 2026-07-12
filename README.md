@@ -247,6 +247,35 @@ right now. If a third-party GPU miner appears later, that is still
 permissionless mining. Treat any closed-source pool miner carefully: use only
 a payout address and never give it wallet secrets.
 
+## Open-source remote solo mining
+
+The official Go client includes a native remote-solo path. A miner can search
+work from any independently operated coordinator without running a local full
+node:
+
+```text
+btc09 mine-pool -pool https://mine.example.org -address YOUR_09C_ADDRESS -worker rig-1
+```
+
+A synced node can serve the coordinator on a local address for a TLS reverse
+proxy:
+
+```text
+btc09 node -solo-api 127.0.0.1:9010
+```
+
+The server owns the canonical block template and the client can change only the
+nonce. A coordinator receives a payout address, never a private key, seed
+phrase, or wallet file. Jobs expire quickly and are bounded in memory. The API
+uses strict small JSON requests, safe errors, network timeouts, and per-source
+limits.
+
+This is remote solo mining, so it does not smooth solo-mining variance. PPLNS
+is not live in the official software. The planned non-custodial PPLNS phase
+will pay miners directly in the block coinbase and will not be enabled until
+its accounting, persistence, restart, and reorg behavior have a separate
+security review.
+
 ## Tests
 
 ```

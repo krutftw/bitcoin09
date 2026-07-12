@@ -491,7 +491,7 @@ seed seed.btc09.org:9009
 seed 178.128.105.41:9009
 seed 103.80.18.140:9009
 seed 108.190.240.138:9009
-pool bitcoin09.tutuit.xyz
+pool ntmminer.com/btc09 (third-party)
 release v0.1.20</pre>
 <div class="status-card">
 <b>09C mainnet</b>
@@ -587,8 +587,8 @@ release v0.1.20</pre>
 </div>
 <div class="command">
 <h3>Pool mine</h3>
-<p>Use your 09C payout address at the public pool. Stratum port 18344 (PPLNS) or 18345 (solo).</p>
-<pre>bitcoin09.tutuit.xyz:18344</pre>
+<p>Use your 09C payout address and the current instructions on the community-operated pool page.</p>
+<pre>https://www.ntmminer.com/btc09</pre>
 </div>
 <div class="command">
 <h3>Run a node</h3>
@@ -596,6 +596,15 @@ release v0.1.20</pre>
 <pre>btc09 node</pre>
 </div>
 </div>
+</section>
+
+<section class="panel">
+<h2>Open-source remote solo mining</h2>
+<p>The official Go client now includes a native remote-solo protocol. A coordinator builds the block template; your computer runs Argon2id locally and submits only a winning nonce. Your payout address stays in the coordinator-owned template, and the client never sends a wallet key or seed phrase.</p>
+<pre>btc09 mine-pool -pool https://mine.example.org -address YOUR_09C_ADDRESS -worker rig-1</pre>
+<p>Anyone can run an independent coordinator from a synced node and put its local API behind TLS:</p>
+<pre>btc09 node -solo-api 127.0.0.1:9010</pre>
+<p class="muted">This removes the need for each remote miner to run a full node, but it does not smooth solo-mining variance. PPLNS is not live in the official software. The non-custodial PPLNS phase needs separate accounting, restart, reorg, and security tests before it is offered on mainnet.</p>
 </section>
 
 <section class="panel">

@@ -16,10 +16,11 @@ const defaultMaxBodyBytes int64 = 4 * 1024
 
 // HTTPConfig bounds requests to the public mining API.
 type HTTPConfig struct {
-	MaxBodyBytes          int64
-	WorkRequestsPerMinute int
-	SubmitsPerMinute      int
-	Now                   func() time.Time
+	MaxBodyBytes                  int64
+	WorkRequestsPerMinute         int
+	SubmitsPerMinute              int
+	TrustProxyHeadersFromLoopback bool
+	Now                           func() time.Time
 }
 
 type rateWindow struct {
@@ -197,6 +198,13 @@ func (h *httpHandler) allow(request *http.Request, route string, limit int) bool
 	host, _, err := net.SplitHostPort(request.RemoteAddr)
 	if err != nil || host == "" {
 		host = request.RemoteAddr
+	}
+	if h.config.TrustProxyHeadersFromLoopback {
+		peerIP := net.ParseIP(host)
+		realIP := net.ParseIP(strings.TrimSpace(request.Header.Get("X-Real-IP")))
+		if peerIP != nil && peerIP.IsLoopback() && realIP != nil {
+			host = realIP.String()
+		}
 	}
 	key := host + "|" + route
 	now := h.config.Now().UTC()

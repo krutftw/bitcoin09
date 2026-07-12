@@ -481,7 +481,9 @@ func cmdNode(args []string) {
 		if err != nil {
 			log.Fatalf("solo mining API: %v", err)
 		}
-		server := pool.NewHTTPServer(*soloAPI, pool.NewHTTPHandler(coordinator, pool.HTTPConfig{}))
+		server := pool.NewHTTPServer(*soloAPI, pool.NewHTTPHandler(coordinator, pool.HTTPConfig{
+			TrustProxyHeadersFromLoopback: true,
+		}))
 		go func() {
 			log.Printf("open remote-solo mining API on http://%s", *soloAPI)
 			if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

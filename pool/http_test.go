@@ -144,6 +144,30 @@ func TestHTTPLimiterBoundsTrackedSources(t *testing.T) {
 	}
 }
 
+func TestHTTPTrustsRealIPOnlyFromLoopbackProxyWhenEnabled(t *testing.T) {
+	_, coordinator := httpFixture(t, HTTPConfig{})
+	handler := NewHTTPHandler(coordinator, HTTPConfig{
+		WorkRequestsPerMinute:         1,
+		TrustProxyHeadersFromLoopback: true,
+	}).(*httpHandler)
+	first := httptest.NewRequest(http.MethodPost, "/api/v1/work", nil)
+	first.RemoteAddr = "127.0.0.1:5000"
+	first.Header.Set("X-Real-IP", "198.51.100.1")
+	second := httptest.NewRequest(http.MethodPost, "/api/v1/work", nil)
+	second.RemoteAddr = "127.0.0.1:5001"
+	second.Header.Set("X-Real-IP", "198.51.100.2")
+	if !handler.allow(first, "work", 1) || !handler.allow(second, "work", 1) {
+		t.Fatal("loopback reverse proxy did not preserve separate client limits")
+	}
+
+	untrusted := NewHTTPHandler(coordinator, HTTPConfig{WorkRequestsPerMinute: 1}).(*httpHandler)
+	first.RemoteAddr = "203.0.113.10:5000"
+	second.RemoteAddr = "203.0.113.10:5001"
+	if !untrusted.allow(first, "work", 1) || untrusted.allow(second, "work", 1) {
+		t.Fatal("untrusted peer spoofed its rate-limit identity with X-Real-IP")
+	}
+}
+
 func TestHTTPSubmitAcceptsWinningNonceAndMapsSafeErrors(t *testing.T) {
 	server, _ := httpFixture(t, HTTPConfig{})
 	workResponse := postJSON(t, server.Client(), server.URL+"/api/v1/work", map[string]any{
