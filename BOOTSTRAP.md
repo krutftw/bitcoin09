@@ -76,11 +76,14 @@ Once the extra public nodes stay stable:
 
 ## What not to add yet
 
-- no exchange push
+- no exchange spam or paid listing campaign
 - no token wrapping
 - no premine
 - no pool as the main launch path
 - no paid influencers
 - no price talk as the pitch
 
-The first job is distribution through mining, not hype.
+The first job is distribution through mining, not hype. Selective exchange
+submissions make sense after the public integration contract, release checks,
+and live infrastructure checks pass. Send a strong, current package to one
+venue at a time and record the real response.
