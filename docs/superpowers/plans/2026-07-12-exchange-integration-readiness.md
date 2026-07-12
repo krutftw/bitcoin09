@@ -36,7 +36,6 @@ def test_check_exchange_api_pins_optional_address_scan(self):
     self.assertTrue(result["ok"])
     self.assertEqual(result["network"], "btc09-mainnet")
     self.assertEqual(result["height"], 42)
-    self.assertEqual(result["block_transactions"], 1)
     self.assertEqual(result["address_outputs"], 1)
     self.assertIn("expected_tip_hash=" + TIP_HASH, self.server.last_address_path)
     self.assertIn("expected_tip_height=42", self.server.last_address_path)
@@ -75,19 +74,23 @@ def check_exchange_api(base_url: str, address: str | None, timeout: float) -> di
     tip = _get_json(base + "/api/v1/tip", timeout)
     if tip.get("schema_version") != 1 or tip.get("network") not in {"btc09-mainnet", "btc09-regtest"}:
         raise CheckFailed("unsupported tip schema or network")
-    height, tip_hash = tip.get("height"), tip.get("hash")
+    tip_object = tip.get("tip")
+    if not isinstance(tip_object, dict):
+        raise CheckFailed("tip object missing")
+    height, tip_hash = tip_object.get("height"), tip_object.get("hash")
     if not isinstance(height, int) or height < 0:
         raise CheckFailed("invalid tip height")
     if not isinstance(tip_hash, str) or not HASH_RE.fullmatch(tip_hash):
         raise CheckFailed("invalid tip hash")
     block = _get_json(base + "/api/v1/block/" + tip_hash, timeout)
-    if block.get("canonical") is not True or block.get("height") != height:
+    block_object = block.get("block")
+    if (block.get("found") is not True or not isinstance(block_object, dict)
+            or block_object.get("canonical") is not True
+            or block_object.get("height") != height
+            or block.get("tip") != {"height": height, "hash": tip_hash}):
         raise CheckFailed("tip block is not canonical at expected height")
-    txids = block.get("transaction_ids")
-    if not isinstance(txids, list):
-        raise CheckFailed("tip block transaction_ids missing")
     result = {"ok": True, "schema_version": 1, "network": tip["network"], "height": height,
-              "tip_hash": tip_hash, "block_transactions": len(txids)}
+              "tip_hash": tip_hash}
     if address:
         query = urllib.parse.urlencode({"expected_tip_hash": tip_hash, "expected_tip_height": height})
         outputs = _get_json(base + "/api/v1/address/" + urllib.parse.quote(address, safe="") + "/outputs?" + query, timeout)
@@ -169,7 +172,7 @@ printf '%s' "$SIGNED_TX_HEX" | btc09 inspect-tx -tx-hex - -network btc09-mainnet
 printf '%s' "$SIGNED_TX_HEX" | btc09 broadcast-tx -tx-hex - -expected-txid "$TXID" -datadir "$DATADIR" -network btc09-mainnet -seeds seed.btc09.org:9009 -json -require-broadcast=true
 ```
 
-Recommend 30 confirmations at initial listing, explain that the exchange owns its final policy, require coinbase maturity of 100 blocks, and require rescanning from the last finalized height after any expected-tip conflict.
+Recommend 100 confirmations at initial listing, explain that the exchange owns its final policy, require coinbase maturity of 100 blocks, and require rescanning from the last finalized height after any expected-tip conflict.
 
 - [ ] **Step 3: Correct public claims and links**
 
@@ -179,7 +182,7 @@ Add a short `Exchange integration` section to `README.md` linking the guide. Do 
 
 - [ ] **Step 4: Validate documentation references**
 
-Run: `rg -n "EXCHANGE-INTEGRATION|api/v1|btc09_exchange_smoke|30 confirmations|100 blocks" README.md docs/EXCHANGE-LISTING.md docs/EXCHANGE-INTEGRATION.md`
+Run: `rg -n "EXCHANGE-INTEGRATION|api/v1|btc09_exchange_smoke|100 confirmations|100 blocks" README.md docs/EXCHANGE-LISTING.md docs/EXCHANGE-INTEGRATION.md`
 
 Expected: every promised interface appears in the integration guide, and the README and listing spec link it.
 
@@ -253,4 +256,3 @@ Verify `https://btc09.org`, `https://explorer.btc09.org/api/v1/tip`, the integra
 - [ ] **Step 4: Submit the SafeTrade request**
 
 Open `https://support.safetrade.com/hc/en-us/requests/new`, enter the user's email, the prepared subject and body, and attach no secrets. Immediately before clicking `Submit`, obtain action-time confirmation if the browser confirmation policy requires it. Record the visible receipt or ticket number after submission.
-
