@@ -288,11 +288,11 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.20 is current. It adds chain-derived network hashrate and recent payout
-address concentration to the explorer, plus a tested exchange integration
-guide and read-only readiness check. It retains the peer deduplication,
-bounded dialing, and address-gossip hardening from v0.1.19. The node, miner,
-wallet, P2P sync, built-in seeds, block explorer and supply APIs are live.
+v0.1.21 is current. It adds the native open-source remote-solo coordinator and
+miner, keeps Discord network stats working when a third-party pool is offline,
+and correctly routes the registered `/stats` command. It retains the
+chain-derived mining transparency and exchange integration work from v0.1.20.
+There are no consensus changes.
 
 Network:
 

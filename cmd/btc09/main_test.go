@@ -738,6 +738,12 @@ func TestReleaseNewer(t *testing.T) {
 	}
 }
 
+func TestNodeVersionMatchesV021Release(t *testing.T) {
+	if nodeVersion != "v0.1.21" {
+		t.Fatalf("nodeVersion = %q, want v0.1.21", nodeVersion)
+	}
+}
+
 func TestRejectSendSeedFlag(t *testing.T) {
 	tests := [][]string{
 		{"-seed", "abc"},

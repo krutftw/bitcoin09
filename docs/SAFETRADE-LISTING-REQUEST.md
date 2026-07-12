@@ -32,7 +32,7 @@ withdrawal inspection and broadcast, backups, and incident recovery.
 
 Website: https://btc09.org
 Source: https://github.com/krutftw/bitcoin09
-Release and checksums: https://github.com/krutftw/bitcoin09/releases/tag/v0.1.20
+Release and checksums: https://github.com/krutftw/bitcoin09/releases/latest
 Explorer: https://explorer.btc09.org
 Integration guide: https://github.com/krutftw/bitcoin09/blob/master/docs/EXCHANGE-INTEGRATION.md
 Discord: https://discord.gg/fUuGzwRTzP
