@@ -76,11 +76,14 @@ function renderStatus(status) {
   byId("first-run-path").textContent = status.wallet_path || "—";
 
   if (!status.wallet_exists) return;
-  const formatted = formatCoins(status.balance_units).split(".");
-  byId("balance-major").textContent = Number(formatted[0]).toLocaleString();
-  byId("balance-minor").textContent = `.${formatted[1]}`;
+	const balanceAvailable = Boolean(status.balance_available);
+	const formatted = formatCoins(status.balance_units).split(".");
+	byId("balance-major").textContent = balanceAvailable ? Number(formatted[0]).toLocaleString() : "—";
+	byId("balance-minor").textContent = balanceAvailable ? `.${formatted[1]}` : "";
   byId("tip-hash").textContent = status.tip_hash ? `Tip ${status.tip_hash.slice(0, 16)}…` : "Tip —";
-	byId("balance-state").textContent = fastMode ? "FAST MODE · SIGNING ON THIS DEVICE" : (status.peer_count > 0 ? "FULL NODE · CONNECTED" : "FULL NODE · OFFLINE");
+	byId("balance-state").textContent = !balanceAvailable
+	  ? "BALANCE TEMPORARILY UNAVAILABLE"
+	  : (fastMode ? "FAST MODE · SIGNING ON THIS DEVICE" : (status.peer_count > 0 ? "FULL NODE · CONNECTED" : "FULL NODE · OFFLINE"));
   const address = status.addresses?.[status.addresses.length - 1] || "";
   byId("receive-address").textContent = address || "No receive address";
   byId("address-chip-text").textContent = address ? `${address.slice(0, 7)}…${address.slice(-5)}` : "No address";

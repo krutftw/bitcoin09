@@ -30,7 +30,7 @@ with `.\btc09-windows-amd64.exe` unless you renamed or installed the binary.
 Current release:
 
 ```text
-Bitcoin 09 (09C) reference node v0.1.23
+Bitcoin 09 (09C) reference node v0.1.24
 ```
 
 ## Open the Desktop Wallet
@@ -41,8 +41,9 @@ Double-click the downloaded BTC09 program, or run it without a command:
 .\btc09-windows-amd64.exe
 ```
 
-BTC09 opens a local wallet interface in your normal browser. It can create and
-back up the wallet, show your balance and sync status, make receive addresses
+BTC09 opens a local wallet interface in your normal browser. Fast mode shows
+your balance without downloading the full chain and still signs payments only
+on this computer. It can create and back up the wallet, make receive addresses
 and QR codes, and review and send payments. It binds only to `127.0.0.1` on a
 random port. Your private keys remain in the wallet file on this computer.
 

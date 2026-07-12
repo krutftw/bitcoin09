@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,13 +30,14 @@ import (
 
 	"github.com/krutftw/bitcoin09/core"
 	"github.com/krutftw/bitcoin09/explorer"
+	"github.com/krutftw/bitcoin09/lightwallet"
 	"github.com/krutftw/bitcoin09/p2p"
 	"github.com/krutftw/bitcoin09/pool"
 	"github.com/krutftw/bitcoin09/wallet"
 )
 
 // nodeVersion is the release version; bump alongside git tags.
-const nodeVersion = "v0.1.23"
+const nodeVersion = "v0.1.24"
 
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
@@ -418,6 +420,7 @@ func cmdNode(args []string) {
 	listen := fs.String("listen", ":9009", "p2p listen address")
 	seeds := fs.String("seeds", "", "comma-separated seed peers (host:port)")
 	explorerAddr := fs.String("explorer", "", "serve the block explorer on this address, e.g. :8009")
+	walletGatewayAddr := fs.String("wallet-gateway", "", "serve the light-wallet API on loopback, e.g. 127.0.0.1:8010")
 	soloAPI := fs.String("solo-api", "", "serve the open remote-solo mining API on this address, e.g. 127.0.0.1:9010")
 	network := fs.String("network", "mainnet", "mainnet or regtest")
 	dataDir := fs.String("datadir", defaultDataDir(), "data directory")
@@ -485,6 +488,26 @@ func cmdNode(args []string) {
 		log.Fatalf("p2p: %v", err)
 	}
 
+	if *walletGatewayAddr != "" {
+		gatewayServer, err := newWalletGatewayHTTPServer(*walletGatewayAddr, chain, node)
+		if err != nil {
+			log.Fatalf("wallet gateway: %v", err)
+		}
+		go func() {
+			log.Printf("wallet gateway on http://%s", *walletGatewayAddr)
+			if err := gatewayServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("wallet gateway: %v", err)
+				stop()
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = gatewayServer.Shutdown(shutdownCtx)
+		}()
+	}
+
 	if *soloAPI != "" {
 		coordinator, err := pool.NewCoordinator(chain, pool.CoordinatorConfig{Tag: *tag})
 		if err != nil {
@@ -548,6 +571,25 @@ func cmdNode(args []string) {
 			log.Printf("height=%d peers=%d balance=%s", h, node.PeerCount(), coins(balance))
 		}
 	}
+}
+
+func newWalletGatewayHTTPServer(address string, chain *core.Chain, broadcaster lightwallet.TransactionBroadcaster) (*http.Server, error) {
+	host, portText, err := net.SplitHostPort(address)
+	port, portErr := strconv.Atoi(portText)
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if err != nil || portErr != nil || port < 1 || port > 65535 || ip == nil || !ip.IsLoopback() {
+		return nil, errors.New("wallet gateway must bind to a literal loopback IP and nonzero port")
+	}
+	handler, err := lightwallet.NewGateway(chain, broadcaster)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Server{
+		Addr: address, Handler: handler,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
+		WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second,
+		MaxHeaderBytes: 16 << 10,
+	}, nil
 }
 
 type blockTemplateBuilder func(*core.Chain, [20]byte, string) *core.Block

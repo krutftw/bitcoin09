@@ -401,6 +401,27 @@ func TestSignedTxHexUsesExactMachineBounds(t *testing.T) {
 	}
 }
 
+func TestWalletGatewayServerRequiresLiteralLoopbackAndBoundedHTTP(t *testing.T) {
+	chain, err := core.NewChain(&core.RegTest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := p2p.NewNode(chain, "127.0.0.1:0", log.New(io.Discard, "", 0))
+	server, err := newWalletGatewayHTTPServer("127.0.0.1:8010", chain, node)
+	if err != nil {
+		t.Fatalf("newWalletGatewayHTTPServer: %v", err)
+	}
+	if server.Addr != "127.0.0.1:8010" || server.ReadHeaderTimeout <= 0 || server.ReadTimeout <= 0 ||
+		server.WriteTimeout <= 0 || server.IdleTimeout <= 0 || server.MaxHeaderBytes > 16<<10 {
+		t.Fatalf("unbounded wallet gateway server: %+v", server)
+	}
+	for _, address := range []string{":8010", "0.0.0.0:8010", "example.com:8010", "127.0.0.1", "127.0.0.1:0"} {
+		if _, err := newWalletGatewayHTTPServer(address, chain, node); err == nil {
+			t.Fatalf("unsafe gateway address %q was accepted", address)
+		}
+	}
+}
+
 type countingWriter struct {
 	writes int
 	bytes.Buffer
@@ -739,8 +760,8 @@ func TestReleaseNewer(t *testing.T) {
 }
 
 func TestNodeVersionMatchesV023Release(t *testing.T) {
-	if nodeVersion != "v0.1.23" {
-		t.Fatalf("nodeVersion = %q, want v0.1.23", nodeVersion)
+	if nodeVersion != "v0.1.24" {
+		t.Fatalf("nodeVersion = %q, want v0.1.24", nodeVersion)
 	}
 }
 

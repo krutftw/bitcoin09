@@ -52,10 +52,11 @@ QR codes, and reviews each payment before broadcasting it. It runs only on a
 random `127.0.0.1` port, keeps wallet keys on this computer, and does not use a
 cloud account or external web assets.
 
-The app uses the same wallet file and chain data as the command-line tools, so
-existing users do not need to move or import anything. Leave it open while it
-syncs. Sending becomes available after the local chain has data and a peer is
-connected.
+The app uses the same wallet file as the command-line tools, so existing users
+do not need to move or import anything. Mainnet opens in Fast mode: the app gets
+public balance data from `https://btc09.org`, builds and signs payments on this
+computer, and sends only the signed transaction for relay. Private keys never
+leave the wallet file. Run `btc09 app -mode full` to verify through a local node.
 
 ### Build or run the node
 
@@ -122,8 +123,10 @@ wallet or command-line wallet.
 
 Balance notes:
 
-- The wallet balance is calculated from your local node's synced chain, so a
-  fresh node may show it later than the public explorer while it catches up.
+- Fast mode shows the gateway's public chain view without downloading the full
+  chain. The gateway can see queried addresses but cannot spend their funds.
+- Full node mode calculates balance from the locally synced chain, so a fresh
+  node may show it later than the public explorer while it catches up.
 - v0.1.10 and later sync fresh nodes in larger bounded batches and log balance
   changes as soon as the local chain sees them.
 - The running node still prints a regular status line every 30 seconds.
@@ -311,11 +314,10 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.23 is current. It adds the first BTC09 desktop wallet: a compact local app
-for wallet creation and backup, balance and sync status, receive addresses and
-QR codes, and reviewed transaction broadcast. It uses the existing wallet file
-and consensus code, binds only to a random loopback port, and is included in the
-same Windows, macOS, and Linux binaries. There are no consensus changes.
+v0.1.24 is current. The desktop wallet now opens quickly in non-custodial Fast
+mode, receives to locally held addresses, validates public spendable-output data,
+and signs every payment on the device before relay. Full node mode remains
+available. There are no consensus changes.
 
 Network:
 

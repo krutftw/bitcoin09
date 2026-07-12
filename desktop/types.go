@@ -3,18 +3,19 @@ package desktop
 import "context"
 
 type Status struct {
-	Version       string   `json:"version"`
-	Network       string   `json:"network"`
-	Mode          string   `json:"mode"`
-	WalletExists  bool     `json:"wallet_exists"`
-	WalletPath    string   `json:"wallet_path"`
-	Addresses     []string `json:"addresses"`
-	BalanceUnits  int64    `json:"balance_units"`
-	Height        int64    `json:"height"`
-	TipHash       string   `json:"tip_hash"`
-	PeerCount     int      `json:"peer_count"`
-	SyncState     string   `json:"sync_state"`
-	SendAvailable bool     `json:"send_available"`
+	Version          string   `json:"version"`
+	Network          string   `json:"network"`
+	Mode             string   `json:"mode"`
+	WalletExists     bool     `json:"wallet_exists"`
+	WalletPath       string   `json:"wallet_path"`
+	Addresses        []string `json:"addresses"`
+	BalanceUnits     int64    `json:"balance_units"`
+	BalanceAvailable bool     `json:"balance_available"`
+	Height           int64    `json:"height"`
+	TipHash          string   `json:"tip_hash"`
+	PeerCount        int      `json:"peer_count"`
+	SyncState        string   `json:"sync_state"`
+	SendAvailable    bool     `json:"send_available"`
 }
 
 type AddressResult struct {

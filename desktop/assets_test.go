@@ -76,7 +76,7 @@ func TestEmbeddedInterfaceExplainsFastAndFullWalletModes(t *testing.T) {
 		required []string
 	}{
 		{name: "assets/index.html", required: []string{`id="wallet-mode"`, `WALLET CONNECTION`, `Keys stay on this computer`}},
-		{name: "assets/app.js", required: []string{`status.mode`, `FAST MODE`, `FULL NODE`, `Wallet service`}},
+		{name: "assets/app.js", required: []string{`status.mode`, `status.balance_available`, `FAST MODE`, `FULL NODE`, `Wallet service`}},
 		{name: "assets/app.css", required: []string{`.mode-value`, `.status-lamp.is-ready`}},
 	} {
 		body, err := fs.ReadFile(assetsFS, test.name)

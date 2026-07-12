@@ -26,9 +26,13 @@ type appTestPeers struct {
 
 type appTestGateway struct {
 	lastBroadcast *core.Tx
+	snapshotErr   error
 }
 
 func (g *appTestGateway) Snapshot(_ context.Context, addresses []string) (lightwallet.SnapshotResponse, error) {
+	if g.snapshotErr != nil {
+		return lightwallet.SnapshotResponse{}, g.snapshotErr
+	}
 	sorted := append([]string(nil), addresses...)
 	sort.Strings(sorted)
 	return lightwallet.SnapshotResponse{
@@ -37,6 +41,26 @@ func (g *appTestGateway) Snapshot(_ context.Context, addresses []string) (lightw
 		Outputs:        []lightwallet.SnapshotOutput{{TxID: strings.Repeat("2", 64), AmountUnits: 2 * core.UnitsPerCoin, Address: sorted[0]}},
 		SpendableUnits: 2 * core.UnitsPerCoin,
 	}, nil
+}
+
+func TestAppServiceFastModeKeepsReceiveAvailableWhenGatewayIsDown(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "chain")
+	walletPath := filepath.Join(t.TempDir(), "wallet-regtest.json")
+	gateway := &appTestGateway{snapshotErr: errors.New("offline")}
+	service, err := newAppService(appServiceConfig{
+		Version: "test", Network: core.RegTestMachineID, Params: &core.RegTest,
+		Mode: "fast", DataDir: dataDir, WalletFile: walletPath, Gateway: gateway,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := service.CreateWallet(context.Background())
+	if err != nil {
+		t.Fatalf("CreateWallet with unavailable gateway: %v", err)
+	}
+	if !status.WalletExists || len(status.Addresses) != 1 || status.SyncState != "unavailable" || status.SendAvailable || status.BalanceAvailable {
+		t.Fatalf("offline fast status = %+v", status)
+	}
 }
 
 func (g *appTestGateway) Broadcast(_ context.Context, transaction *core.Tx) (lightwallet.BroadcastResponse, error) {

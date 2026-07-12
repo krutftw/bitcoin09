@@ -135,15 +135,18 @@ func (s *appService) Status(ctx context.Context) (desktop.Status, error) {
 	if s.mode == "fast" {
 		remote, err := s.gateway.Snapshot(ctx, addresses)
 		if err != nil {
-			return desktop.Status{}, publicAppError(http.StatusServiceUnavailable, "wallet_service_unavailable", "The wallet service is temporarily unavailable. Your funds are safe; try again.", err)
+			status.SyncState = "unavailable"
+			return status, nil
 		}
 		walletSnapshot, err := w.ValidateRemoteSnapshot(remoteWalletSnapshot(remote))
 		if err != nil {
-			return desktop.Status{}, publicAppError(http.StatusServiceUnavailable, "wallet_service_invalid", "The wallet service returned invalid data. Your funds are safe.", err)
+			status.SyncState = "unavailable"
+			return status, nil
 		}
 		status.Height = walletSnapshot.Tip.Height
 		status.TipHash = fmt.Sprintf("%x", walletSnapshot.Tip.Hash)
 		status.BalanceUnits = walletSnapshot.SpendableUnits
+		status.BalanceAvailable = true
 		status.SyncState = "connected"
 		status.SendAvailable = true
 		return status, nil
@@ -165,6 +168,7 @@ func (s *appService) Status(ctx context.Context) (desktop.Status, error) {
 		return desktop.Status{}, err
 	}
 	status.BalanceUnits = balance
+	status.BalanceAvailable = true
 	status.SendAvailable = tip.Height > 0 && status.PeerCount > 0
 	return status, nil
 }
