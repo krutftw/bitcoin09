@@ -280,7 +280,7 @@ work from any independently operated coordinator without running a local full
 node:
 
 ```text
-btc09 mine-pool -pool https://mine.example.org -address YOUR_09C_ADDRESS -worker rig-1
+btc09 mine-pool -pool https://btc09.org -address YOUR_09C_ADDRESS -worker rig-1
 ```
 
 A synced node can serve the coordinator on a local address for a TLS reverse
@@ -295,6 +295,11 @@ nonce. A coordinator receives a payout address, never a private key, seed
 phrase, or wallet file. Jobs expire quickly and are bounded in memory. The API
 uses strict small JSON requests, safe errors, network timeouts, and per-source
 limits.
+
+The desktop wallet includes this official CPU miner directly: open **Mine**,
+choose how many CPU threads to use, and press **Start mining**. The wallet fills
+its own public payout address and keeps every private key on the computer. The
+two-route API is documented in [Open Mining Protocol v1](docs/OPEN-MINING-PROTOCOL.md).
 
 This is remote solo mining, so it does not smooth solo-mining variance. PPLNS
 is not live in the official software. The planned non-custodial PPLNS phase
@@ -314,10 +319,10 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.24 is current. The desktop wallet now opens quickly in non-custodial Fast
-mode, receives to locally held addresses, validates public spendable-output data,
-and signs every payment on the device before relay. Full node mode remains
-available. There are no consensus changes.
+v0.1.25 is current. The non-custodial Fast wallet now includes the official
+open-source CPU miner. It still receives to locally held addresses and signs
+every payment on the device. Full node mode remains available. There are no
+consensus changes.
 
 Network:
 

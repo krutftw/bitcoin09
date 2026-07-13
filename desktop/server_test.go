@@ -29,6 +29,30 @@ type fakeService struct {
 	backupCalls  int
 }
 
+type fakeMinerService struct {
+	fakeService
+	minerStatus MinerStatus
+	startInput  MinerStartRequest
+	startCalls  int
+	stopCalls   int
+	minerErr    error
+}
+
+func (f *fakeMinerService) MinerStatus(context.Context) (MinerStatus, error) {
+	return f.minerStatus, f.minerErr
+}
+
+func (f *fakeMinerService) StartMiner(_ context.Context, request MinerStartRequest) (MinerStatus, error) {
+	f.startCalls++
+	f.startInput = request
+	return f.minerStatus, f.minerErr
+}
+
+func (f *fakeMinerService) StopMiner(context.Context) (MinerStatus, error) {
+	f.stopCalls++
+	return f.minerStatus, f.minerErr
+}
+
 func (f *fakeService) Status(context.Context) (Status, error) {
 	if f.statusErr != nil {
 		return f.status, f.statusErr
@@ -445,5 +469,67 @@ func TestPublicServiceErrorIsReturnedWithoutItsCause(t *testing.T) {
 	response := authenticatedPost(t, server, cookie, csrf, "/api/v1/wallet/backup", `{"destination":"x"}`)
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "backup_destination_invalid") || strings.Contains(response.Body.String(), "secret") {
 		t.Fatalf("unsafe service error: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestMinerAPIUsesOptionalAuthenticatedService(t *testing.T) {
+	service := &fakeMinerService{minerStatus: MinerStatus{
+		Available: true, WalletReady: true, State: "mining", Address: "09miner",
+		Workers: 3, LogicalCPUs: 4, CurrentHashrate: 42.5,
+	}}
+	server, err := NewServer(Config{
+		LaunchToken: strings.Repeat("2", 64), Origin: "http://127.0.0.1:49152", Version: "test", Service: service,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch := httptest.NewRequest(http.MethodGet, "/?token="+strings.Repeat("2", 64), nil)
+	launch.Host = "127.0.0.1:49152"
+	launchResponse := httptest.NewRecorder()
+	server.ServeHTTP(launchResponse, launch)
+	cookie, csrf := launchSessionFromCookie(t, server, launchResponse.Result().Cookies()[0])
+
+	statusRequest := httptest.NewRequest(http.MethodGet, "/api/v1/miner/status", nil)
+	statusRequest.Host = "127.0.0.1:49152"
+	statusRequest.AddCookie(cookie)
+	statusResponse := httptest.NewRecorder()
+	server.ServeHTTP(statusResponse, statusRequest)
+	if statusResponse.Code != http.StatusOK || !strings.Contains(statusResponse.Body.String(), `"current_hashrate":42.5`) {
+		t.Fatalf("miner status=%d body=%s", statusResponse.Code, statusResponse.Body.String())
+	}
+
+	startResponse := authenticatedPost(t, server, cookie, csrf, "/api/v1/miner/start", `{"workers":3,"worker":"home-pc"}`)
+	if startResponse.Code != http.StatusOK || service.startCalls != 1 || service.startInput.Workers != 3 || service.startInput.Worker != "home-pc" {
+		t.Fatalf("start status=%d calls=%d input=%+v body=%s", startResponse.Code, service.startCalls, service.startInput, startResponse.Body.String())
+	}
+	stopResponse := authenticatedPost(t, server, cookie, csrf, "/api/v1/miner/stop", `{}`)
+	if stopResponse.Code != http.StatusOK || service.stopCalls != 1 {
+		t.Fatalf("stop status=%d calls=%d body=%s", stopResponse.Code, service.stopCalls, stopResponse.Body.String())
+	}
+
+	unknown := authenticatedPost(t, server, cookie, csrf, "/api/v1/miner/start", `{"workers":3,"worker":"home","endpoint":"evil"}`)
+	if unknown.Code != http.StatusBadRequest || service.startCalls != 1 {
+		t.Fatalf("unknown field status=%d calls=%d body=%s", unknown.Code, service.startCalls, unknown.Body.String())
+	}
+}
+
+func TestMinerAPIRejectsUnavailableServiceAndUnauthenticatedRead(t *testing.T) {
+	server := testServer(t)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/miner/status", nil)
+	request.Host = "127.0.0.1:49152"
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d", response.Code)
+	}
+
+	cookie, _ := launchSession(t, server)
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/miner/status", nil)
+	request.Host = "127.0.0.1:49152"
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "miner_unavailable") {
+		t.Fatalf("unavailable status=%d body=%s", response.Code, response.Body.String())
 	}
 }

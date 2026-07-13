@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/btc09
-ExecStart=/opt/btc09/btc09 node -listen 0.0.0.0:9009 -explorer 127.0.0.1:8009 -wallet-gateway 127.0.0.1:8010 -datadir /opt/btc09/data -seeds 103.80.18.140:9009,108.190.240.138:9009
+ExecStart=/opt/btc09/btc09 node -listen 0.0.0.0:9009 -explorer 127.0.0.1:8009 -wallet-gateway 127.0.0.1:8010 -solo-api 127.0.0.1:9010 -datadir /opt/btc09/data -seeds 103.80.18.140:9009,108.190.240.138:9009
 Restart=always
 RestartSec=5
 Nice=10

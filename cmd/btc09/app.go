@@ -33,6 +33,7 @@ type appOptions struct {
 	noBrowser  bool
 	mode       string
 	gatewayURL string
+	miningURL  string
 }
 
 type appRuntimeInfo struct {
@@ -50,6 +51,7 @@ func parseAppOptions(args []string) (appOptions, error) {
 	seedsText := fs.String("seeds", "", "comma-separated seed peers")
 	fs.StringVar(&options.mode, "mode", "", "wallet mode: fast or full")
 	fs.StringVar(&options.gatewayURL, "gateway", "", "Fast mode HTTPS wallet gateway")
+	fs.StringVar(&options.miningURL, "miner", "", "Open solo mining coordinator URL")
 	fs.BoolVar(&options.noBrowser, "no-browser", false, "do not open the system browser")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
 		return appOptions{}, errors.New("invalid app arguments")
@@ -88,6 +90,16 @@ func parseAppOptions(args []string) (appOptions, error) {
 			return appOptions{}, clientErr
 		}
 	}
+	if options.miningURL == "" {
+		if params.Name == "mainnet" {
+			options.miningURL = defaultMainnetMiningEndpoint
+		} else {
+			options.miningURL = "http://127.0.0.1:9010"
+		}
+	}
+	if err := validateAppMiningURL(options.miningURL, params.Name != "mainnet"); err != nil {
+		return appOptions{}, err
+	}
 	if *seedsText == "" {
 		options.seeds = defaultSeeds(params)
 	} else {
@@ -97,6 +109,25 @@ func parseAppOptions(args []string) (appOptions, error) {
 		}
 	}
 	return options, nil
+}
+
+func validateAppMiningURL(value string, allowLoopbackHTTP bool) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return errors.New("invalid Open solo mining coordinator URL")
+	}
+	if parsed.Scheme == "https" {
+		return nil
+	}
+	if parsed.Scheme != "http" || !allowLoopbackHTTP {
+		return errors.New("Open solo mining coordinator must use HTTPS")
+	}
+	host := parsed.Hostname()
+	ip := net.ParseIP(host)
+	if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+		return errors.New("plain HTTP Open solo coordinator must use loopback")
+	}
+	return nil
 }
 
 func parseAppSeeds(value string) ([]string, error) {
@@ -239,11 +270,12 @@ func runDesktopApp(ctx context.Context, options appOptions, ready chan<- appRunt
 	}
 	service, err := newAppService(appServiceConfig{
 		Version: nodeVersion, Network: networkID, Params: params, DataDir: dataDir,
-		Mode: mode, WalletFile: walletFile, Chain: chain, Peers: peers, Gateway: gateway,
+		Mode: mode, WalletFile: walletFile, Chain: chain, Peers: peers, Gateway: gateway, MiningURL: options.miningURL,
 	})
 	if err != nil {
 		return err
 	}
+	defer service.Close()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("desktop listener: %w", err)

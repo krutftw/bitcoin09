@@ -91,6 +91,58 @@ func TestEmbeddedInterfaceExplainsFastAndFullWalletModes(t *testing.T) {
 	}
 }
 
+func TestEmbeddedInterfaceIncludesHonestOfficialSoloMiner(t *testing.T) {
+	tests := []struct {
+		name      string
+		required  []string
+		forbidden []string
+	}{
+		{
+			name: "assets/index.html",
+			required: []string{
+				`data-panel="miner-panel"`, `id="miner-panel"`, `Open solo`,
+				`id="miner-workers"`, `id="miner-worker"`, `id="start-miner"`, `id="stop-miner"`,
+				`id="miner-current-hashrate"`, `id="miner-average-hashrate"`,
+				`id="miner-total-hashes"`, `id="miner-blocks"`, `id="miner-state"`,
+				`No partial-share payouts`, `Only your public payout address`,
+			},
+			forbidden: []string{`guaranteed profit`, `GPU mining`, `pool balance`},
+		},
+		{
+			name: "assets/app.js",
+			required: []string{
+				`/api/v1/miner/status`, `/api/v1/miner/start`, `/api/v1/miner/stop`,
+				`logical_cpus`, `current_hashrate`, `average_hashrate`, `blocks_accepted`,
+				`setTimeout(refreshMinerStatus, 1000)`, `minerPollTimer`,
+			},
+		},
+		{
+			name: "assets/app.css",
+			required: []string{
+				`.miner-instruments`, `.miner-control-grid`, `.miner-state-line`, `.miner-actions`,
+				`grid-template-columns: repeat(2, minmax(0, 1fr))`,
+			},
+		},
+	}
+	for _, test := range tests {
+		body, err := fs.ReadFile(assetsFS, test.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(body)
+		for _, required := range test.required {
+			if !strings.Contains(content, required) {
+				t.Errorf("%s is missing %q", test.name, required)
+			}
+		}
+		for _, forbidden := range test.forbidden {
+			if strings.Contains(strings.ToLower(content), strings.ToLower(forbidden)) {
+				t.Errorf("%s contains forbidden claim %q", test.name, forbidden)
+			}
+		}
+	}
+}
+
 func TestAuthenticatedRootServesInterfaceAndAssets(t *testing.T) {
 	server := testServer(t)
 	cookie, _ := launchSession(t, server)

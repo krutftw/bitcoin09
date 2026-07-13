@@ -36,6 +36,17 @@ type MineResult struct {
 	Hashes uint64
 }
 
+// MineProgress is a low-frequency snapshot of one local nonce search. Hashrate
+// is the session average for this work item, not an estimate from a single
+// sample.
+type MineProgress struct {
+	Hashes   uint64
+	Elapsed  time.Duration
+	Hashrate float64
+	Final    bool
+	Found    bool
+}
+
 // ParseWork validates and decodes a coordinator-owned work item.
 func ParseWork(work Work, params *core.Params) (core.Header, *big.Int, error) {
 	var header core.Header
@@ -83,6 +94,20 @@ func ParseWork(work Work, params *core.Params) (core.Header, *big.Int, error) {
 
 // MineWork searches the nonce field of one coordinator-issued work item.
 func MineWork(ctx context.Context, work Work, params *core.Params, workers int) (MineResult, error) {
+	return MineWorkWithProgress(ctx, work, params, workers, 0, nil)
+}
+
+// MineWorkWithProgress searches one coordinator-issued work item and reports
+// snapshots outside the hashing goroutines. The callback is serialized and is
+// never called from the nonce hot loop.
+func MineWorkWithProgress(
+	ctx context.Context,
+	work Work,
+	params *core.Params,
+	workers int,
+	interval time.Duration,
+	callback func(MineProgress),
+) (MineResult, error) {
 	header, target, err := ParseWork(work, params)
 	if err != nil {
 		return MineResult{}, err
@@ -95,8 +120,44 @@ func MineWork(ctx context.Context, work Work, params *core.Params, workers int) 
 	}
 	mineCtx, cancel := context.WithDeadline(ctx, work.ExpiresAt)
 	defer cancel()
+	startedAt := time.Now()
 
 	var hashes atomic.Uint64
+	progressStop := make(chan struct{})
+	progressDone := make(chan struct{})
+	if callback != nil {
+		if interval <= 0 {
+			interval = time.Second
+		}
+		go func() {
+			defer close(progressDone)
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case now := <-ticker.C:
+					count := hashes.Load()
+					if count == 0 {
+						continue
+					}
+					callback(progressSnapshot(count, now.Sub(startedAt), false, false))
+				case <-progressStop:
+					return
+				}
+			}
+		}()
+	} else {
+		close(progressDone)
+	}
+	stopProgress := func(result MineResult) {
+		if callback == nil {
+			return
+		}
+		close(progressStop)
+		<-progressDone
+		callback(progressSnapshot(result.Hashes, time.Since(startedAt), true, result.Found))
+	}
+
 	found := make(chan uint64, 1)
 	var wg sync.WaitGroup
 	wg.Add(workers)
@@ -136,8 +197,21 @@ func MineWork(ctx context.Context, work Work, params *core.Params, workers int) 
 	<-done
 	select {
 	case nonce := <-found:
-		return MineResult{Found: true, Nonce: nonce, Hashes: hashes.Load()}, nil
+		result := MineResult{Found: true, Nonce: nonce, Hashes: hashes.Load()}
+		stopProgress(result)
+		return result, nil
 	default:
-		return MineResult{Hashes: hashes.Load()}, nil
+		result := MineResult{Hashes: hashes.Load()}
+		stopProgress(result)
+		return result, nil
 	}
+}
+
+func progressSnapshot(hashes uint64, elapsed time.Duration, final, found bool) MineProgress {
+	seconds := elapsed.Seconds()
+	var hashrate float64
+	if seconds > 0 {
+		hashrate = float64(hashes) / seconds
+	}
+	return MineProgress{Hashes: hashes, Elapsed: elapsed, Hashrate: hashrate, Final: final, Found: found}
 }

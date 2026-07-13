@@ -78,6 +78,7 @@
           <nav class="quick-actions" aria-label="Wallet actions">
             <button class="ledger-tab is-active" type="button" data-panel="receive-panel"><span aria-hidden="true">↓</span><b>Receive</b></button>
             <button class="ledger-tab" type="button" data-panel="send-panel"><span aria-hidden="true">↑</span><b>Send</b></button>
+            <button class="ledger-tab" type="button" data-panel="miner-panel"><span aria-hidden="true">M</span><b>Mine</b></button>
             <button class="ledger-tab" type="button" data-panel="safety-panel"><span aria-hidden="true">◇</span><b>Backup</b></button>
           </nav>
 
@@ -120,6 +121,47 @@
                 <button id="backup-wallet" class="primary-action full-action" type="button">Create backup</button>
                 <p class="field-note">BTC09 will not overwrite an existing file.</p>
               </div>
+            </section>
+
+            <section id="miner-panel" class="ledger-panel miner-panel" hidden>
+              <div class="panel-heading">
+                <div><p class="kicker">OFFICIAL MINER</p><h2>Open solo</h2></div>
+                <span id="miner-state" class="miner-state-badge">Stopped</span>
+              </div>
+              <p class="panel-intro">Mine without downloading the chain. A block you find pays this wallet directly. No partial-share payouts.</p>
+
+              <div class="miner-instruments" aria-label="Mining session statistics">
+                <div><span>NOW</span><strong id="miner-current-hashrate">0.00 H/s</strong></div>
+                <div><span>SESSION AVG</span><strong id="miner-average-hashrate">0.00 H/s</strong></div>
+                <div><span>HASHES</span><strong id="miner-total-hashes">0</strong></div>
+                <div><span>BLOCKS</span><strong id="miner-blocks">0</strong></div>
+              </div>
+
+              <p id="miner-state-line" class="miner-state-line" role="status" aria-live="polite">Ready when you are.</p>
+
+              <form id="miner-form" novalidate>
+                <div class="miner-control-grid">
+                  <div class="miner-address-field">
+                    <span class="field-label">PAYOUT ADDRESS</span>
+                    <code id="miner-address">Wallet address loads here</code>
+                  </div>
+                  <label class="field miner-worker-field">
+                    <span class="field-label">WORKER NAME <small>OPTIONAL</small></span>
+                    <input id="miner-worker" maxlength="64" autocomplete="off" spellcheck="false" placeholder="home-pc">
+                  </label>
+                  <label class="miner-thread-field">
+                    <span class="field-label">CPU THREADS <output id="miner-workers-value" for="miner-workers">1 of 1</output></span>
+                    <input id="miner-workers" type="range" min="1" max="1" value="1" step="1">
+                  </label>
+                </div>
+                <div class="miner-actions">
+                  <button id="start-miner" class="primary-action" type="submit">Start mining</button>
+                  <button id="stop-miner" class="quiet-action" type="button" disabled>Stop</button>
+                  <span id="miner-session-meta">0 jobs · 0 reconnects · 0s</span>
+                </div>
+              </form>
+
+              <p class="miner-privacy">Only your public payout address and optional worker name leave this computer. Wallet keys stay here. Open solo has high payout variance; it is not a pooled-reward service.</p>
             </section>
           </div>
         </section>

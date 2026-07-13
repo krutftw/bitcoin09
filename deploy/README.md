@@ -477,6 +477,32 @@ An unexpected range diff blocks installation. Re-run the installer only after
 updating and reviewing the exact range fragment; repeat `nginx -t` and inspect
 `nginx -T` after every nginx or Certbot change.
 
+### Official Open solo miner
+
+The official coordinator shares the synced node but binds only to loopback.
+Add `-solo-api 127.0.0.1:9010` to the node service, restart it, and confirm the
+listener is not public:
+
+```bash
+ss -lntp | grep '127.0.0.1:9010'
+! ss -lntp | grep -E '0\.0\.0\.0:9010|\[::\]:9010'
+```
+
+Install the exact two-route nginx boundary in the existing Cloudflare-protected
+`btc09.org` TLS host. Pass any valid public mainnet payout address only for the
+loopback work health check; the installer does not store it.
+
+```bash
+BTC09_MINER_HEALTH_ADDRESS=YOUR_09C_ADDRESS \
+  /opt/btc09/bitcoin09/deploy/scripts/install-open-miner.sh \
+  /opt/btc09/bitcoin09
+nginx -T 2>/dev/null | grep -nE 'btc09_miner|127.0.0.1:9010'
+```
+
+No Cloud Firewall rule is added for 9010. Cloudflare and nginx receive HTTPS;
+nginx restores the client IP, applies separate work and submit limits, and
+proxies only `POST /api/v1/work` and `POST /api/v1/submit` to loopback.
+
 ## 8. Restore and rollback
 
 Choose a completed backup directory and verify it before stopping services:
