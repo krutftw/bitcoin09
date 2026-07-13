@@ -62,15 +62,17 @@
 
 html {
   background: var(--coal);
+  scroll-behavior: smooth;
+  scroll-padding-top: 82px;
 }
 
 body {
   margin: 0;
-  font-family: "Courier New", Consolas, monospace;
+  font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--ink);
-  background:
-    linear-gradient(180deg, #0b0e09 0, #12150e 330px, var(--paper) 330px);
-  line-height: 1.5;
+  background: var(--paper);
+  font-size: 16px;
+  line-height: 1.65;
 }
 
 body::before {
@@ -80,46 +82,25 @@ body::before {
   z-index: 0;
   pointer-events: none;
   background:
-    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.04) 0, rgba(255, 255, 255, 0.04) 1px, transparent 1px, transparent 5px),
-    radial-gradient(circle at 20% 0%, rgba(217, 164, 65, 0.12), transparent 360px);
-  opacity: 0.45;
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.028) 0, rgba(255, 255, 255, 0.028) 1px, transparent 1px, transparent 5px),
+    radial-gradient(circle at 16% 4%, rgba(217, 164, 65, 0.14), transparent 28rem);
+  opacity: 0.5;
 }
 
 a {
-  color: var(--blue);
+  color: #225f3b;
   text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
+  text-underline-offset: 3px;
 }
 
-.shell a,
 .hero a,
-.topbar a,
 .livebar a {
   color: var(--green);
 }
 
-.topbar {
-  position: relative;
-  z-index: 1;
-  color: #c7b889;
-  background: #060806;
-  border-bottom: 1px solid var(--line-dark);
-  font-size: 12px;
-  text-transform: uppercase;
-}
-
 .wrap {
-  width: min(960px, calc(100% - 28px));
+  width: min(1120px, calc(100% - 40px));
   margin: 0 auto;
-}
-
-.topbar .wrap {
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 8px 0;
-  overflow-x: auto;
-  white-space: nowrap;
 }
 
 .hero {
@@ -165,83 +146,9 @@ h1 {
   letter-spacing: 0;
 }
 
-.tag {
-  max-width: 690px;
-  margin: 12px 0 18px;
-  color: #d8c797;
-  font-size: clamp(16px, 2.2vw, 22px);
-}
-
-.hero-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(240px, 0.9fr);
-  gap: 14px;
-  align-items: stretch;
-}
-
-.shell,
-.status-card {
-  border: 1px solid var(--line-dark);
-  background: rgba(4, 7, 4, 0.82);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
-}
-
-.shell {
-  margin: 0;
-  padding: 13px 14px;
-  color: var(--green);
-  overflow-x: auto;
-  white-space: pre;
-}
-
-.status-card {
-  padding: 12px 13px;
-  color: #d7c896;
-}
-
-.status-card b {
-  display: block;
-  color: var(--gold-2);
-  font-size: 13px;
-  text-transform: uppercase;
-}
-
-.status-card span {
-  display: block;
-  margin-top: 5px;
-  color: var(--green-dim);
-  font-size: 13px;
-}
-
 .content {
   position: relative;
   z-index: 1;
-  padding: 20px 0 40px;
-  background: var(--paper);
-}
-
-.livebar {
-  margin: 0 0 18px;
-  padding: 10px 12px;
-  color: #d7c896;
-  background: #10150d;
-  border: 1px solid var(--line-dark);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
-}
-
-.panel {
-  margin: 18px 0;
-  padding: 16px;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  box-shadow: 3px 3px 0 #c8b984;
-}
-
-.panel.dark {
-  color: #e7ddbf;
-  background: var(--coal-2);
-  border-color: var(--line-dark);
-  box-shadow: 3px 3px 0 #2c291c;
 }
 
 h2 {
@@ -250,20 +157,12 @@ h2 {
   color: #251a0a;
 }
 
-.dark h2 {
-  color: var(--gold-2);
-}
-
 p {
   margin: 0 0 12px;
 }
 
 .muted {
   color: #665c45;
-}
-
-.dark .muted {
-  color: #b3a57d;
 }
 
 .error {
@@ -439,118 +338,1356 @@ pre {
   font-size: 13px;
 }
 
-@media (max-width: 720px) {
+a:hover {
+  color: #123c26;
+}
+
+:focus-visible {
+  outline: 3px solid var(--gold-2);
+  outline-offset: 4px;
+}
+
+section,
+[id] {
+  scroll-margin-top: 92px;
+}
+
+.skip-link {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 30;
+  padding: 9px 12px;
+  color: var(--coal);
+  background: var(--gold-2);
+  transform: translateY(-150%);
+  transition: transform 180ms ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  color: #d8ca9f;
+  background: rgba(7, 10, 7, 0.94);
+  border-bottom: 1px solid var(--line-dark);
+  backdrop-filter: blur(12px);
+}
+
+.nav-inner {
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 24px;
+}
+
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff3cf;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.brand-lockup img {
+  width: 34px;
+  aspect-ratio: 1;
+  border: 1px solid #725d26;
+}
+
+.nav-links {
+  display: flex;
+  justify-content: center;
+  gap: 22px;
+}
+
+.nav-links a,
+.nav-community {
+  color: #c8bb94;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 13px;
+  text-decoration: none;
+  transition: color 180ms ease, transform 180ms ease;
+}
+
+.nav-links a:hover,
+.nav-community:hover {
+  color: var(--green);
+}
+
+.nav-community {
+  padding: 7px 11px;
+  border: 1px solid #605331;
+}
+
+.hero {
+  min-height: 0;
+  color: var(--paper);
+  background:
+    linear-gradient(110deg, rgba(217, 164, 65, 0.16), transparent 42%),
+    radial-gradient(circle at 84% 10%, rgba(108, 224, 131, 0.08), transparent 24rem),
+    var(--coal);
+  border-bottom: 1px solid var(--gold);
+}
+
+.hero-inner {
+  min-height: 0;
+  grid-template-columns: 1fr;
+  gap: 0;
+  padding: 54px 0 58px;
+}
+
+.hero-copy {
+  max-width: 760px;
+}
+
+.hero-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.brand-mark {
+  width: 72px;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 5px rgba(217, 164, 65, 0.08), 0 18px 44px rgba(0, 0, 0, 0.38);
+}
+
+.kicker,
+.section-label {
+  margin: 0 0 8px;
+  color: var(--green);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+h1 {
+  max-width: 720px;
+  color: #fff3cf;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: clamp(42px, 5vw, 60px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+.tag {
+  max-width: 640px;
+  margin: 0 0 5px;
+  color: #d9cda8;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.hero-description {
+  margin: 0 0 22px;
+  color: #a99d7c;
+  font-size: 16px;
+}
+
+.hero-actions,
+.text-links,
+.download-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+
+.button {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 17px;
+  border: 1px solid var(--gold);
+  color: #17140b;
+  background: var(--gold-2);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 3px 3px 0 #6f5724;
+  transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+
+.button:hover {
+  color: #17140b;
+  background: #ffe09a;
+  transform: translateY(-2px);
+  box-shadow: 5px 5px 0 #6f5724;
+}
+
+.button:active {
+  transform: translateY(1px);
+  box-shadow: 1px 1px 0 #6f5724;
+}
+
+.hero .button {
+  color: var(--coal);
+}
+
+.hero .button:hover {
+  color: var(--coal);
+}
+
+.hero .text-link,
+.dark .text-link {
+  color: var(--green);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 14px;
+}
+
+.quickstart {
+  position: relative;
+  padding: 24px;
+  color: #d8cda9;
+  background: rgba(13, 18, 12, 0.88);
+  border: 1px solid #4a4128;
+  box-shadow: 10px 10px 0 rgba(217, 164, 65, 0.1);
+}
+
+.quickstart::before {
+  content: "09C / START";
+  position: absolute;
+  top: -13px;
+  left: 18px;
+  padding: 2px 7px;
+  color: var(--gold-2);
+  background: var(--coal);
+  font: 700 11px/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.1em;
+}
+
+.quickstart h2 {
+  margin: 0 0 18px;
+  color: #fff3cf;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+}
+
+.start-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: start;
+}
+
+.start-list li {
+  position: relative;
+  min-height: 52px;
+  padding: 0 0 18px 46px;
+  counter-increment: start;
+}
+
+.start-list li::before {
+  content: "0" counter(start);
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: var(--green);
+  font: 700 13px/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.start-list li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 25px;
+  bottom: 4px;
+  left: 10px;
+  border-left: 1px solid #51472b;
+}
+
+.start-list strong,
+.start-list span {
+  display: block;
+}
+
+.start-list strong {
+  color: #f5ebcb;
+  font-size: 15px;
+}
+
+.start-list span {
+  margin-top: 2px;
+  color: #a99d7c;
+  font-size: 13px;
+}
+
+.project-facts {
+  position: relative;
+  z-index: 1;
+  color: #b9ae90;
+  background: #0d120c;
+  border-bottom: 1px solid #3a321f;
+}
+
+.project-facts .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  padding: 12px 0;
+}
+
+.project-facts span {
+  font: 600 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.project-facts span::before {
+  content: "✓";
+  margin-right: 7px;
+  color: var(--green);
+}
+
+.compact-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 20px;
+  margin: 22px 0 0;
+  padding: 0;
+  color: #b9ae90;
+  list-style-position: inside;
+  font-size: 13px;
+}
+
+.compact-steps li::marker {
+  color: var(--green);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.content {
+  padding: 0 0 72px;
+  background:
+    linear-gradient(rgba(99, 76, 28, 0.035) 1px, transparent 1px),
+    var(--paper);
+  background-size: 100% 34px;
+}
+
+.livebar {
+  margin: 0;
+  padding: 13px 0;
+  color: #cfc29d;
+  background: #11160f;
+  border: 0;
+  border-bottom: 1px solid #403720;
+  box-shadow: none;
+  font: 13px/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.livebar .wrap {
+  display: block;
+}
+
+.section {
+  padding: 50px 0 4px;
+}
+
+.section-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(280px, 1.15fr);
+  gap: 32px;
+  align-items: end;
+  margin-bottom: 30px;
+}
+
+.section-heading h2,
+.feature-copy h2,
+.about-copy h2 {
+  margin: 0;
+  color: #21180a;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: clamp(28px, 3vw, 38px);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+}
+
+.section-heading p,
+.lede {
+  max-width: 64ch;
+  margin: 0;
+  color: #5d543e;
+  font-size: 16px;
+  text-wrap: pretty;
+}
+
+.download-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.9fr 0.9fr;
+  gap: 14px;
+}
+
+.download-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 22px;
+  background: rgba(251, 245, 228, 0.88);
+  border: 1px solid #b8a87b;
+}
+
+.download-card.primary {
+  background: #171b13;
+  border-color: #4c4228;
+  box-shadow: 6px 6px 0 #cbb978;
+}
+
+.download-card .platform {
+  color: #7a6b46;
+  font: 700 11px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.download-card.primary .platform {
+  color: var(--green);
+}
+
+.download-card h3 {
+  margin: 8px 0 9px;
+  color: #21180a;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+}
+
+.download-card.primary h3 {
+  color: #fff1c9;
+}
+
+.download-card p {
+  flex: 1;
+  color: #665c45;
+  font-size: 14px;
+}
+
+.download-card.primary p {
+  color: #bbae89;
+}
+
+.download-card .download-actions {
+  margin-top: 12px;
+}
+
+.download-card .plain-link {
+  font: 700 13px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.download-list {
+  border-top: 1px solid #9f8d5f;
+}
+
+.download-row {
+  display: grid;
+  grid-template-columns: 170px 110px minmax(140px, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  min-height: 78px;
+  padding: 13px 16px;
+  border-bottom: 1px solid #b8a87b;
+}
+
+.download-row.featured {
+  background: #e6dcc1;
+  border-left: 3px solid #84672b;
+}
+
+.download-row .platform {
+  color: #6f6140;
+  font: 700 11px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.download-row h3,
+.download-row p {
+  margin: 0;
+}
+
+.download-row h3 {
+  font-size: 18px;
+}
+
+.download-row p {
+  color: #5f563f;
+  font-size: 14px;
+}
+
+.download-row .download-actions {
+  justify-content: flex-end;
+}
+
+.download-row .plain-link {
+  font: 700 13px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.release-note {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 14px;
+  padding: 13px 15px;
+  color: #5f563f;
+  background: #e6dcc1;
+  border-left: 3px solid var(--gold);
+  font-size: 13px;
+}
+
+.release-note a {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.utility-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
+  gap: 16px;
+}
+
+.feature-card {
+  position: relative;
+  min-height: 250px;
+  padding: 30px;
+  overflow: hidden;
+  background: #faf3df;
+  border: 1px solid #aa986b;
+}
+
+.feature-card.inbox-card {
+  display: grid;
+  grid-template-columns: 1fr 0.62fr;
+  gap: 28px;
+  background:
+    radial-gradient(circle at 82% 18%, rgba(108, 224, 131, 0.14), transparent 13rem),
+    #11160f;
+  border-color: #4b4128;
+}
+
+.inbox-card h2,
+.inbox-card p {
+  color: #f0e6c8;
+}
+
+.inbox-card .muted {
+  color: #b5a888;
+}
+
+.pairing-art {
+  align-self: center;
+  padding: 18px;
+  color: var(--green);
+  background: #080b08;
+  border: 1px solid #3e3824;
+  font: 13px/1.75 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  box-shadow: 8px 8px 0 rgba(217, 164, 65, 0.1);
+}
+
+.utility-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.mini-feature {
+  min-height: 117px;
+  padding: 21px;
+  background: #e5dbc0;
+  border-left: 3px solid #846a31;
+}
+
+.mini-feature h3 {
+  margin: 0 0 7px;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 22px;
+}
+
+.mini-feature p {
+  margin-bottom: 7px;
+  color: #5f563f;
+  font-size: 14px;
+}
+
+.network-panel {
+  margin-top: 50px;
+  padding: 32px;
+  color: #eee3c5;
+  background:
+    radial-gradient(circle at 100% 0, rgba(217, 164, 65, 0.14), transparent 24rem),
+    var(--coal-2);
+  border: 1px solid #4a4027;
+  box-shadow: 8px 8px 0 #cbbb86;
+}
+
+.network-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 30px;
+  align-items: end;
+  margin-bottom: 24px;
+}
+
+.network-heading h2 {
+  margin: 0;
+  color: #fff0c4;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: clamp(28px, 3vw, 36px);
+}
+
+.network-heading p {
+  max-width: 55ch;
+  margin: 0;
+}
+
+.stat-grid {
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: #413821;
+  border: 1px solid #413821;
+}
+
+.network-panel > .stat-grid {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.stat {
+  min-height: 98px;
+  padding: 16px;
+  background: #0b0f0a;
+  border: 0;
+}
+
+.stat b {
+  font: 700 clamp(20px, 2.5vw, 30px)/1.15 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat span {
+  max-width: 23ch;
+  font: 12px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.network-tools {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.calculator {
+  padding: 22px;
+  background: #0a0e09;
+  border: 1px solid #403821;
+}
+
+.calculator h3 {
+  margin: 0 0 8px;
+  color: var(--gold-2);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 20px;
+}
+
+.solo-grid {
+  grid-template-columns: minmax(150px, 0.55fr) minmax(220px, 1.45fr);
+  margin-top: 14px;
+}
+
+.solo-grid input {
+  background: #f7efd8;
+}
+
+.solo-result {
+  min-height: 84px;
+  font: 13px/1.65 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.network-links {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.network-summary {
+  margin: -10px 0 18px;
+  color: #aea281;
+  font: 12px/1.55 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.technical-note {
+  color: var(--ink);
+  background: #eee5ce;
+  border: 1px solid #aa986b;
+}
+
+.network-panel .technical-note {
+  color: #e6dbbd;
+  background: #0b0f0a;
+  border-color: #403821;
+}
+
+.inbox-card .technical-note {
+  margin-top: 18px;
+  color: #ded3b5;
+  background: #0b0f0a;
+  border-color: #403821;
+}
+
+.technical-note summary {
+  position: relative;
+  padding: 15px 46px 15px 17px;
+  cursor: pointer;
+  color: inherit;
+  font: 700 14px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  list-style: none;
+  transition: background 180ms ease;
+}
+
+.technical-note summary::-webkit-details-marker {
+  display: none;
+}
+
+.technical-note summary::after {
+  content: "+";
+  position: absolute;
+  right: 17px;
+  color: #7c6025;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.network-panel .technical-note summary::after {
+  color: var(--green);
+}
+
+.technical-note[open] summary::after {
+  content: "−";
+}
+
+.technical-note summary:hover {
+  background: rgba(217, 164, 65, 0.09);
+}
+
+.technical-content {
+  padding: 2px 18px 18px;
+  border-top: 1px solid rgba(130, 114, 79, 0.42);
+}
+
+.technical-content p:first-child {
+  margin-top: 16px;
+}
+
+.technical-content .stat-grid {
+  margin-top: 16px;
+}
+
+.miner-list {
+  margin-top: 10px;
+  border-color: #403821;
+}
+
+.about-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.72fr) minmax(0, 1.28fr);
+  gap: 48px;
+  align-items: start;
+}
+
+.about-copy {
+  position: sticky;
+  top: 100px;
+}
+
+.about-copy .lede {
+  margin-top: 18px;
+}
+
+.facts {
+  margin: 0;
+  background: rgba(248, 241, 221, 0.82);
+}
+
+.facts th,
+.facts td {
+  padding: 12px 13px;
+}
+
+.facts th {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 13px;
+}
+
+.policy-note {
+  margin-top: 16px;
+  padding: 0;
+  background: #e4d8b7;
+  border-left: 3px solid #80652c;
+}
+
+.policy-note h3 {
+  margin: 0 0 8px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 22px;
+}
+
+.wallet-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  gap: 36px;
+  padding: 34px;
+  background: #faf3df;
+  border: 1px solid #a79461;
+  box-shadow: 6px 6px 0 #cabb86;
+}
+
+.wallet-panel h2 {
+  margin: 0 0 14px;
+  color: #21180a;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: clamp(26px, 3vw, 34px);
+}
+
+.privacy-list {
+  margin: 0;
+  padding: 20px;
+  color: #d9cda9;
+  background: #11160f;
+  border: 1px solid #413821;
+}
+
+.privacy-list li {
+  margin: 0 0 10px 18px;
+}
+
+.operator-notes {
+  display: grid;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.technical-content pre {
+  margin: 13px 0;
+}
+
+.trade-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 16px;
+}
+
+.trade-card,
+.reading-card {
+  padding: 28px;
+  background: #e5dbc0;
+  border-top: 3px solid #85682c;
+}
+
+.trade-card h2,
+.reading-card h2 {
+  margin: 0 0 12px;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 26px;
+}
+
+.read-list {
+  columns: 2 180px;
+  padding-left: 19px;
+}
+
+.warning {
+  margin-top: 28px;
+  padding: 22px 26px;
+  background: #eee0b8;
+  border: 1px solid #9a7b2f;
+  border-left-width: 5px;
+}
+
+.warning h2 {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 21px;
+}
+
+.site-footer {
+  position: relative;
+  z-index: 1;
+  padding: 26px 0 36px;
+  color: #aa9e7d;
+  background: var(--coal);
+  border-top: 1px solid #3d341f;
+  font: 12px/1.65 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.footer-grid {
+  display: flex;
+  justify-content: space-between;
+  gap: 28px;
+}
+
+.site-footer a {
+  color: var(--green);
+}
+
+.genesis {
+  max-width: 68ch;
+  margin: 0;
+}
+
+@media (max-width: 840px) {
+  .nav-inner {
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+  }
+
+  .nav-links {
+    justify-content: flex-end;
+    gap: 16px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .nav-community {
+    display: none;
+  }
+
   .hero-inner {
     grid-template-columns: 1fr;
     min-height: 0;
-    padding-top: 26px;
+    gap: 0;
+    padding: 46px 0 50px;
   }
 
-  .brand-mark {
-    width: 96px;
+  .trust-strip .wrap {
+    grid-template-columns: repeat(2, 1fr);
   }
 
-  .hero-grid {
+  .trust-item:nth-child(3) {
+    border-top: 1px solid #342e1e;
+  }
+
+  .trust-item:nth-child(4) {
+    border-top: 1px solid #342e1e;
+    border-right: 1px solid #342e1e;
+  }
+
+  .section-heading,
+  .download-grid,
+  .utility-grid,
+  .about-grid,
+  .wallet-panel,
+  .trade-grid,
+  .network-tools {
     grid-template-columns: 1fr;
   }
 
-  .topbar .wrap {
+  .section-heading {
+    gap: 14px;
+  }
+
+  .about-copy {
+    position: static;
+  }
+
+  .feature-card.inbox-card {
+    grid-template-columns: 1fr;
+  }
+
+  .pairing-art {
+    display: none;
+  }
+
+  .network-panel {
+    padding: 30px;
+  }
+
+  .network-heading {
+    display: grid;
+    gap: 10px;
+  }
+
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .network-panel > .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  html {
+    scroll-padding-top: 64px;
+  }
+
+  .wrap {
+    width: min(100% - 26px, 1120px);
+  }
+
+  .nav-inner {
+    min-height: 56px;
+  }
+
+  .brand-lockup span {
+    display: none;
+  }
+
+  .nav-links {
+    gap: 13px;
+    font-size: 12px;
+  }
+
+  .nav-links a:nth-child(2) {
+    display: none;
+  }
+
+  .hero-inner {
+    padding: 36px 0 40px;
+  }
+
+  .hero-brand {
+    align-items: flex-end;
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+
+  .brand-mark {
+    width: 68px;
+  }
+
+  h1 {
+    font-size: clamp(38px, 11vw, 48px);
+  }
+
+  .tag {
+    margin-top: 16px;
+    font-size: 17px;
+  }
+
+  .hero-actions .button {
+    width: 100%;
+  }
+
+  .quickstart {
+    padding: 22px 20px;
+  }
+
+  .trust-item {
+    padding: 13px 12px;
     font-size: 11px;
   }
 
-  .panel {
+  .section {
+    padding-top: 42px;
+  }
+
+  .section-heading h2,
+  .feature-copy h2,
+  .about-copy h2 {
+    font-size: 28px;
+  }
+
+  .download-row {
+    grid-template-columns: 1fr auto;
+    gap: 5px 14px;
+    padding: 15px 12px;
+  }
+
+  .download-row .platform,
+  .download-row p {
+    grid-column: 1;
+  }
+
+  .download-row h3 {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .download-row .download-actions {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+  }
+
+  .download-card,
+  .feature-card,
+  .trade-card,
+  .reading-card {
+    padding: 22px;
+  }
+
+  .release-note,
+  .footer-grid {
+    display: grid;
+    gap: 10px;
+  }
+
+  .network-panel {
+    margin-top: 58px;
+    padding: 22px 16px;
+    box-shadow: 4px 4px 0 #cbbb86;
+  }
+
+  .network-heading h2 {
+    font-size: 36px;
+  }
+
+  .stat {
+    min-height: 91px;
     padding: 13px;
+  }
+
+  .stat b {
+    font-size: 22px;
   }
 
   .solo-grid {
     grid-template-columns: 1fr;
   }
+
+  .wallet-panel {
+    padding: 24px 20px;
+  }
+
+  .facts {
+    font-size: 13px;
+  }
+
+  .facts th,
+  .facts td {
+    padding: 9px 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 </style>
 </head>
 <body>
-<div class="topbar">
-<div class="wrap">
-<span>09C mainnet</span>
-<span>CPU proof of work</span>
-<span>Argon2id 64 MiB</span>
-<span>no premine</span>
+<a class="skip-link" href="#main-content">Skip to content</a>
+
+<nav class="site-nav" aria-label="Primary navigation">
+<div class="wrap nav-inner">
+<a class="brand-lockup" href="/" aria-label="Bitcoin 09 home">
+<img src="assets/bitcoin09-ai-logo-512.png" alt="">
+<span>Bitcoin 09</span>
+</a>
+<div class="nav-links">
+<a href="#download">Download</a>
+<a href="#network">Network</a>
+<a href="#mining-guide">Mine</a>
+<a href="#trade">Trade</a>
+<a href="/inbox/">Inbox</a>
 </div>
+<a class="nav-community" href="https://discord.gg/fUuGzwRTzP">Discord</a>
 </div>
+</nav>
 
 <header class="hero">
 <div class="wrap hero-inner">
+<div class="hero-copy">
+<div class="hero-brand">
 <img class="brand-mark" src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
-<div>
-<p class="kicker">fair-launch cpu proof of work</p>
-<h1>Bitcoin 09</h1>
-<p class="tag">Bitcoin-style supply, 10 minute target, no premine, Argon2id mining.</p>
-<div class="hero-grid">
-<pre class="shell">&gt; btc09 node -mine
-seed seed.btc09.org:9009
-seed 178.128.52.20:9009
-seed 178.128.105.41:9009
-seed 103.80.18.140:9009
-seed 108.190.240.138:9009
-pool ntmminer.com/btc09 (third-party)
-release v0.1.26</pre>
-<div class="status-card">
-<b>09C mainnet</b>
-<span>The official desktop wallet and CPU miner, site, explorer, and public seeds are live.</span>
-<span><a href="https://github.com/krutftw/bitcoin09/releases/latest">download</a> / <a href="/inbox/">inbox</a> / <a href="https://discord.gg/fUuGzwRTzP">discord</a> / <a href="https://explorer.btc09.org">explorer</a></span>
+<div><p class="kicker">09C mainnet</p><h1>Bitcoin 09</h1></div>
 </div>
+<p class="tag">A fair-launch, CPU-mined network.</p>
+<p class="hero-description">21 million cap. 10 minute blocks. No premine. Argon2id proof of work.</p>
+<div class="hero-actions">
+<a class="button" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.26/btc09-windows-amd64.exe">Download for Windows</a>
+<a class="text-link" href="#download">macOS and Linux downloads</a>
 </div>
+<ol class="compact-steps" aria-label="Start with Bitcoin 09">
+<li><strong>Download the official app</strong></li>
+<li><strong>Create or open a wallet</strong></li>
+<li><strong>Receive, send, or mine</strong></li>
+</ol>
 </div>
 </div>
 </header>
 
-<main class="content">
+<div class="project-facts">
 <div class="wrap">
-<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.org">live explorer</a>. Current release: v0.1.26 with Nine Inbox, the fast wallet, and official CPU miner. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
+<span>Private keys stay on your computer</span>
+<span>No ICO or premine</span>
+<span>Open source / MIT</span>
+<span>Argon2id / 64 MiB</span>
+</div>
+</div>
 
-<section class="panel" id="nine-inbox">
-<h2>Nine Inbox</h2>
-<p><strong>Send yourself anything.</strong> Move a note, link, photo, or file between your phone and computer without making another account.</p>
-<p>No account and no 09C needed. Pair a second device with a QR code or pairing link. Item contents and filenames are client-side encrypted before they leave your device.</p>
-<p class="muted">The current limit is 20 MiB per item. Files remain for seven days; pinned text and links remain for 30 days. Delivery happens when the receiving browser opens or checks the inbox, so this release does not promise background delivery.</p>
-<p><a href="/inbox/">Open Nine Inbox</a> · <a href="https://github.com/krutftw/bitcoin09/blob/master/docs/NINE-INBOX.md">How it works</a></p>
+<main id="main-content" class="content">
+<div class="wrap">
+
+<section class="section" id="download">
+<div class="section-heading">
+<h2>Download v0.1.26</h2>
+<p>One executable contains the wallet, send and receive tools, node, and official CPU miner.</p>
+</div>
+<div class="download-list">
+<article class="download-row featured">
+<span class="platform">Windows 10/11 · x64</span>
+<h3>Windows</h3>
+<p>Download and open the app.</p>
+<div class="download-actions">
+<a class="button" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.26/btc09-windows-amd64.exe">Download for Windows</a>
+</div>
+</article>
+<article class="download-row">
+<span class="platform">macOS</span>
+<h3>Mac</h3>
+<p>Apple silicon and Intel.</p>
+<div class="download-actions">
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.26/btc09-macos-apple">Apple silicon</a>
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.26/btc09-macos-intel">Intel</a>
+</div>
+</article>
+<article class="download-row">
+<span class="platform">Linux</span>
+<h3>Linux</h3>
+<p>amd64 and arm64.</p>
+<div class="download-actions">
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.26/btc09-linux-amd64">amd64</a>
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.26/btc09-linux-arm64">arm64</a>
+</div>
+</article>
+</div>
+<div class="release-note">
+<span>Current release: v0.1.26. Official files are published on GitHub. Verify a download before running it.</span>
+<a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.26/SHA256SUMS">SHA256SUMS</a>
+</div>
 </section>
 
-<section class="panel">
-<h2>What It Is</h2>
-<p>Bitcoin 09 is Bitcoin's old idea with one deliberate swap: Argon2id memory-hard proof of work instead of SHA-256. Normal CPUs can mine it, and the 64 MiB memory cost is meant to reduce the easy ASIC/GPU advantage that took over Bitcoin.</p>
+<section class="section" aria-labelledby="use-heading">
+<div class="section-heading">
+<h2 id="use-heading">More tools</h2>
+<p>Nine Inbox, the explorer, and the trade board stay separate from the wallet.</p>
+</div>
+<div class="utility-grid">
+<article class="feature-card inbox-card" id="nine-inbox">
+<div class="feature-copy">
+<h2>Send yourself anything.</h2>
+<p>Move a note, link, photo, or file between your phone and computer without making another account.</p>
+<div class="text-links"><a class="button" href="/inbox/">Open Nine Inbox</a><a class="text-link" href="https://github.com/krutftw/bitcoin09/blob/master/docs/NINE-INBOX.md">How it works</a></div>
+<details class="technical-note">
+<summary>Inbox limits and privacy</summary>
+<div class="technical-content">
+<p>No account and no 09C needed. Pair with a QR code or pairing link. Item contents and filenames are client-side encrypted before upload.</p>
+<p>The limit is 20 MiB per item. Files remain for seven days; pinned text and links remain for 30 days. Delivery happens when the receiving browser checks the inbox, so this release does not promise background delivery.</p>
+</div>
+</details>
+</div>
+<div class="pairing-art" aria-hidden="true">PHONE&nbsp;&nbsp;&nbsp;↔&nbsp;&nbsp;&nbsp;COMPUTER<br>note&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;photo<br>link&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;file<br><br>encrypted before upload</div>
+</article>
+<div class="utility-stack">
+<article class="mini-feature">
+<h3>Watch the chain</h3>
+<p>Inspect blocks, difficulty, supply, and miner addresses.</p>
+<a href="https://explorer.btc09.org">Open explorer</a>
+</article>
+<article class="mini-feature">
+<h3>See open trades</h3>
+<p>Browse public WTB and WTS offers without signing in.</p>
+<a href="markets.html">Open OTC board</a>
+</article>
+</div>
+</div>
+</section>
+
+<section class="section" id="about">
+<div class="about-grid">
+<div class="about-copy">
+<h2>What is Bitcoin 09?</h2>
+<p class="lede">It keeps Bitcoin's cap, reward schedule, and block target. SHA-256 is replaced by Argon2id with 64 MiB of memory per hash.</p>
+</div>
+<div>
 <table class="facts">
-<tr><th></th><th>Bitcoin</th><th>Bitcoin 09</th></tr>
-<tr><td>Supply cap</td><td>21,000,000</td><td>21,000,000</td></tr>
-<tr><td>Block reward</td><td>50, halves every 210,000</td><td>50, halves every 210,000</td></tr>
-<tr><td>Block target</td><td>10 minutes</td><td>10 minutes</td></tr>
-<tr><td>Premine</td><td>none</td><td>none</td></tr>
-<tr><td>Proof of work</td><td>SHA-256d</td><td>Argon2id 64 MiB, CPU-accessible</td></tr>
+<thead><tr><th scope="col">Feature</th><th scope="col">Bitcoin</th><th scope="col">Bitcoin 09</th></tr></thead>
+<tbody>
+<tr><th scope="row">Supply cap</th><td>21,000,000</td><td>21,000,000</td></tr>
+<tr><th scope="row">Block reward</th><td>50, halves every 210,000</td><td>50, halves every 210,000</td></tr>
+<tr><th scope="row">Block target</th><td>10 minutes</td><td>10 minutes</td></tr>
+<tr><th scope="row">Premine</th><td>none</td><td>none</td></tr>
+<tr><th scope="row">Proof of work</th><td>SHA-256d</td><td>Argon2id 64 MiB, CPU-accessible</td></tr>
+</tbody>
 </table>
+<details class="technical-note policy-note">
+<summary>Permissionless mining policy</summary>
+<div class="technical-content">
+<p>09C does not detect or ban hardware. A valid block is valid work. The official miners are CPU miners, but if public GPU, FPGA, or heavily optimized software appears, it should be shared and benchmarked openly. Changing the proof of work would require a coordinated hard fork, not pool-side rules.</p>
+</div>
+</details>
+</div>
+</div>
 </section>
 
-<section class="panel">
-<h2>Mining Policy</h2>
-<p>09C is permissionless proof of work. The official node miner is CPU mining, and the current public third-party <code>btc09</code> miner is listed as CPU-only, but the chain does not try to detect or ban hardware. A valid block is valid work.</p>
-<p>If a public GPU, FPGA, or heavily optimized miner appears, it should be shared and benchmarked like any other miner. A stronger CPU-biased PoW would require a coordinated hard fork, not pool-side rules.</p>
-</section>
-
-<section class="panel dark stats" aria-live="polite">
-<h2>Network Now</h2>
+<section class="network-panel stats" id="network" aria-live="polite">
+<div class="network-heading">
+<h2>Network now</h2>
 <p id="stats-note" class="muted">Loading live chain stats...</p>
+</div>
+<p id="live" class="network-summary">Network status is loading. <a href="https://explorer.btc09.org">Open explorer</a>.</p>
 <div class="stat-grid">
 <div class="stat"><b id="stat-height">-</b><span>chain height</span></div>
 <div class="stat"><b id="stat-peers">-</b><span>node peers</span></div>
 <div class="stat"><b id="stat-difficulty">-</b><span>difficulty</span></div>
+<div class="stat"><b id="stat-network-hashrate">-</b><span>estimated network hashrate</span></div>
+</div>
+<div class="network-tools">
+<details class="technical-note">
+<summary>Estimate solo mining odds</summary>
+<div class="technical-content">
+<div class="calculator">
+<h3>Solo mining odds</h3>
+<p class="muted">Enter your measured hashrate. This uses the official chain estimate, not the pool dashboard.</p>
+<div class="solo-grid">
+<label>Your hashrate in H/s
+<input id="solo-hashrate" type="number" min="0" step="0.01" inputmode="decimal" placeholder="100">
+</label>
+<div id="solo-estimate" class="solo-result">Enter your hashrate to estimate your share and block odds.</div>
+</div>
+<p class="muted">Expected time, not a guarantee. Solo mining has high variance. A pool smooths payouts but does not increase your expected share before fees.</p>
+</div>
+</div>
+</details>
+<div class="network-links">
+<details class="technical-note">
+<summary>More chain data</summary>
+<div class="technical-content">
+<div class="stat-grid">
 <div class="stat"><b id="stat-target">-</b><span>target block time</span></div>
 <div class="stat"><b id="stat-avg-block">-</b><span>avg block time this window</span></div>
 <div class="stat"><b id="stat-retarget">-</b><span>blocks to retarget</span></div>
 <div class="stat"><b id="stat-next-diff">-</b><span>est. next difficulty</span></div>
 <div class="stat"><b id="stat-supply">-</b><span>circulating 09C</span></div>
-<div class="stat"><b id="stat-network-hashrate">-</b><span>estimated network hashrate</span></div>
 <div class="stat"><b id="stat-top-share-100">-</b><span>top payout address, last 100 blocks</span></div>
 <div class="stat"><b id="stat-distinct-100">-</b><span>payout addresses, last 100 blocks</span></div>
 </div>
+<p>09C follows the old Bitcoin rhythm: difficulty changes every 2,016 blocks and can only move by up to 4x per adjustment. If a lot of miners arrive early, blocks can run faster than the 10 minute target until the next retarget catches up.</p>
+<p class="muted">The target is the rule. The observed average is what miners are seeing right now.</p>
+</div>
+</details>
+<details class="technical-note">
+<summary>Community pool data</summary>
+<div class="technical-content">
 <h3 id="pool-heading">Community pool <a href="https://www.ntmminer.com/btc09">ntmminer.com</a> <small>(third-party, not run by 09C)</small></h3>
 <p id="pool-note" class="muted">Pool data is from a community-operated third-party pool and may lag or be unavailable. Chain data above comes from the official 09C node.</p>
 <div class="stat-grid">
@@ -562,44 +1699,46 @@ release v0.1.26</pre>
 <details class="miner-list">
 <summary>Top active pool addresses</summary>
 <table>
-<thead><tr><th>Address</th><th>Hashrate</th></tr></thead>
+<thead><tr><th scope="col">Address</th><th scope="col">Hashrate</th></tr></thead>
 <tbody id="miner-rows"><tr><td colspan="2">Loading...</td></tr></tbody>
 </table>
 </details>
-</section>
-
-<section class="panel">
-<h2>Difficulty Retarget</h2>
-<p>09C follows the old Bitcoin rhythm: difficulty changes every 2,016 blocks and can only move by up to 4x per adjustment. If a lot of miners arrive early, blocks can run faster than the 10 minute target until the next retarget catches up.</p>
-<p class="muted">That is why the site shows both the target and the observed average for the current retarget window. The target is the rule; the observed average is what miners are seeing right now.</p>
-</section>
-
-<section class="panel">
-<h2>Solo Mining Odds</h2>
-<p>Enter your measured hashrate. This uses the official chain estimate, not the pool dashboard.</p>
-<div class="solo-grid">
-<label for="solo-hashrate">Your hashrate in H/s
-<input id="solo-hashrate" type="number" min="0" step="0.01" inputmode="decimal" placeholder="100">
-</label>
-<div id="solo-estimate" class="solo-result">Enter your hashrate to estimate your share and block odds.</div>
 </div>
-<p class="muted">Expected time, not a guarantee. Solo mining has high variance. A pool smooths payouts but does not increase your expected share before fees.</p>
+</details>
+</div>
+</div>
 </section>
 
-<section class="panel" id="mining-guide">
+<section class="section" id="mining-guide">
+<div class="section-heading">
+<h2>Wallet and mining</h2>
+<p>The desktop app handles wallet creation, receiving, sending, and CPU mining.</p>
+</div>
+<div class="wallet-panel">
+<div>
 <h2>Desktop wallet and miner</h2>
-<p>BTC09 has one local app for Windows, macOS, and Linux. Open the downloaded program with no command to create or load your wallet, receive and send 09C, and mine from the same screen. Open the wallet, choose Mine, set the CPU threads, and press Start mining. The app fills your payout address automatically and reconnects after short network faults.</p>
-<pre>.\btc09-windows-amd64.exe
+<p>Open the app to create or load a wallet, receive 09C, and send it. Open the wallet, choose Mine, set the CPU threads, and press Start mining.</p>
+<div class="text-links"><a class="button" href="#download">Choose a download</a><a href="https://github.com/krutftw/bitcoin09/blob/master/QUICKSTART.md">Read the quickstart</a></div>
+</div>
+<details class="technical-note">
+<summary>Miner help and privacy</summary>
+<div class="technical-content">
+<p>If mining does not start, check the wallet, endpoint, and CPU readiness row. <strong>Copy help report</strong> shows useful diagnostics but leaves out your wallet address and worker name.</p>
+<ul class="privacy-list">
+<li>Private keys stay in the local wallet file.</li>
+<li>No account, analytics, or remote wallet custody.</li>
+<li>The interface binds only to a random <code>127.0.0.1</code> port.</li>
+<li>No partial-share payouts. Official open mining is solo mining with high variance.</li>
+</ul>
+</div>
+</details>
+</div>
 
-# or explicitly
-btc09 app</pre>
-<p class="muted">The interface binds only to a random <code>127.0.0.1</code> port. It has no account or analytics. Private keys stay in the local wallet file. Mining sends only the public payout address and optional worker name to the coordinator. No partial-share payouts: this is open solo mining, so a block pays the wallet directly and results have high variance.</p>
-<p>If mining does not start, check the wallet, endpoint, and CPU readiness row in the Mine tab. <strong>Copy help report</strong> gives Discord support the app version, connection state, thread count, hashrate, jobs, and last error. It leaves out your wallet address and worker name.</p>
-<p><a href="https://github.com/krutftw/bitcoin09/releases/latest">Download the latest BTC09 wallet</a></p>
-</section>
-
-<section class="panel">
-<h2>Start Mining</h2>
+<div class="operator-notes">
+<details class="technical-note">
+<summary>Mining choices</summary>
+<div class="technical-content">
+<h3>Start mining</h3>
 <div class="command-grid">
 <div class="command">
 <h3>Official wallet miner</h3>
@@ -622,27 +1761,31 @@ btc09 app</pre>
 <pre>btc09 node</pre>
 </div>
 </div>
-</section>
+</div>
+</details>
 
-<section class="panel">
-<h2>Open-source remote solo mining</h2>
+<details class="technical-note">
+<summary>Remote solo protocol</summary>
+<div class="technical-content">
+<h3>Open-source remote solo mining</h3>
 <p>The official Go client now includes a native remote-solo protocol. A coordinator builds the block template; your computer runs Argon2id locally and submits only a winning nonce. Your payout address stays in the coordinator-owned template, and the client never sends a wallet key or seed phrase.</p>
 <pre>btc09 mine-pool -pool https://btc09.org -address YOUR_09C_ADDRESS -worker rig-1</pre>
 <p>The official coordinator accepts work requests at <code>https://btc09.org/api/v1/work</code>. The open two-route format is documented in <a href="https://github.com/krutftw/bitcoin09/blob/master/docs/OPEN-MINING-PROTOCOL.md">Open Mining Protocol v1</a>.</p>
 <p>Anyone can run an independent coordinator from a synced node and put its local API behind TLS:</p>
 <pre>btc09 node -solo-api 127.0.0.1:9010</pre>
 <p class="muted">This removes the need for each remote miner to run a full node, but it does not smooth solo-mining variance. PPLNS is not live in the official software. The non-custodial PPLNS phase needs separate accounting, restart, reorg, and security tests before it is offered on mainnet.</p>
-</section>
+</div>
+</details>
 
-<section class="panel">
-<h2>Node Notes</h2>
+<details class="technical-note">
+<summary>Full node and command line</summary>
+<div class="technical-content">
+<h3>Node notes</h3>
 <p>Mining only starts when <code>-mine</code> is present. A non-mining node still syncs, relays blocks and transactions, listens on <code>:9009</code> by default, and can serve its own explorer.</p>
 <pre>btc09 node -explorer :8009</pre>
 <p class="muted">Wallet balance is calculated from your local synced chain, so a fresh node can show a balance later than the public explorer while it catches up. v0.1.10 and later sync fresh nodes in larger bounded batches and log balance changes as soon as the local chain sees them. Mined coinbase rewards become spendable after 100 blocks.</p>
-</section>
 
-<section class="panel">
-<h2>Wallet And Sending</h2>
+<h3>Wallet and sending</h3>
 <p>09C is a native chain coin, not an Ethereum or Solana token. MetaMask and Phantom do not support it. Use the BTC09 desktop wallet, or the command line when scripting and operating a node.</p>
 <p class="muted">Windows PowerShell needs the downloaded file name. If you downloaded <code>btc09-windows-amd64.exe</code>, use <code>.\btc09-windows-amd64.exe</code>. <code>btc09</code> by itself only works after renaming the file or adding it to PATH.</p>
 <pre>.\btc09-windows-amd64.exe
@@ -650,31 +1793,47 @@ btc09 app</pre>
 .\btc09-windows-amd64.exe wallet new
 .\btc09-windows-amd64.exe send -to THEIR_09C_ADDRESS -amount 100 -seeds seed.btc09.org:9009</pre>
 <p class="muted">The default fee is 0.0001 09C. <code>-seeds</code> is plural and means peer nodes to broadcast through, not a wallet seed phrase. Do not paste private keys, seed phrases, or wallet file contents into the command line. <code>send</code> spends from the wallet file in your data directory, and your local chain must be synced enough to see spendable coins.</p>
-</section>
 
-<section class="panel">
-<h2>Watch The Chain</h2>
+<h3>Watch the chain</h3>
 <p><a href="https://explorer.btc09.org">Live block explorer</a>: height, difficulty, recent blocks and miner addresses.</p>
 <p>The explorer exposes machine-readable supply data for listings and audits.</p>
 <pre>curl https://explorer.btc09.org/api/supply
 curl https://explorer.btc09.org/api/circulating_supply</pre>
-</section>
+</div>
+</details>
 
-<section class="panel">
-<h2>Markets</h2>
-<p>There is no official 09C price. The public <a href="markets.html">OTC board</a> and the Discord bot escrow are live. The bot holds 09C in escrow for two-sided WTB/WTS trades at a 1% fee; AUD, USD, CNY, USDT, BTC, ETH, and every other settlement fund move directly between buyer and seller. Use <code>/trade sell</code> to create a WTS offer. Use <code>/trade buy</code> to create a WTB offer. Use <code>/trade accept &lt;order_id&gt;</code> to accept an open offer.</p>
-</section>
-
-<section class="panel">
-<h2>Third-party Miners</h2>
+<details class="technical-note">
+<summary>Third-party miner safety</summary>
+<div class="technical-content">
+<h3>Third-party miners</h3>
 <p>NTMminer is a third-party closed-source binary miner, not the official 09C wallet or node. It only needs your payout address. Do not give any pool miner a seed phrase, private key, wallet file, remote access, or Discord token.</p>
 <p>NTMminer has GPU support for some other algorithms, but the current public <code>btc09</code> backend is listed as CPU-only. There is no official 09C GPU miner right now. If a third-party GPU miner appears, it is still permissionless mining. Treat any closed-source miner carefully: use only a payout address.</p>
+</div>
+</details>
+</div>
 </section>
 
-<section class="panel">
-<h2>Read</h2>
+<section class="section" id="trade">
+<div class="section-heading">
+<h2>Trade and verify</h2>
+<p>Browse public offers, then verify the code and chain yourself.</p>
+</div>
+<div class="trade-grid">
+<article class="trade-card">
+<h2>Markets</h2>
+<p>See open WTB and WTS offers on the public <a href="markets.html">OTC board</a>.</p>
+<div class="text-links"><a class="button" href="markets.html">View open offers</a><a href="https://discord.gg/fUuGzwRTzP">Trade in Discord</a></div>
+<details class="technical-note">
+<summary>Trade boundaries</summary>
+<div class="technical-content">
+<p>There is no official 09C price. The Discord bot holds 09C in escrow for two-sided trades at a 1% fee. AUD, USD, CNY, USDT, BTC, ETH, and every other settlement fund move directly between buyer and seller.</p>
+<p>Use <code>/trade sell</code> to create a WTS offer and <code>/trade buy</code> to create a WTB offer. Use <code>/trade accept &lt;order_id&gt;</code> to accept an open offer.</p>
+</div>
+</details>
+</article>
+<article class="reading-card">
+<h2>Read and verify</h2>
 <ul class="read-list">
-<li><a href="https://btc09.org">Official site</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09">Source code</a> (MIT, Go)</li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/WHITEPAPER.md">Whitepaper</a></li>
 <li><a href="https://github.com/krutftw/bitcoin09/blob/master/QUICKSTART.md">Quickstart</a></li>
@@ -683,16 +1842,23 @@ curl https://explorer.btc09.org/api/circulating_supply</pre>
 <li><a href="https://github.com/krutftw/bitcoin09/issues/1">Launch thread</a></li>
 <li><a href="https://bitcointalk.org/index.php?topic=5587640.0">Bitcointalk ANN</a></li>
 </ul>
+</article>
+</div>
 </section>
 
-<section class="panel warning">
-<h2>No Premine. No Guarantees.</h2>
+<aside class="warning">
+<h2>No premine. No guarantees.</h2>
 <p>09C launched without an ICO, team allocation, or treasury. The genesis reward is burned, so circulating coins start with public mining after genesis. There is no guaranteed price or return. Mine or trade only if you understand the risk.</p>
-</section>
-
-<p class="genesis">genesis: <code>ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f</code></p>
+</aside>
 </div>
 </main>
+
+<footer class="site-footer">
+<div class="wrap footer-grid">
+<p>Bitcoin 09 · 09C mainnet · open source since launch<br><a href="https://github.com/krutftw/bitcoin09">GitHub</a> / <a href="https://explorer.btc09.org">Explorer</a> / <a href="https://discord.gg/fUuGzwRTzP">Discord</a></p>
+<p class="genesis">genesis: <code>ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f</code></p>
+</div>
+</footer>
 
 <script>
 const poolApi = 'https://www.ntmminer.com/api-btc09/pools/btc09';
@@ -869,10 +2035,7 @@ async function refreshStats() {
     text('stat-blocks', pool ? Number(pool.totalBlocks ?? 0).toLocaleString() : '-');
     text('stat-paid', pool ? fixed(pool.totalPaid, 2) : '-');
     note.className = 'muted';
-    const hashrateWindow = status?.hashrate_observation_blocks > 0
-      ? ' Estimated hashrate uses ' + Number(status.hashrate_observation_blocks).toLocaleString() + ' observed blocks.'
-      : '';
-    note.textContent = 'Live chain data from the official 09C node.' + hashrateWindow + ' Difficulty retargets every ' + Number(status?.retarget_interval ?? 2016).toLocaleString() + ' blocks, Bitcoin-style. Updated ' + updated.toLocaleTimeString() + '.';
+    note.textContent = 'Official node data. Updated ' + updated.toLocaleTimeString() + '.';
     const poolNote = document.getElementById('pool-note');
     if (poolNote) {
       poolNote.className = pool ? 'muted' : 'error';
