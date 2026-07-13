@@ -117,6 +117,7 @@ func (h *Handler) createInbox(w http.ResponseWriter, r *http.Request) {
 			"max_item_bytes":        h.store.limits.MaxItemBytes,
 			"max_inbox_bytes":       h.store.limits.MaxInboxBytes,
 			"max_inbox_items":       h.store.limits.MaxInboxItems,
+			"max_inboxes":           h.store.limits.MaxInboxes,
 			"max_pinned_item_bytes": h.store.limits.MaxPinnedItemBytes,
 			"standard_ttl_seconds":  int64(h.store.limits.StandardTTL.Seconds()),
 			"pinned_ttl_seconds":    int64(h.store.limits.PinnedTTL.Seconds()),

@@ -1,0 +1,45 @@
+[Unit]
+Description=Nine Inbox encrypted relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=btc09-nine-inbox
+Group=btc09-nine-inbox
+ExecStart=/opt/btc09/btc09-nine-inbox nine-inbox -listen 127.0.0.1:8020 -data-dir /var/lib/btc09-nine-inbox
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+UMask=0077
+
+StateDirectory=btc09-nine-inbox
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+MemoryMax=512M
+TasksMax=64
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

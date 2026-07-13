@@ -20,10 +20,26 @@ func testLimits() Limits {
 		MaxItemBytes:       32,
 		MaxInboxBytes:      48,
 		MaxInboxItems:      2,
+		MaxInboxes:         8,
 		MaxServiceBytes:    64,
 		StandardTTL:        7 * 24 * time.Hour,
 		PinnedTTL:          30 * 24 * time.Hour,
 		MaxPinnedItemBytes: 16,
+	}
+}
+
+func TestStoreEnforcesServiceInboxCount(t *testing.T) {
+	limits := testLimits()
+	limits.MaxInboxes = 1
+	store, err := OpenStore(t.TempDir(), limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInbox(CreateInboxInput{WriteTokenHash: tokenHash([]byte("first")), RecoveryTokenHash: tokenHash([]byte("recover-first"))}); err != nil {
+		t.Fatalf("first inbox: %v", err)
+	}
+	if _, err := store.CreateInbox(CreateInboxInput{WriteTokenHash: tokenHash([]byte("second")), RecoveryTokenHash: tokenHash([]byte("recover-second"))}); !errors.Is(err, ErrServiceFull) {
+		t.Fatalf("second inbox error = %v, want ErrServiceFull", err)
 	}
 }
 

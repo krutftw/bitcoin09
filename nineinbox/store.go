@@ -41,6 +41,7 @@ type Limits struct {
 	MaxItemBytes       int64
 	MaxInboxBytes      int64
 	MaxInboxItems      int
+	MaxInboxes         int
 	MaxServiceBytes    int64
 	StandardTTL        time.Duration
 	PinnedTTL          time.Duration
@@ -144,6 +145,7 @@ func validLimits(l Limits) bool {
 	return l.MaxItemBytes > 0 &&
 		l.MaxInboxBytes >= l.MaxItemBytes &&
 		l.MaxInboxItems > 0 &&
+		l.MaxInboxes > 0 &&
 		l.MaxServiceBytes >= l.MaxInboxBytes &&
 		l.StandardTTL > 0 &&
 		l.PinnedTTL >= l.StandardTTL &&
@@ -157,6 +159,9 @@ func (s *Store) CreateInbox(input CreateInboxInput) (Inbox, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.inboxes) >= s.limits.MaxInboxes {
+		return Inbox{}, ErrServiceFull
+	}
 
 	for attempts := 0; attempts < 8; attempts++ {
 		id, err := randomID(16)
@@ -537,6 +542,9 @@ func (s *Store) reconcile() error {
 }
 
 func (s *Store) loadInbox(id string) error {
+	if len(s.inboxes) >= s.limits.MaxInboxes {
+		return fmt.Errorf("%w: stored inbox count exceeds configured limit", ErrUnsafeStorage)
+	}
 	dir := s.inboxDir(id)
 	var meta diskInbox
 	if err := readJSON(filepath.Join(dir, "meta.json"), &meta); err != nil {
