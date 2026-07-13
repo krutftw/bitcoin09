@@ -87,6 +87,10 @@ class NineInboxDeploymentContract(unittest.TestCase):
             "curl --fail --silent --show-error http://127.0.0.1:8020/healthz",
             "--resolve btc09.org:443:127.0.0.1",
             "https://btc09.org/inbox/",
+            'website_source="$repo_root/docs/index.html"',
+            "website_target=/var/www/bitcoin09/index.html",
+            "restore_file \"$website_target\" website",
+            "grep -Fq 'href=\"/inbox/\"'",
             "restore_install",
             "trap restore_install ERR INT TERM",
         ):

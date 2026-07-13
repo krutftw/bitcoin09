@@ -11,11 +11,13 @@ binary_source=${BTC09_NINE_BINARY_SOURCE:-}
 http_source="$repo_root/deploy/nginx/bitcoin09-nine-inbox-http.conf"
 server_source="$repo_root/deploy/nginx/bitcoin09-nine-inbox-server.conf"
 service_source="$repo_root/deploy/systemd/btc09-nine-inbox.service"
+website_source="$repo_root/docs/index.html"
 http_target=/etc/nginx/conf.d/bitcoin09-nine-inbox-http.conf
 server_target=/etc/nginx/snippets/bitcoin09-nine-inbox-server.conf
 service_target=/etc/systemd/system/btc09-nine-inbox.service
 binary_target=/opt/btc09/btc09-nine-inbox
 site_target=/etc/nginx/sites-available/bitcoin09-domain-pending
+website_target=/var/www/bitcoin09/index.html
 include_line='    include /etc/nginx/snippets/bitcoin09-nine-inbox-server.conf;'
 backup_dir=$(mktemp -d /tmp/btc09-nine-inbox.XXXXXX)
 staged_binary=$(mktemp /opt/btc09/.btc09-nine-inbox.XXXXXX)
@@ -23,11 +25,12 @@ installed=0
 was_active=0
 was_enabled=0
 
-for source in "$http_source" "$server_source" "$service_source"; do
+for source in "$http_source" "$server_source" "$service_source" "$website_source"; do
     [[ -f "$source" && ! -L "$source" ]] || { echo "missing or unsafe deployment file: $source" >&2; exit 1; }
 done
 [[ -d "$repo_root" && ! -L "$repo_root" ]] || { echo "repository root is missing or unsafe" >&2; exit 1; }
 [[ -f "$site_target" && ! -L "$site_target" ]] || { echo "canonical nginx site is missing or unsafe" >&2; exit 1; }
+[[ -f "$website_target" && ! -L "$website_target" ]] || { echo "public site index is missing or unsafe" >&2; exit 1; }
 [[ -d /opt/btc09 && ! -L /opt/btc09 ]] || { echo "/opt/btc09 is missing or unsafe" >&2; exit 1; }
 if [[ -n "$binary_source" ]]; then
     [[ -f "$binary_source" && ! -L "$binary_source" ]] || { echo "prebuilt binary is missing or unsafe" >&2; exit 1; }
@@ -63,6 +66,7 @@ restore_install() {
         restore_file "$service_target" service
         restore_file "$binary_target" binary
         restore_file "$site_target" site
+        restore_file "$website_target" website
         systemctl daemon-reload || true
         if [[ $was_enabled -eq 0 ]]; then
             systemctl disable btc09-nine-inbox 2>/dev/null || true
@@ -106,6 +110,7 @@ backup_file "$server_target" server
 backup_file "$service_target" service
 backup_file "$binary_target" binary
 backup_file "$site_target" site
+backup_file "$website_target" website
 installed=1
 
 install -o root -g root -m 0755 "$staged_binary" "$binary_target"
@@ -113,6 +118,7 @@ rm -f -- "$staged_binary"
 install -o root -g root -m 0644 "$http_source" "$http_target"
 install -o root -g root -m 0644 "$server_source" "$server_target"
 install -o root -g root -m 0644 "$service_source" "$service_target"
+install -o root -g root -m 0644 "$website_source" "$website_target"
 
 if ! grep -Fqx "$include_line" "$site_target"; then
     python3 - "$site_target" "$include_line" <<'PY'
@@ -156,6 +162,9 @@ page=$(mktemp "$backup_dir/page.XXXXXX")
 curl --fail --silent --show-error --resolve btc09.org:443:127.0.0.1 \
     https://btc09.org/inbox/ >"$page"
 grep -Fq 'Send yourself anything.' "$page"
+curl --fail --silent --show-error --resolve btc09.org:443:127.0.0.1 \
+    https://btc09.org/ >"$page"
+grep -Fq 'href="/inbox/"' "$page"
 systemctl is-active --quiet btc09-nine-inbox
 ss -ltn | grep -Fq '127.0.0.1:8020'
 if ss -ltn | grep -Eq '0\.0\.0\.0:8020|\[::\]:8020'; then
