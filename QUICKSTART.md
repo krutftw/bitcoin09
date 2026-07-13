@@ -111,7 +111,7 @@ The official client can mine against any independent 09C remote-solo
 coordinator without downloading the chain locally:
 
 ```powershell
-btc09 mine-pool -pool https://mine.btc09.org -address YOUR_09C_ADDRESS -worker rig-1
+btc09 mine-pool -pool https://btc09.org -address YOUR_09C_ADDRESS -worker rig-1
 ```
 
 HTTPS is required by default. Plain HTTP is available only for an explicitly

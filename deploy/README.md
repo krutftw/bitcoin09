@@ -488,10 +488,9 @@ ss -lntp | grep '127.0.0.1:9010'
 ! ss -lntp | grep -E '0\.0\.0\.0:9010|\[::\]:9010'
 ```
 
-After `mine.btc09.org` points through Cloudflare and the existing `btc09.org`
-certificate includes that hostname, install the exact two-route nginx boundary.
-Pass any valid public mainnet payout address only for the loopback work health
-check; the installer does not store it.
+Install the exact two-route nginx boundary in the existing Cloudflare-protected
+`btc09.org` TLS host. Pass any valid public mainnet payout address only for the
+loopback work health check; the installer does not store it.
 
 ```bash
 BTC09_MINER_HEALTH_ADDRESS=YOUR_09C_ADDRESS \

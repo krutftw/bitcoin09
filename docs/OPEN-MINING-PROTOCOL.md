@@ -8,7 +8,7 @@ This is not a pooled-share protocol. There are no partial-share balances or
 operator-held rewards. A winning block pays the address in the original work
 request directly through its coinbase output.
 
-The official mainnet coordinator is `https://mine.btc09.org`. Third-party
+The official mainnet coordinator is `https://btc09.org`. Third-party
 coordinators can implement the same two routes.
 
 ## Transport
@@ -107,7 +107,7 @@ use bounded backoff.
 ## Command-line client
 
 ```text
-btc09 mine-pool -pool https://mine.btc09.org -address YOUR_09C_ADDRESS -worker home-pc
+btc09 mine-pool -pool https://btc09.org -address YOUR_09C_ADDRESS -worker home-pc
 ```
 
 An independent synced node can run a loopback coordinator for its own TLS

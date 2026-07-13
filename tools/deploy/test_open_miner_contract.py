@@ -22,6 +22,7 @@ class OpenMinerDeploymentContract(unittest.TestCase):
         self.assertIn("location = /api/v1/submit", text)
         self.assertEqual(text.count("limit_except POST"), 2)
         self.assertNotIn("location /api/v1/", text)
+        self.assertNotIn("server_name", text)
         self.assertNotIn("0.0.0.0:9010", text)
         self.assertNotIn("proxy_pass http://$", text)
 

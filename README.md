@@ -280,7 +280,7 @@ work from any independently operated coordinator without running a local full
 node:
 
 ```text
-btc09 mine-pool -pool https://mine.btc09.org -address YOUR_09C_ADDRESS -worker rig-1
+btc09 mine-pool -pool https://btc09.org -address YOUR_09C_ADDRESS -worker rig-1
 ```
 
 A synced node can serve the coordinator on a local address for a TLS reverse

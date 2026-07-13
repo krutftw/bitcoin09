@@ -25,7 +25,7 @@ import (
 const (
 	appSendLifetime              = 5 * time.Minute
 	appMaxPending                = 32
-	defaultMainnetMiningEndpoint = "https://mine.btc09.org"
+	defaultMainnetMiningEndpoint = "https://btc09.org"
 )
 
 type appPeerSet interface {
