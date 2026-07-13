@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -1045,7 +1046,6 @@ func (s *Server) row(h int64) (blockRow, bool) {
 }
 
 type homeData struct {
-	Title                   string
 	Height                  int64
 	Peers                   int
 	Difficulty              string
@@ -1065,13 +1065,42 @@ type homeData struct {
 	Blocks                  []blockRow
 }
 
+type blockData struct {
+	blockRow
+	Bits  string
+	Nonce uint64
+}
+
+type addressData struct {
+	Address string
+	Balance string
+	Mined   []int64
+}
+
+type pageData struct {
+	Title   string
+	Kind    string
+	Home    *homeData
+	Block   *blockData
+	Address *addressData
+}
+
+func (s *Server) renderPage(w http.ResponseWriter, data pageData) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if err := s.tmpl.Execute(w, data); err != nil {
+		log.Printf("explorer HTML render failed: %v", err)
+	}
+}
+
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
 	_, tip := s.chain.Tip()
-	d := homeData{Title: "Bitcoin 09 explorer", Height: tip, Peers: s.peers.PeerCount()}
+	d := homeData{Height: tip, Peers: s.peers.PeerCount()}
 	supply := supplyAt(s.chain.Params(), tip)
 	d.Supply = supply.CirculatingSupply
 	d.BlockReward = supply.BlockReward
@@ -1103,7 +1132,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 			d.Blocks = append(d.Blocks, row)
 		}
 	}
-	s.tmpl.Execute(w, d)
+	s.renderPage(w, pageData{Title: "Block explorer | Bitcoin 09", Kind: "home", Home: &d})
 }
 
 func (s *Server) handleBlock(w http.ResponseWriter, r *http.Request) {
@@ -1119,8 +1148,8 @@ func (s *Server) handleBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b := s.chain.BlockAt(h)
-	fmt.Fprintf(w, "block %d\n\nid      %s\ntime    %s UTC\nminer   %s\nreward  %s 09C\ntxs     %d\nbits    %08x\nnonce   %d\ntag     %q\n",
-		row.Height, row.ID, row.Time, row.Miner, row.Reward, row.Txs, b.Header.Bits, b.Header.Nonce, row.Tag)
+	d := blockData{blockRow: row, Bits: fmt.Sprintf("%08x", b.Header.Bits), Nonce: b.Header.Nonce}
+	s.renderPage(w, pageData{Title: fmt.Sprintf("Block %d | Bitcoin 09", h), Kind: "block", Block: &d})
 }
 
 func (s *Server) handleAddress(w http.ResponseWriter, r *http.Request) {
@@ -1142,10 +1171,8 @@ func (s *Server) handleAddress(w http.ResponseWriter, r *http.Request) {
 			mined = append(mined, h)
 		}
 	}
-	fmt.Fprintf(w, "address %s\n\nspendable balance  %s 09C\nblocks mined       %d\n", addr, coins(balance), len(mined))
-	if len(mined) > 0 {
-		fmt.Fprintf(w, "heights            %v\n", mined)
-	}
+	d := addressData{Address: addr, Balance: coins(balance), Mined: mined}
+	s.renderPage(w, pageData{Title: "Address | Bitcoin 09", Kind: "address", Address: &d})
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -1220,53 +1247,115 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 const pageTmpl = `<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="30">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{if eq .Kind "home"}}<meta http-equiv="refresh" content="30">{{end}}
+<meta name="description" content="Bitcoin 09 public blockchain explorer.">
+<link rel="icon" type="image/png" href="https://btc09.org/assets/bitcoin09-ai-logo-512.png">
 <title>{{.Title}}</title>
 <style>
-body { font-family: monospace; background: #f4f1ea; color: #222; margin: 2em auto; max-width: 900px; padding: 0 1em; }
-h1 { font-size: 1.3em; }
-table { border-collapse: collapse; width: 100%; }
-th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ccc; font-size: 0.85em; }
-th { border-bottom: 2px solid #222; }
-.stats span { margin-right: 2em; }
-a { color: #1a0dab; text-decoration: none; }
-input { font-family: monospace; width: 24em; }
-.id { color: #777; }
+:root { color-scheme: light; --ink: #172019; --muted: #5d685f; --paper: #f3efe3; --surface: #fffdf7; --line: #c8c1ad; --green: #1d6a3c; --gold: #b87812; }
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--ink); background: var(--paper); font-family: "Segoe UI", Arial, sans-serif; font-size: 15px; line-height: 1.55; }
+a { color: var(--green); text-underline-offset: 3px; }
+a:hover { color: #0d4d29; }
+a:focus-visible, input:focus-visible, button:focus-visible { outline: 3px solid rgba(184,120,18,.4); outline-offset: 3px; }
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 5; padding: 8px 12px; color: #fff; background: var(--ink); transform: translateY(-160%); }
+.skip-link:focus { transform: none; }
+.site-header { border-bottom: 1px solid var(--line); background: var(--surface); }
+.bar, main, .footer-inner { width: min(1040px, calc(100% - 32px)); margin-inline: auto; }
+.bar { min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.brand { color: var(--ink); font-weight: 800; font-size: 16px; text-decoration: none; letter-spacing: -.02em; }
+.brand span { color: var(--gold); }
+.site-nav { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; }
+main { padding: 40px 0 58px; }
+h1, h2 { line-height: 1.15; letter-spacing: -.025em; }
+h1 { margin: 0; font-size: clamp(30px, 5vw, 42px); }
+h2 { margin: 0 0 12px; font-size: 20px; }
+.page-head { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+.eyebrow { margin: 0 0 7px; color: var(--gold); font: 700 11px/1.3 Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+.quiet { margin: 8px 0 0; color: var(--muted); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.search { display: grid; grid-template-columns: minmax(190px, 300px) auto; }
+input, button { min-height: 42px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 0; font: inherit; }
+input { min-width: 0; background: #fff; color: var(--ink); }
+button { border-left: 0; background: var(--ink); color: #fff; cursor: pointer; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin: 0 0 20px; border-top: 3px solid var(--gold); background: var(--surface); }
+.stat { min-width: 0; padding: 14px; border: 1px solid var(--line); border-top: 0; }
+.stat b { display: block; font-size: 16px; overflow-wrap: anywhere; }
+.stat span { display: block; margin-top: 4px; color: var(--muted); font: 10px Consolas, monospace; letter-spacing: .05em; text-transform: uppercase; }
+.note { margin: 0 0 20px; padding: 14px 16px; border-left: 3px solid var(--green); background: var(--surface); color: var(--muted); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 720px; }
+th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); font-size: 13px; vertical-align: top; }
+th { color: var(--muted); background: #ede8da; font: 700 10px Consolas, monospace; letter-spacing: .05em; text-transform: uppercase; }
+tr:last-child td { border-bottom: 0; }
+.mono, .id { font-family: Consolas, monospace; }
+.id { color: var(--muted); }
+.detail { display: grid; grid-template-columns: 190px minmax(0, 1fr); border: 1px solid var(--line); background: var(--surface); }
+.detail dt, .detail dd { margin: 0; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+.detail dt { color: var(--muted); background: #ede8da; font: 700 10px Consolas, monospace; letter-spacing: .05em; text-transform: uppercase; }
+.detail dd { overflow-wrap: anywhere; }
+.detail dt:last-of-type, .detail dd:last-of-type { border-bottom: 0; }
+.heights { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; list-style: none; }
+.heights a { display: block; padding: 6px 9px; border: 1px solid var(--line); background: var(--surface); }
+.mined-details { margin-top: 18px; }
+.mined-details summary { min-height: 44px; display: flex; align-items: center; color: var(--green); cursor: pointer; font-weight: 700; }
+.site-footer { border-top: 1px solid var(--line); }
+.footer-inner { padding: 20px 0 30px; color: var(--muted); font-size: 13px; }
+.footer-inner p { margin: 0; }
+@media (max-width: 680px) {
+  .bar { padding: 12px 0; align-items: flex-start; flex-direction: column; gap: 8px; }
+  .page-head { align-items: stretch; flex-direction: column; }
+  .search { grid-template-columns: 1fr auto; }
+  .detail { grid-template-columns: 120px minmax(0, 1fr); }
+  main { padding-top: 30px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
 </style>
 </head>
 <body>
-<h1>Bitcoin 09 (09C) block explorer</h1>
-<p class="stats">
-<span>height <b>{{.Height}}</b></span>
-<span>peers <b>{{.Peers}}</b></span>
-<span>difficulty <b>{{.Difficulty}}</b></span>
-<span>target <b>{{.TargetBlockTime}}s</b></span>
-<span>avg this window <b>{{.EpochAverage}}</b></span>
-<span>estimated network <b>{{.NetworkHashrate}}</b></span>
-<span>retarget <b>{{.BlocksToRetarget}}</b> blocks</span>
-<span>supply <b>{{.Supply}} 09C</b></span>
-<span>reward <b>{{.BlockReward}} 09C</b></span>
-<span>halving <b>{{.BlocksToHalving}}</b> blocks</span>
-</p>
-<p>difficulty retargets every {{.RetargetInterval}} blocks. next retarget height {{.NextRetargetHeight}}, estimated next difficulty {{.EstimatedNextDifficulty}} if this window keeps the same average.</p>
-{{if .HashrateObservation}}<p>hashrate estimate uses {{.HashrateObservation}}. top payout address <b>{{.TopPayoutConcentration}}</b>.</p>{{end}}
-<form action="/search"><input name="q" placeholder="block height or address"><button>go</button></form>
-<table>
-<tr><th>height</th><th>time (UTC)</th><th>miner</th><th>txs</th><th>reward</th><th>block id</th></tr>
-{{range .Blocks}}
-<tr>
-<td><a href="/block/{{.Height}}">{{.Height}}</a></td>
-<td>{{.Time}}</td>
-<td><a href="/address/{{.Miner}}">{{.Miner}}</a></td>
-<td>{{.Txs}}</td>
-<td>{{.Reward}}</td>
-<td class="id">{{printf "%.16s" .ID}}...</td>
-</tr>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><div class="bar">
+<a class="brand" href="https://btc09.org/">Bitcoin <span>09</span></a>
+<nav class="site-nav" aria-label="Main navigation"><a href="https://btc09.org/">Home</a><a href="https://btc09.org/markets.html">Trade</a><a href="https://btc09.org/inbox/">Nine Inbox</a><a href="https://btc09.org/privacy.html">Privacy</a><a href="https://btc09.org/terms.html">Terms</a></nav>
+</div></header>
+<main id="content">
+{{with .Home}}
+<div class="page-head"><div><p class="eyebrow">Public chain data</p><h1>09C block explorer</h1><p class="quiet">Live data from the official node. Refreshes every 30 seconds.</p></div><form class="search" action="/search"><label class="visually-hidden" for="chain-search">Block height or address</label><input id="chain-search" name="q" type="search" placeholder="Block height or address"><button type="submit">Search</button></form></div>
+<div class="stats">
+<div class="stat"><b>{{.Height}}</b><span>height</span></div>
+<div class="stat"><b>{{.Peers}}</b><span>peers</span></div>
+<div class="stat"><b>{{.Difficulty}}</b><span>difficulty</span></div>
+<div class="stat"><b>{{.TargetBlockTime}}s</b><span>target</span></div>
+<div class="stat"><b>{{.EpochAverage}}</b><span>avg this window</span></div>
+<div class="stat"><b>{{.NetworkHashrate}}</b><span>estimated network</span></div>
+<div class="stat"><b>{{.BlocksToRetarget}}</b><span>blocks to retarget</span></div>
+<div class="stat"><b>{{.Supply}} 09C</b><span>supply</span></div>
+<div class="stat"><b>{{.BlockReward}} 09C</b><span>block reward</span></div>
+<div class="stat"><b>{{.BlocksToHalving}}</b><span>blocks to halving</span></div>
+</div>
+<p class="note">Difficulty retargets every {{.RetargetInterval}} blocks. Next retarget: height {{.NextRetargetHeight}}. Estimated next difficulty: {{.EstimatedNextDifficulty}} if this window keeps the same average.{{if .HashrateObservation}} Hashrate estimate uses {{.HashrateObservation}}; top payout address {{.TopPayoutConcentration}}.{{end}}</p>
+<h2>Latest blocks</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Height</th><th>Time (UTC)</th><th>Miner</th><th>Txs</th><th>Reward</th><th>Block ID</th></tr></thead><tbody>
+{{range .Blocks}}<tr><td><a href="/block/{{.Height}}">{{.Height}}</a></td><td>{{.Time}}</td><td><a class="mono" href="/address/{{.Miner}}">{{.Miner}}</a></td><td>{{.Txs}}</td><td>{{.Reward}} 09C</td><td class="id">{{printf "%.16s" .ID}}...</td></tr>{{end}}
+</tbody></table></div>
 {{end}}
-</table>
-<p>the coin that you can mine like it's 2009. page refreshes every 30s.</p>
+{{with .Block}}
+<div class="page-head"><div><p class="eyebrow">Block</p><h1>Height {{.Height}}</h1><p class="quiet"><a href="/">Back to latest blocks</a></p></div><form class="search" action="/search"><label class="visually-hidden" for="block-search">Block height or address</label><input id="block-search" name="q" type="search" placeholder="Block height or address"><button type="submit">Search</button></form></div>
+<dl class="detail"><dt>Block ID</dt><dd class="mono">{{.ID}}</dd><dt>Time</dt><dd>{{.Time}} UTC</dd><dt>Miner</dt><dd><a class="mono" href="/address/{{.Miner}}">{{.Miner}}</a></dd><dt>Reward</dt><dd>{{.Reward}} 09C</dd><dt>Transactions</dt><dd>{{.Txs}}</dd><dt>Bits</dt><dd class="mono">{{.Bits}}</dd><dt>Nonce</dt><dd>{{.Nonce}}</dd><dt>Tag</dt><dd>{{if .Tag}}{{.Tag}}{{else}}None{{end}}</dd></dl>
+{{end}}
+{{with .Address}}
+<div class="page-head"><div><p class="eyebrow">Address</p><h1>Address details</h1><p class="quiet"><a href="/">Back to latest blocks</a></p></div><form class="search" action="/search"><label class="visually-hidden" for="address-search">Block height or address</label><input id="address-search" name="q" type="search" placeholder="Block height or address"><button type="submit">Search</button></form></div>
+<dl class="detail"><dt>Address</dt><dd class="mono">{{.Address}}</dd><dt>Spendable balance</dt><dd>{{.Balance}} 09C</dd><dt>Blocks mined</dt><dd>{{len .Mined}}</dd></dl>
+{{if .Mined}}<details class="mined-details"><summary>Show {{len .Mined}} mined block heights</summary><ul class="heights">{{range .Mined}}<li><a href="/block/{{.}}">{{.}}</a></li>{{end}}</ul></details>{{end}}
+{{end}}
+</main>
+<footer class="site-footer"><div class="footer-inner"><p>Bitcoin 09 public chain data · <a href="https://btc09.org/privacy.html">Privacy</a> / <a href="https://btc09.org/terms.html">Terms</a> / <a href="https://github.com/krutftw/bitcoin09">Source</a></p></div></footer>
 </body>
 </html>`

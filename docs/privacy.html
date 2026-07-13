@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="How Bitcoin 09 public services handle information.">
+<link rel="canonical" href="https://btc09.org/privacy.html">
+<link rel="icon" type="image/png" href="assets/bitcoin09-ai-logo-512.png">
+<link rel="stylesheet" href="legal.css">
+<title>Privacy | Bitcoin 09</title>
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-head">
+<div class="bar">
+<a class="brand" href="index.html">Bitcoin <span>09</span></a>
+<nav class="site-nav" aria-label="Main navigation">
+<a href="index.html">Home</a><a href="markets.html">Trade</a><a href="https://explorer.btc09.org">Explorer</a><a href="terms.html">Terms</a>
+</nav>
+</div>
+</header>
+<main id="content">
+<p class="eyebrow">Privacy</p>
+<h1>What the public services can see.</h1>
+<p class="intro">Bitcoin 09 does not need an account for the website, wallet, explorer, or Nine Inbox. Each service has a different privacy boundary, explained below.</p>
+<p class="updated">Last updated: 13 July 2026</p>
+
+<div class="summary">
+<h2>In short</h2>
+<p><strong>No advertising or analytics.</strong> The website does not use tracking pixels or advertising cookies. Blockchain activity is public. Nine Inbox encrypts item contents in your browser, while its relay still sees ordinary connection metadata. Discord trades use Discord and the project bot.</p>
+</div>
+
+<div class="sections">
+<section>
+<h2>Website and explorer</h2>
+<p>The public website serves static pages. The explorer reads public blockchain data. Web servers may temporarily record IP address, requested route, time, response status, and browser details for reliability and abuse prevention.</p>
+<p><strong>Public blockchain data</strong>, including addresses, balances, mined blocks, and transactions, is designed to be visible and cannot be made private by this policy.</p>
+</section>
+
+<section>
+<h2>Nine Inbox</h2>
+<p>Nine Inbox encrypts notes, links, filenames, content types, and files with AES-256-GCM on your device before upload. The relay stores ciphertext plus the mailbox and item identifiers, sizes, creation and expiry times, and retention state. It can also see your IP address and request timing.</p>
+<p>Items normally expire after seven days. Pinned text and links can remain for 30 days. Deleted or expired items are removed from the service; the v1 service does not keep content backups. The pairing link contains the keys and write credentials, so anyone who receives it may read or add items.</p>
+</section>
+
+<section>
+<h2>Discord OTC bot</h2>
+<p>The <strong>Discord OTC bot</strong> uses Discord account identifiers, display names, order details, 09C addresses, and deposit state to operate trades. Its public feed leaves out Discord identifiers, usernames, wallet addresses, deposit addresses, and payment account details.</p>
+<p>The bot escrows only 09C. Payment between traders occurs outside the bot. Discord applies its own privacy practices to messages and account data.</p>
+</section>
+
+<section>
+<h2>Infrastructure and disclosure</h2>
+<p><strong>Cloudflare</strong> helps deliver and protect the web services. <strong>DigitalOcean</strong> hosts project services. They may process network and request metadata under their own terms. Data may be processed outside Australia because these services operate internationally.</p>
+<p>Information may be disclosed when required by law or when reasonably needed to protect users, the services, or the network from abuse. Bitcoin 09 does not sell personal information.</p>
+</section>
+
+<section>
+<h2>Your choices</h2>
+<ul>
+<li>You can use the wallet and chain without the website, Discord bot, or Nine Inbox.</li>
+<li>You can delete a Nine Inbox from a paired device or let its items expire.</li>
+<li>Do not put private payment details, keys, seed phrases, or wallet files in public market records.</li>
+</ul>
+<p>For a privacy or security concern, open a <a href="https://github.com/krutftw/bitcoin09/security/advisories/new">GitHub private security advisory</a>. Include only the information needed to investigate.</p>
+</section>
+
+<section>
+<h2>Other sites</h2>
+<p>Links to GitHub, Discord, community pools, and other services lead to independent sites with their own privacy practices. This policy covers the public services operated for Bitcoin 09, not those third-party services.</p>
+</section>
+</div>
+</main>
+<footer class="site-foot-wrap"><div class="site-foot"><p>Bitcoin 09 · <a href="terms.html">Terms</a> · <a href="https://github.com/krutftw/bitcoin09">Source</a></p></div></footer>
+</body>
+</html>

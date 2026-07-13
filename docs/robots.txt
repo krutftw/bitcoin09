@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://btc09.org/sitemap.xml

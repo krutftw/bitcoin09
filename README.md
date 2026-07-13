@@ -14,6 +14,8 @@ site:     https://btc09.org
 explorer: https://explorer.btc09.org
 discord:  https://discord.gg/fUuGzwRTzP
 release:  https://github.com/krutftw/bitcoin09/releases/latest
+privacy:  https://btc09.org/privacy.html
+terms:    https://btc09.org/terms.html
 ```
 
 | | Bitcoin | Bitcoin 09 |

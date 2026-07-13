@@ -142,6 +142,44 @@ func TestStatusAndHomeExposeMiningStats(t *testing.T) {
 	}
 }
 
+func TestLegacyExplorerPagesUseBrandedAccessibleHTML(t *testing.T) {
+	server, chain := newRegTestServer(t)
+	payout := [20]byte{9}
+	minePayoutRun(t, chain, payout, 1, time.Now().Unix()-10)
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	for _, path := range []string{"/", "/block/1", "/address/" + core.EncodeAddress(payout)} {
+		response, err := httpServer.Client().Get(httpServer.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		response.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read %s: %v", path, readErr)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s status = %d", path, response.StatusCode)
+		}
+		if got := response.Header.Get("Content-Type"); got != "text/html; charset=utf-8" {
+			t.Fatalf("GET %s Content-Type = %q", path, got)
+		}
+		for _, token := range []string{
+			"<!DOCTYPE html>",
+			`class="site-nav"`,
+			`class="skip-link"`,
+			"https://btc09.org/privacy.html",
+			"https://btc09.org/terms.html",
+			"prefers-reduced-motion: reduce",
+		} {
+			if !strings.Contains(string(body), token) {
+				t.Errorf("GET %s missing %q", path, token)
+			}
+		}
+	}
+}
+
 func assertV1Headers(t *testing.T, header http.Header) {
 	t.Helper()
 	if values := header.Values("Content-Type"); len(values) != 1 || values[0] != "application/json; charset=utf-8" {

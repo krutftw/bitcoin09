@@ -18,10 +18,12 @@ func TestAssetsIncludeHonestAccessibleInboxInterface(t *testing.T) {
 			`id="pairing-qr"`, `id="pairing-words"`, `id="storage-meter"`, `id="recovery-export"`,
 			`id="recovery-file"`, `id="restore-recovery"`, `id="delete-inbox"`,
 			`aria-live="polite"`, `aria-label="Search your inbox"`, `type="module"`,
+			`href="/"`, `href="/privacy.html"`, `href="/terms.html"`, `class="service-links"`,
 		},
 		"app.css": {
 			"--signal: #ff5a1f", ".inbox-stream", ".composer-sheet", ".pairing-grid",
 			"min-height: 44px", "@media (max-width: 640px)", "@media (prefers-reduced-motion: reduce)",
+			`font-family: "Segoe UI"`, ".service-links",
 		},
 		"app.mjs": {
 			`from "./crypto.mjs"`, `from "./storage.mjs"`, `from "./qr.mjs"`, "/api/nine/v1/inboxes",
@@ -39,6 +41,20 @@ func TestAssetsIncludeHonestAccessibleInboxInterface(t *testing.T) {
 			if !strings.Contains(content, value) {
 				t.Errorf("%s is missing %q", name, value)
 			}
+		}
+	}
+
+	css, err := WebFS.ReadFile("web/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{
+		`font-size: clamp(34px, 5vw, 62px)`,
+		`.setup-copy::before`,
+		`font: 230px/.8`,
+	} {
+		if strings.Contains(string(css), forbidden) {
+			t.Errorf("app.css still contains oversized/decorative treatment %q", forbidden)
 		}
 	}
 
