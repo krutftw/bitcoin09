@@ -40,7 +40,7 @@
 <section>
 <h2>Desktop wallet</h2>
 <p>The wallet runs on a random local <code>127.0.0.1</code> port. New wallet files are encrypted on the device. Passwords, recovery words, private keys, and unsigned payments are not sent to Bitcoin 09 public services.</p>
-<p>In Fast mode, the wallet gateway receives public addresses to return public chain data and receives a signed transaction when you choose to broadcast it. The official remote solo miner receives the public payout address and an optional worker name. Full node mode can verify the chain without the wallet gateway.</p>
+<p>In Fast mode, the wallet gateway receives public addresses to return public chain data and receives a signed transaction when you choose to broadcast it. The official PPLNS miner sends a public payout address, an optional worker name, and proof-of-work nonces. The payout ledger stores the public address, share and target proofs, chain tip, sequence, and acceptance time. It does not store worker names or IP addresses. Ordinary web infrastructure may still process temporary connection metadata as described above. Full node mode can verify the chain without the wallet gateway.</p>
 </section>
 
 <section>
@@ -73,7 +73,7 @@
 
 <section>
 <h2>Other sites</h2>
-<p>Links to GitHub, Discord, community pools, and other services lead to independent sites with their own privacy practices. This policy covers the public services operated for Bitcoin 09, not those third-party services.</p>
+<p>Links to GitHub, Discord, community pools, and other services lead to independent sites with their own privacy practices. This policy covers the public services operated for Bitcoin 09, including the official PPLNS endpoint, not those third-party services.</p>
 </section>
 </div>
 </main>

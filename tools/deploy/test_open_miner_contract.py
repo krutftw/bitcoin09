@@ -13,15 +13,22 @@ class OpenMinerDeploymentContract(unittest.TestCase):
         text = HTTP.read_text(encoding="ascii")
         self.assertIn("limit_req_zone $binary_remote_addr zone=btc09_miner_work", text)
         self.assertIn("limit_req_zone $binary_remote_addr zone=btc09_miner_submit", text)
+        self.assertIn("limit_req_zone $binary_remote_addr zone=btc09_pplns_work", text)
+        self.assertIn("limit_req_zone $binary_remote_addr zone=btc09_pplns_submit", text)
+        self.assertIn("limit_req_zone $binary_remote_addr zone=btc09_pplns_status", text)
         self.assertIn("limit_conn_zone $binary_remote_addr zone=btc09_miner_connections", text)
 
     def test_only_exact_post_routes_reach_loopback_coordinator(self) -> None:
         text = SERVER.read_text(encoding="ascii")
-        self.assertEqual(text.count("proxy_pass http://127.0.0.1:9010;"), 2)
+        self.assertEqual(text.count("proxy_pass http://127.0.0.1:9010;"), 5)
         self.assertIn("location = /api/v1/work", text)
         self.assertIn("location = /api/v1/submit", text)
-        self.assertEqual(text.count("limit_except POST"), 2)
-        self.assertEqual(text.count("limit_req_status 429;"), 2)
+        self.assertIn("location = /api/v2/pool/work", text)
+        self.assertIn("location = /api/v2/pool/submit", text)
+        self.assertIn("location = /api/v2/pool/status", text)
+        self.assertEqual(text.count("limit_except POST"), 4)
+        self.assertEqual(text.count("limit_except GET"), 1)
+        self.assertEqual(text.count("limit_req_status 429;"), 5)
         self.assertNotIn("location /api/v1/", text)
         self.assertNotIn("server_name", text)
         self.assertNotIn("0.0.0.0:9010", text)
@@ -48,6 +55,7 @@ class OpenMinerDeploymentContract(unittest.TestCase):
             "systemctl reload nginx",
             "curl --fail --silent --show-error",
             "127.0.0.1:9010/api/v1/work",
+            "127.0.0.1:9010/api/v2/pool/status",
             "for _attempt in {1..10}",
             "restore_nginx",
             "trap",

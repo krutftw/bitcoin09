@@ -144,7 +144,7 @@ func TestEmbeddedInterfaceSupportsEncryptedRecoveryWalletLifecycle(t *testing.T)
 	}
 }
 
-func TestEmbeddedInterfaceIncludesHonestOfficialSoloMiner(t *testing.T) {
+func TestEmbeddedInterfaceIncludesVerifiedPPLNSMiner(t *testing.T) {
 	tests := []struct {
 		name      string
 		required  []string
@@ -153,19 +153,19 @@ func TestEmbeddedInterfaceIncludesHonestOfficialSoloMiner(t *testing.T) {
 		{
 			name: "assets/index.html",
 			required: []string{
-				`data-panel="miner-panel"`, `id="miner-panel"`, `Open solo`,
+				`data-panel="miner-panel"`, `id="miner-panel"`, `PPLNS pool`,
 				`id="miner-workers"`, `id="miner-worker"`, `id="start-miner"`, `id="stop-miner"`,
 				`id="miner-current-hashrate"`, `id="miner-average-hashrate"`,
-				`id="miner-total-hashes"`, `id="miner-blocks"`, `id="miner-state"`,
-				`No partial-share payouts`, `Only your public payout address`,
+				`id="miner-shares"`, `id="miner-blocks"`, `id="miner-state"`,
+				`Direct payouts`, `0% pool fee`, `Only your public payout address`,
 			},
-			forbidden: []string{`guaranteed profit`, `GPU mining`, `pool balance`},
+			forbidden: []string{`guaranteed profit`, `GPU mining`, `pool balance`, `Open solo`},
 		},
 		{
 			name: "assets/app.js",
 			required: []string{
 				`/api/v1/miner/status`, `/api/v1/miner/start`, `/api/v1/miner/stop`,
-				`logical_cpus`, `current_hashrate`, `average_hashrate`, `blocks_accepted`,
+				`logical_cpus`, `current_hashrate`, `average_hashrate`, `shares_accepted`, `blocks_accepted`, `pool_fee_bps`,
 				`setTimeout(refreshMinerStatus, 1000)`, `minerPollTimer`,
 			},
 		},
@@ -220,7 +220,7 @@ func TestEmbeddedMinerSupportDiagnosticsAreUsefulAndPrivate(t *testing.T) {
 	javascript := strings.ReplaceAll(string(javascriptBody), "\r\n", "\n")
 	for _, required := range []string{
 		`function minerSupportReport(status)`, `BTC09 miner help report`, `Version:`, `Wallet mode:`,
-		`Miner state:`, `CPU threads:`, `Jobs:`, `Reconnects:`, `Last error:`,
+		`Miner state:`, `Pool mode:`, `Pool fee:`, `Shares:`, `Blocks:`, `CPU threads:`, `Jobs:`, `Reconnects:`, `Last error:`,
 		`status.jobs > 0 ? "Last check passed" : "Not tested"`,
 		`navigator.clipboard.writeText(minerSupportReport(state.miner))`,
 	} {

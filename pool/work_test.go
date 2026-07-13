@@ -107,7 +107,11 @@ func TestMineWorkFindsRegtestNonce(t *testing.T) {
 		t.Fatal(err)
 	}
 	header.Nonce = result.Nonce
-	if core.HashToBig(core.PowHash(header.Bytes(), &params)).Cmp(target) > 0 {
+	wantHash := core.PowHash(header.Bytes(), &params)
+	if result.Hash != wantHash {
+		t.Fatalf("result hash = %x, want %x", result.Hash, wantHash)
+	}
+	if core.HashToBig(wantHash).Cmp(target) > 0 {
 		t.Fatalf("nonce %d does not satisfy target", result.Nonce)
 	}
 }

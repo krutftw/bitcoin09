@@ -29,11 +29,12 @@ type Work struct {
 	ArgonTime     uint32    `json:"argon_time"`
 }
 
-// MineResult records a locally discovered network-winning nonce.
+// MineResult records a locally discovered nonce and its proof-of-work hash.
 type MineResult struct {
 	Found  bool
 	Nonce  uint64
 	Hashes uint64
+	Hash   core.Hash32
 }
 
 // MineProgress is a low-frequency snapshot of one local nonce search. Hashrate
@@ -158,7 +159,11 @@ func MineWorkWithProgress(
 		callback(progressSnapshot(result.Hashes, time.Since(startedAt), true, result.Found))
 	}
 
-	found := make(chan uint64, 1)
+	type foundWork struct {
+		nonce uint64
+		hash  core.Hash32
+	}
+	found := make(chan foundWork, 1)
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for worker := 0; worker < workers; worker++ {
@@ -174,9 +179,10 @@ func MineWorkWithProgress(
 				}
 				candidate.Nonce = nonce
 				hashes.Add(1)
-				if core.HashToBig(core.PowHash(candidate.Bytes(), params)).Cmp(target) <= 0 {
+				hash := core.PowHash(candidate.Bytes(), params)
+				if core.HashToBig(hash).Cmp(target) <= 0 {
 					select {
-					case found <- nonce:
+					case found <- foundWork{nonce: nonce, hash: hash}:
 						cancel()
 					default:
 					}
@@ -196,8 +202,8 @@ func MineWorkWithProgress(
 	}()
 	<-done
 	select {
-	case nonce := <-found:
-		result := MineResult{Found: true, Nonce: nonce, Hashes: hashes.Load()}
+	case work := <-found:
+		result := MineResult{Found: true, Nonce: work.nonce, Hashes: hashes.Load(), Hash: work.hash}
 		stopProgress(result)
 		return result, nil
 	default:

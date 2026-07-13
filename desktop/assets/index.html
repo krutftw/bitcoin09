@@ -192,21 +192,21 @@
 
             <section id="miner-panel" class="ledger-panel miner-panel" hidden>
               <div class="panel-heading">
-                <div><p class="kicker">OFFICIAL MINER</p><h2>Open solo</h2></div>
+                <div><p class="kicker">OFFICIAL MINER</p><h2>PPLNS pool</h2></div>
                 <span id="miner-state" class="miner-state-badge">Stopped</span>
               </div>
-              <p class="panel-intro">Mine without downloading the chain. A block you find pays this wallet directly. No partial-share payouts.</p>
+              <p class="panel-intro">Direct payouts from each block, split by accepted shares. 0% pool fee.</p>
 
               <div class="miner-readiness" aria-label="Mining readiness">
                 <div><span>WALLET</span><strong id="miner-wallet-check">Checking</strong></div>
-                <div><span>ENDPOINT</span><strong id="miner-endpoint-check">Not tested</strong></div>
+                <div><span>POOL</span><strong id="miner-endpoint-check">Not tested</strong></div>
                 <div><span>CPU</span><strong id="miner-cpu-check">1 of 1</strong></div>
               </div>
 
               <div class="miner-instruments" aria-label="Mining session statistics">
                 <div><span>NOW</span><strong id="miner-current-hashrate">0.00 H/s</strong></div>
                 <div><span>SESSION AVG</span><strong id="miner-average-hashrate">0.00 H/s</strong></div>
-                <div><span>HASHES</span><strong id="miner-total-hashes">0</strong></div>
+                <div><span>SHARES</span><strong id="miner-shares">0</strong></div>
                 <div><span>BLOCKS</span><strong id="miner-blocks">0</strong></div>
               </div>
 
@@ -237,7 +237,7 @@
               </form>
 
               <div class="miner-help-row">
-                <p class="miner-privacy">Only your public payout address and optional worker name leave this computer. Wallet keys stay here. Open solo has high payout variance; it is not a pooled-reward service.</p>
+                <p class="miner-privacy">Only your public payout address and optional worker name leave this computer. Wallet keys stay here. The app verifies the share window and direct-payout coinbase before it starts hashing.</p>
                 <a href="https://btc09.org/#mining-guide" target="_blank" rel="noopener noreferrer">Mining guide ↗</a>
               </div>
             </section>

@@ -62,12 +62,70 @@ func MerkleRoot(txs []*Tx) Hash32 {
 		}
 		next := make([]Hash32, 0, len(layer)/2)
 		for i := 0; i < len(layer); i += 2 {
-			cat := append(append([]byte{}, layer[i][:]...), layer[i+1][:]...)
-			next = append(next, SHA256d(cat))
+			next = append(next, merklePair(layer[i], layer[i+1]))
 		}
 		layer = next
 	}
 	return layer[0]
+}
+
+// MerkleBranch returns the canonical sibling hashes needed to prove the
+// transaction at index is included in MerkleRoot(txs).
+func MerkleBranch(txs []*Tx, index int) ([]Hash32, error) {
+	if len(txs) == 0 || index < 0 || index >= len(txs) {
+		return nil, errors.New("invalid merkle branch index")
+	}
+	layer := make([]Hash32, len(txs))
+	for position, transaction := range txs {
+		if transaction == nil {
+			return nil, errors.New("nil transaction in merkle tree")
+		}
+		layer[position] = transaction.ID()
+	}
+	branch := make([]Hash32, 0)
+	position := index
+	for len(layer) > 1 {
+		if len(layer)%2 == 1 {
+			layer = append(layer, layer[len(layer)-1])
+		}
+		branch = append(branch, layer[position^1])
+		next := make([]Hash32, 0, len(layer)/2)
+		for pair := 0; pair < len(layer); pair += 2 {
+			next = append(next, merklePair(layer[pair], layer[pair+1]))
+		}
+		position /= 2
+		layer = next
+	}
+	return branch, nil
+}
+
+// MerkleRootFromBranch reconstructs a merkle root from one transaction ID,
+// its original index, and the canonical sibling path.
+func MerkleRootFromBranch(leaf Hash32, index int, branch []Hash32) (Hash32, error) {
+	if index < 0 {
+		return Hash32{}, errors.New("invalid merkle branch index")
+	}
+	root := leaf
+	position := index
+	for _, sibling := range branch {
+		if position&1 == 0 {
+			root = merklePair(root, sibling)
+		} else {
+			root = merklePair(sibling, root)
+		}
+		position /= 2
+	}
+	if position != 0 {
+		return Hash32{}, errors.New("merkle branch is too short for index")
+	}
+	return root, nil
+}
+
+func merklePair(left, right Hash32) Hash32 {
+	encoded := make([]byte, 0, len(left)+len(right))
+	encoded = append(encoded, left[:]...)
+	encoded = append(encoded, right[:]...)
+	return SHA256d(encoded)
 }
 
 // Bytes encodes the full block.

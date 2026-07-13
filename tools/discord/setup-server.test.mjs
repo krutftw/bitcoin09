@@ -41,8 +41,27 @@ test("v0.1.27 announcement explains recovery wallets without hype", () => {
   }
 });
 
-test("server status post names v0.1.27 as the current release", () => {
-  assert.ok(source.includes('"Current release: v0.1.27"'));
+test("v0.1.28 announcement explains PPLNS without hype", () => {
+  const start = source.indexOf('marker: "Bitcoin 09 v0.1.28 is out."');
+  assert.ok(start >= 0, "missing v0.1.28 announcement");
+  const announcement = source.slice(start, start + 1800);
+  for (const required of [
+    "Bitcoin 09 v0.1.28 is out.",
+    "PPLNS",
+    "0% pool fee",
+    "directly from the block coinbase",
+    "100 confirmations",
+    "https://github.com/krutftw/bitcoin09/releases/tag/v0.1.28",
+  ]) {
+    assert.ok(announcement.includes(required), `missing ${required}`);
+  }
+  for (const forbidden of ["revolutionary", "game-changing", "seamless", "guaranteed", "profit", "—"]) {
+    assert.ok(!announcement.includes(forbidden), `announcement contains ${forbidden}`);
+  }
+});
+
+test("server status post names v0.1.28 as the current release", () => {
+  assert.ok(source.includes('"Current release: v0.1.28"'));
 });
 
 test("mining support update points people to the official client only", () => {
@@ -52,9 +71,9 @@ test("mining support update points people to the official client only", () => {
   for (const required of [
     "Mining support update",
     "Download BTC09 only from the official GitHub releases page.",
-    "open-source CPU solo miner",
-    "Pooled payouts are not live in the official software.",
-    "No pool or GPU miner is currently endorsed by the project.",
+    "open-source CPU miner",
+    "non-custodial PPLNS",
+    "No GPU miner is currently endorsed by the project.",
     "https://github.com/krutftw/bitcoin09/releases",
   ]) {
     assert.ok(announcement.includes(required), `missing ${required}`);

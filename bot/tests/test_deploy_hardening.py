@@ -125,7 +125,7 @@ class ServiceUnitTests(unittest.TestCase):
     def test_seed_unit_exposes_only_p2p_and_keeps_http_services_local(self) -> None:
         text = SEED_UNIT.read_text(encoding="utf-8")
         required = {
-            "ExecStart=/opt/btc09/btc09 node -listen 0.0.0.0:9009 -explorer 127.0.0.1:8009 -wallet-gateway 127.0.0.1:8010 -solo-api 127.0.0.1:9010 -datadir /opt/btc09/data -seeds 103.80.18.140:9009,108.190.240.138:9009",
+            "ExecStart=/opt/btc09/btc09 node -listen 0.0.0.0:9009 -explorer 127.0.0.1:8009 -wallet-gateway 127.0.0.1:8010 -solo-api 127.0.0.1:9010 -pplns-state /opt/btc09/data/pplns-window.json -pplns-window 256 -pplns-max-addresses 64 -datadir /opt/btc09/data -seeds 103.80.18.140:9009,108.190.240.138:9009",
             "Restart=always",
             "MemoryMax=1G",
             "UMask=0077",

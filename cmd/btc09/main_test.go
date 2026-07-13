@@ -759,9 +759,9 @@ func TestReleaseNewer(t *testing.T) {
 	}
 }
 
-func TestNodeVersionMatchesV027Release(t *testing.T) {
-	if nodeVersion != "v0.1.27" {
-		t.Fatalf("nodeVersion = %q, want v0.1.27", nodeVersion)
+func TestNodeVersionMatchesV028Release(t *testing.T) {
+	if nodeVersion != "v0.1.28" {
+		t.Fatalf("nodeVersion = %q, want v0.1.28", nodeVersion)
 	}
 }
 
@@ -803,7 +803,7 @@ func TestMinePoolArgsRequireEndpointAndPayoutAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	if options.poolURL != "http://127.0.0.1:9010" || options.worker != "rig-1" ||
-		options.workers != 3 || options.network != "regtest" || !options.allowInsecureHTTP {
+		options.workers != 3 || options.network != "regtest" || options.mode != "pplns" || !options.allowInsecureHTTP {
 		t.Fatalf("parsed options = %+v", options)
 	}
 }
@@ -815,5 +815,12 @@ func TestMinePoolArgsRejectTrailingAndInvalidWorkerCount(t *testing.T) {
 	}
 	if _, err := parseMinePoolArgs(append(append([]string{}, base...), "-workers", "0")); err == nil {
 		t.Fatal("zero workers accepted")
+	}
+	if _, err := parseMinePoolArgs(append(append([]string{}, base...), "-mode", "unknown")); err == nil {
+		t.Fatal("unknown mining mode accepted")
+	}
+	options, err := parseMinePoolArgs(append(append([]string{}, base...), "-mode", "solo"))
+	if err != nil || options.mode != "solo" {
+		t.Fatalf("explicit solo mode = %+v, err=%v", options, err)
 	}
 }

@@ -30,7 +30,7 @@ with `.\btc09-windows-amd64.exe` unless you renamed or installed the binary.
 Current release:
 
 ```text
-Bitcoin 09 (09C) reference node v0.1.27
+Bitcoin 09 (09C) reference node v0.1.28
 ```
 
 ## Open the Desktop Wallet
@@ -94,15 +94,14 @@ Open the BTC09 app, choose **Mine**, select how many CPU threads to use, and
 press **Start mining**. This uses the supported open-source miner and pays a
 block you find directly to your wallet.
 
-The official software currently supports local solo and remote solo mining.
-Pooled reward accounting is not live yet. Only download BTC09 from the GitHub
-releases page, and never give mining software your recovery words, private key,
-wallet file, remote access, or Discord token.
+The official software supports local solo, remote solo, and non-custodial
+PPLNS mining. Only download BTC09 from the GitHub releases page, and never give
+mining software your recovery words, private key, wallet file, remote access,
+or Discord token.
 
-## Open-source Remote Solo Mining
+## Official PPLNS Mining
 
-The official client can mine against any independent 09C remote-solo
-coordinator without downloading the chain locally:
+The official client uses PPLNS by default without downloading the chain:
 
 ```powershell
 btc09 mine-pool -pool https://btc09.org -address YOUR_09C_ADDRESS -worker rig-1
@@ -111,23 +110,28 @@ btc09 mine-pool -pool https://btc09.org -address YOUR_09C_ADDRESS -worker rig-1
 HTTPS is required by default. Plain HTTP is available only for an explicitly
 trusted local test with `-allow-insecure-http`.
 
-An operator can enable the coordinator API on a synced node and place it behind
-TLS and connection limits:
+The pool fee is 0%. Rewards are split by difficulty-weighted accepted shares
+and paid directly in a block coinbase. There is no pool wallet or withdrawal
+balance. The client verifies the share window and coinbase proof before mining.
+
+An operator can enable PPLNS on a synced node and place it behind TLS and
+connection limits:
 
 ```powershell
-btc09 node -solo-api 127.0.0.1:9010
+btc09 node -solo-api 127.0.0.1:9010 -pplns-state C:\secure\btc09\pplns-window.json
 ```
 
 The coordinator accepts a payout address, not wallet secrets. It creates the
-canonical block template and accepts only a nonce for a short-lived job. Remote
-solo mining does not smooth solo-mining variance. PPLNS is not live in the
-official software; it requires a separately reviewed non-custodial payout
-implementation.
+canonical block template and accepts only a nonce for a short-lived job.
+Coinbase payouts still need the normal maturity period before they can be
+spent.
 
 The desktop wallet has the same open-source miner under **Mine**. It uses your
 wallet receive address automatically, shows the current and session-average
-hashrate, and reconnects after temporary endpoint errors. See
-`docs/OPEN-MINING-PROTOCOL.md` to build or operate a compatible coordinator.
+hashrate, accepted shares, blocks, and reconnects after temporary endpoint
+errors. See `docs/PPLNS-MINING-PROTOCOL.md` to build or operate a compatible
+coordinator. Use `-mode solo` and `docs/OPEN-MINING-PROTOCOL.md` when you
+specifically want remote solo mining.
 
 ## Check Balance
 

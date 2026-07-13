@@ -38,27 +38,27 @@ class IndexContractTest(unittest.TestCase):
         )
         self.assertNotIn("ntmminer.com", self.html.lower())
 
-    def test_open_remote_solo_path_is_explicit_about_limits(self):
+    def test_non_custodial_pplns_path_is_explicit(self):
         for token in (
-            "Open-source remote solo mining",
+            "Non-custodial PPLNS mining",
             "mine-pool",
-            "-solo-api",
-            "does not smooth solo-mining variance",
-            "PPLNS is not live",
+            "/api/v2/pool/status",
+            "0% pool fee",
+            "difficulty-weighted shares",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)
 
     def test_v027_makes_the_supported_wallet_miner_the_easy_path(self):
         for token in (
-            "Current release: v0.1.27",
+            "Current release: v0.1.28",
             "Desktop wallet and miner",
             "Open the wallet, choose Mine",
             'id="mining-guide"',
             "Copy help report",
             "leaves out your wallet address",
-            "https://btc09.org/api/v1/work",
-            "No partial-share payouts",
+            "https://btc09.org/api/v2/pool/work",
+            "Accepted shares are written before acknowledgement",
             "Only download the official BTC09 client from GitHub",
         ):
             with self.subTest(token=token):
@@ -91,14 +91,14 @@ class IndexContractTest(unittest.TestCase):
         ):
             with self.subTest(asset=asset):
                 self.assertIn(
-                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.27/{asset}",
+                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.28/{asset}",
                     self.html,
                 )
 
     def test_long_operator_material_is_progressively_disclosed(self):
         self.assertGreaterEqual(self.html.count('class="technical-note"'), 4)
         for heading in (
-            "Remote solo protocol",
+            "PPLNS and remote solo protocols",
             "Full node and command line",
             "Unofficial miner warning",
         ):
@@ -125,7 +125,9 @@ class IndexContractTest(unittest.TestCase):
         for token in (
             "Only download the official BTC09 client from GitHub",
             "There is no official 09C GPU miner",
-            "Pooled payouts are not live in the official software",
+            "Non-custodial PPLNS mining",
+            "https://btc09.org/api/v2/pool/work",
+            "https://btc09.org/api/v2/pool/status",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)

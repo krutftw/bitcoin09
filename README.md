@@ -285,46 +285,39 @@ miner and explorer. Download it only from the project's
 [GitHub releases](https://github.com/krutftw/bitcoin09/releases) and verify the
 published checksums.
 
-The official miner is open-source CPU solo mining. There is no official 09C
-GPU miner, and pooled payouts are not live in the official software. Do not
-run miner binaries sent through DMs or file-sharing links. Permissionless
-third-party software may appear, but the project does not endorse it or ask
-you to provide a seed phrase, private key, wallet file, remote access, or
-Discord token.
+The official miner supports open-source CPU PPLNS and solo mining. There is no
+official 09C GPU miner. Do not run miner binaries sent through DMs or
+file-sharing links. Permissionless third-party software may appear, but the
+project does not endorse it or ask you to provide a seed phrase, private key,
+wallet file, remote access, or Discord token.
 
-## Open-source remote solo mining
+## Non-custodial PPLNS mining
 
-The official Go client includes a native remote-solo path. A miner can search
-work from any independently operated coordinator without running a local full
-node:
+The official Go client includes non-custodial PPLNS mining. A miner can earn
+difficulty-weighted shares without running a local full node:
 
 ```text
 btc09 mine-pool -pool https://btc09.org -address YOUR_09C_ADDRESS -worker rig-1
 ```
 
-A synced node can serve the coordinator on a local address for a TLS reverse
-proxy:
+A synced node can serve v1 solo and v2 PPLNS on one loopback address:
 
 ```text
-btc09 node -solo-api 127.0.0.1:9010
+btc09 node -solo-api 127.0.0.1:9010 -pplns-state /secure/path/pplns-window.json
 ```
 
-The server owns the canonical block template and the client can change only the
-nonce. A coordinator receives a payout address, never a private key, seed
-phrase, or wallet file. Jobs expire quickly and are bounded in memory. The API
-uses strict small JSON requests, safe errors, network timeouts, and per-source
-limits.
+The 0% fee pool pays miners directly in the block coinbase. It has no custody
+wallet and no withdrawal balance. The client verifies the frozen share window,
+difficulty weights, direct-payout coinbase, and Merkle commitment before it
+hashes. The coordinator receives a payout address, never a private key,
+recovery phrase, or wallet file.
 
 The desktop wallet includes this official CPU miner directly: open **Mine**,
 choose how many CPU threads to use, and press **Start mining**. The wallet fills
-its own public payout address and keeps every private key on the computer. The
-two-route API is documented in [Open Mining Protocol v1](docs/OPEN-MINING-PROTOCOL.md).
-
-This is remote solo mining, so it does not smooth solo-mining variance. PPLNS
-is not live in the official software. The planned non-custodial PPLNS phase
-will pay miners directly in the block coinbase and will not be enabled until
-its accounting, persistence, restart, and reorg behavior have a separate
-security review.
+its own public payout address and keeps every private key on the computer. See
+[PPLNS Mining Protocol v2](docs/PPLNS-MINING-PROTOCOL.md). Remote solo remains
+available with `-mode solo` and is documented in
+[Open Mining Protocol v1](docs/OPEN-MINING-PROTOCOL.md).
 
 ## Tests
 
@@ -338,11 +331,12 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.27 is current. New desktop wallets now use encrypted Wallet V2 files and
-24-word recovery, while existing V1 wallets stay unchanged and readable. The
-non-custodial Fast wallet still includes the official open-source CPU miner and
-signs every payment on the device. Full node mode remains available. There are
-no consensus changes.
+v0.1.28 is current. The official CPU miner now uses non-custodial PPLNS by
+default, with difficulty-weighted shares, a durable public window, and direct
+coinbase payouts at a 0% pool fee. Wallet V2 keeps 24-word recovery and an
+encrypted local file, while existing V1 wallets stay unchanged and readable.
+Full node and explicit remote-solo modes remain available. There are no
+consensus changes.
 
 Network:
 

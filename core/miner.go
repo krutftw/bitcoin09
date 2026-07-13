@@ -1,11 +1,19 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"runtime"
 	"sync/atomic"
 	"time"
 )
+
+var ErrCoinbaseShapeChanged = errors.New("coinbase shape changed while building template")
+
+// CoinbaseBuilder constructs an exact-sum coinbase for the requested height
+// and reward. It may be called more than once while a template is assembled.
+type CoinbaseBuilder func(height, reward int64) *Tx
 
 // MineResult carries a found block and mining statistics.
 type MineResult struct {
@@ -16,15 +24,42 @@ type MineResult struct {
 // BuildBlockTemplate assembles the next block for the given reward address:
 // coinbase (subsidy + fees) plus mempool transactions that fit.
 func BuildBlockTemplate(c *Chain, rewardPKH [20]byte, tag string) *Block {
+	block, err := BuildBlockTemplateWithCoinbase(c, func(height, reward int64) *Tx {
+		return NewCoinbase(height, reward, rewardPKH, tag)
+	})
+	if err != nil {
+		return nil
+	}
+	return block
+}
+
+// BuildBlockTemplateWithCoinbase assembles a block using a caller-supplied
+// coinbase layout. The preliminary and final coinbases must have the same wire
+// size so transaction selection reserves the exact space needed by all payout
+// outputs.
+func BuildBlockTemplateWithCoinbase(c *Chain, build CoinbaseBuilder) (*Block, error) {
+	if c == nil {
+		return nil, errors.New("nil chain")
+	}
+	if build == nil {
+		return nil, errors.New("nil coinbase builder")
+	}
 	tipID, tipH := c.Tip()
 	height := tipH + 1
-	txs := []*Tx{nil} // coinbase placeholder
-	size := 88 + 256
-	var fees int64
 	subsidy := SubsidyAt(height)
+	preliminary := build(height, subsidy)
+	if err := validateTemplateCoinbase(preliminary, height, subsidy); err != nil {
+		return nil, err
+	}
+	preliminaryBytes := preliminary.Bytes()
+	txs := []*Tx{preliminary}
+	encodedTxBytes := encodedTemplateTxSize(len(preliminaryBytes))
+	var fees int64
 	for _, tx := range c.MempoolTxs() {
 		b := tx.Bytes()
-		if size+len(b) > MaxBlockBytes {
+		nextEncodedTxBytes := encodedTxBytes + encodedTemplateTxSize(len(b))
+		nextSize := 88 + len(putUvarint(nil, uint64(len(txs)+1))) + nextEncodedTxBytes
+		if nextSize > MaxBlockBytes {
 			break
 		}
 		// fee = inputs - outputs; recheck cheaply via chain
@@ -41,16 +76,20 @@ func BuildBlockTemplate(c *Chain, rewardPKH [20]byte, tag string) *Block {
 		}
 		fees = nextFees
 		txs = append(txs, tx)
-		size += len(b)
+		encodedTxBytes = nextEncodedTxBytes
 	}
 	reward, ok := checkedAddMoney(subsidy, fees)
 	if !ok {
-		// Every accepted fee update above proves this cannot happen. Keep the
-		// template valid even if that invariant is broken by a future change.
-		reward = subsidy
-		txs = txs[:1]
+		return nil, errors.New("template reward is out of range")
 	}
-	txs[0] = NewCoinbase(height, reward, rewardPKH, tag)
+	coinbase := build(height, reward)
+	if err := validateTemplateCoinbase(coinbase, height, reward); err != nil {
+		return nil, err
+	}
+	if len(coinbase.Bytes()) != len(preliminaryBytes) {
+		return nil, ErrCoinbaseShapeChanged
+	}
+	txs[0] = coinbase
 	hdr := Header{
 		Version:   1,
 		PrevBlock: tipID,
@@ -59,7 +98,44 @@ func BuildBlockTemplate(c *Chain, rewardPKH [20]byte, tag string) *Block {
 	}
 	blk := &Block{Header: hdr, Txs: txs}
 	blk.Header.MerkleRoot = MerkleRoot(txs)
-	return blk
+	if len(blk.Bytes()) > MaxBlockBytes {
+		return nil, errors.New("template exceeds maximum block size")
+	}
+	return blk, nil
+}
+
+func encodedTemplateTxSize(size int) int {
+	return len(putUvarint(nil, uint64(size))) + size
+}
+
+func validateTemplateCoinbase(coinbase *Tx, height, reward int64) error {
+	if coinbase == nil || !coinbase.IsCoinbase() {
+		return errors.New("coinbase builder returned a non-coinbase transaction")
+	}
+	if reward <= 0 || !MoneyRange(reward) {
+		return errors.New("coinbase reward is out of range")
+	}
+	if len(coinbase.Ins) != 1 || !bytes.Equal(coinbase.Ins[0].PubKey, putUvarint(nil, uint64(height))) || len(coinbase.Ins[0].Sig) != 0 {
+		return errors.New("coinbase does not commit to the requested height")
+	}
+	if len(coinbase.Outs) == 0 || len(coinbase.LockTag) > 256 {
+		return errors.New("coinbase output or tag shape is invalid")
+	}
+	var total int64
+	for _, output := range coinbase.Outs {
+		if output.Value <= 0 || !MoneyRange(output.Value) {
+			return errors.New("coinbase output is out of range")
+		}
+		var ok bool
+		total, ok = checkedAddMoney(total, output.Value)
+		if !ok {
+			return errors.New("coinbase output total is out of range")
+		}
+	}
+	if total != reward {
+		return errors.New("coinbase outputs do not exactly equal the requested reward")
+	}
+	return nil
 }
 
 func (c *Chain) feeOf(tx *Tx, height int64) (int64, error) {
