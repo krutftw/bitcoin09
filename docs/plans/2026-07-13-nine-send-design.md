@@ -1,191 +1,205 @@
-# Nine Send: Product and System Design
+# Nine Inbox: Product and System Design
 
 **Date:** 2026-07-13  
 **Status:** Approved for implementation by project owner delegation  
-**First public location:** `https://btc09.org/send/`
+**First public location:** `https://btc09.org/inbox/`
 
 ## Decision
 
-Build **Nine Send** first: an installable web app that moves text, links, photos,
-and small documents between phones and computers through an encrypted,
-expiring link. The sender opens the page, chooses content, and gets a link or QR
-code. The recipient needs only a browser. No account, BTC09 balance, browser
-extension, or matching device ecosystem is required.
+Build **Nine Inbox** first: a private send-to-self inbox for text, links, photos,
+and small documents. A person pairs their phone and computer with a QR code,
+then deliberately sends an item from either device. It appears in the same
+encrypted history on the other device. No Google, Apple, Microsoft, social,
+BTC09, or Nine account is required.
 
-This is the narrowest product that is useful to people who do not care about
-cryptocurrency while creating infrastructure that the BTC09 desktop wallet can
-use later. BTC09 remains an optional module and provenance, not an obstacle in
-the transfer flow.
+The product promise is: **Send yourself anything. Find it on every device.**
+It replaces emailing or messaging yourself, temporary notes, and unreliable
+cross-platform clipboard tools. BTC09 remains an optional wallet module and a
+source of future payment notifications, not a requirement in the utility flow.
 
-The name is provisional at the company/product-family level but final for this
-release. "Nine Send" is clearer and more searchable than the generic "Nine,"
-while leaving room for later modules such as Nine Inbox and the BTC09 Wallet.
+The repository branch keeps its original `nine-send` name, but user-facing
+product and new package names are Nine Inbox and `nineinbox`.
 
-## Research basis and rejected approaches
+## Evidence and decision quality
 
-LocalSend proves that cross-platform, no-account transfer is a real mainstream
-need: its official site reports more than five million downloads and support
-for Windows, macOS, Linux, Android, and iOS. Its explicit boundary is the local
-Wi-Fi network. Apple's Universal Clipboard is smooth but requires nearby Apple
-devices on one Apple Account. Microsoft Phone Link similarly depends on a
-Microsoft account and varies by phone. PairDrop reaches across networks, but
-its strongest flows still assume both peers are present. Bitwarden Send proves
-that encrypted expiring links work for recipients without accounts, though the
-feature lives inside a password-manager workflow.
+Vendor pages and press roundups were not treated as demand evidence. The
+decision weighs verified store data, open issue trackers, direct platform
+documentation, and repeated independent community complaints.
 
-Three directions were considered:
+The file-transfer market is already served. LocalSend reports more than five
+million downloads and works on all major platforms on one LAN. Blip has more
+than one million verified Android installs, a 4.7 rating from more than two
+thousand reviews, direct local and remote transfer, original-quality files,
+and no size limit. PairDrop provides no-install browser transfer, public rooms,
+and persistent pairing. A 20 MiB expiring-link product would be a weaker copy,
+not a useful wedge.
 
-1. **Large utility super-app.** Rejected because files, clipboard, vault,
-   notifications, chat, wallet, mining, and trade would produce a confusing
-   first release with no single reason to install it.
-2. **Native Windows and Android device bridge.** This remains the medium-term
-   direction, but it delays public usefulness behind two installers, mobile
-   store distribution, background-service work, and native pairing.
-3. **Encrypted send PWA.** Selected because it works immediately on desktop
-   and mobile, can be installed from a browser, can receive shared content on
-   supported platforms, and establishes the encryption, relay, and inbox data
-   model needed by native clients later.
+The repeated gap is cross-device handoff with history. Users looking for a
+Pushbullet replacement consistently ask for cross-platform text, links, files,
+and clipboard handoff that works across networks without persistent battery
+drain. KDE Connect users value clipboard and file handoff but report discovery,
+firewall, reliability, and missing-history friction. Some fall back to Telegram
+Saved Messages, Signal, email, or shared documents. Independent comments also
+show that automatic clipboard collection creates a trust problem: people want
+to choose what leaves a device.
+
+CtrlV validates the exact workflow with a small current product, but its store
+presence is early and it requires an account. Nine Inbox differentiates through
+accountless QR pairing, open source, self-hostability, explicit sending rather
+than clipboard surveillance, and a BTC09 wallet module that can later publish
+payment activity into the same private inbox.
+
+## Approaches considered
+
+1. **General utility super-app.** Rejected. Files, clipboard, vault, chat,
+   notifications, wallet, mining, trade, and remote control in one release
+   create no clear reason to install it.
+2. **Large-file transfer app.** Rejected as the first wedge. Mature products
+   already offer direct, resumable, unlimited transfers and native clients.
+3. **Private paired inbox.** Selected. It solves a repeated daily behavior,
+   has a crisp boundary, works as a PWA before native clients exist, and creates
+   useful infrastructure for later device notifications and BTC09 activity.
 
 ## User experience
 
-The default screen has one dominant action area rather than a dashboard. A
-person can drop a file, choose a photo, paste a link, or type text. They choose
-an expiry of one hour or 24 hours, then press **Create private link**. Encryption
-happens on the device before upload. The result screen shows a QR code, a copy
-button, a native share button when available, the expiry, and the plain warning
-that anyone with the complete link can open the item.
+The first device opens Nine Inbox and selects **Create my inbox**. The app
+generates the encryption material locally, creates an opaque relay mailbox, and
+shows a pairing QR code plus a short recovery phrase export. A second device
+scans the QR code and confirms the two matching safety words shown on both
+screens. The QR fragment carries the mailbox credentials and encryption key;
+the fragment is not sent in the initial HTTP request.
 
-Opening a receive link decrypts locally. Text and links render in a restrained
-preview with Copy or Open. Files show the real filename, size, and Download.
-The interface never claims a scan, identity check, or guarantee it does not
-perform. It tells recipients to open files only when they trust the sender.
+The default screen is a chronological inbox and a single **Send something**
+composer. The composer accepts text, a pasted link, one photo, or one document
+up to 20 MiB. The sender can target all paired devices or keep the item only in
+history. Items show honest kinds and actions: Copy for text, Open for links,
+Preview or Download for files, Pin, and Delete. Search is local over decrypted
+items. The server never receives search terms or plaintext indexes.
 
-The PWA is installable, caches only its application shell, and registers as a
-share target where the browser supports that capability. Unsupported browsers
-still get the full website flow. The app does not require installation and does
-not nag after a declined install prompt.
+The history holds up to 200 items or 50 MiB per inbox and defaults to seven-day
+expiry. Pinned text and links may be retained for 30 days; files are never
+pinned beyond seven days in version one. A storage meter makes the limit clear.
 
-The desktop wallet gains a quiet **Send files & text** link to Nine Send. The
-BTC09 website gets a concise utilities section. Neither surface suggests that
-09C is needed to use the service.
+The PWA installs from supported desktop and mobile browsers and registers as a
+share target where available. Version one synchronizes when open or resumed;
+it does not promise background delivery or push notifications. Native clients
+and real push are a later milestone if people repeatedly use the web product.
 
 ## Visual direction and copy
 
-Nine Send is a calm consumer utility, not a crypto dashboard. The visual system
-uses near-black ink, cool white, pale steel, and one signal-orange accent. Type
-is compact and readable; headings are prominent without filling the viewport.
-The memorable element is a large physical-looking transfer tray whose state
-changes from empty, to encrypting, to ready. Motion is limited to state changes
-and respects reduced-motion preferences.
+Nine Inbox is a calm personal utility, not a crypto dashboard. It uses near-
+black ink, cool white, pale steel, and one signal-orange accent. The core visual
+is a narrow, tactile inbox stream with compact items and a composer that expands
+only when used. Type is readable and balanced at 390x844 and 1280x800; headings
+do not consume the viewport.
 
 There are no gradients, glass cards, crypto charts, fake testimonials, floating
-coins, oversized marketing claims, or three-column feature-card filler. Copy is
-short and literal: "Send something," "Encrypted on this device," and "Expires
-in 24 hours." Terms such as AES-GCM and ciphertext live in a small technical
-details disclosure instead of the primary flow.
+coins, oversized claims, or generic feature-card rows. Motion communicates
+pairing, encryption, arrival, and deletion, and respects reduced-motion. Copy is
+short and literal: "Send yourself something," "Encrypted on this device," and
+"Open Nine Inbox on your other device." Technical terms live in a disclosure.
 
-Layouts are designed at 390x844 and 1280x800 first, then checked at intermediate
-widths. Tap targets are at least 44 pixels. Status and errors use text and icons
-in addition to color. Keyboard focus is always visible.
+Tap targets are at least 44 pixels. Focus is visible. Status never relies on
+color alone. The interface does not claim virus scanning, anonymity, instant
+background delivery, or guarantees it does not provide.
 
-## Cryptographic envelope
+## Pairing and cryptographic model
 
-The browser creates a random 256-bit AES-GCM key and a random 96-bit nonce using
-`crypto.getRandomValues`. A compact JSON payload contains version, content kind,
-filename, media type, byte length, and either UTF-8 text or base64-encoded file
-bytes. The payload is encoded and encrypted with AES-256-GCM. Version and drop
-ID are authenticated as additional data.
+The first device generates three independent random values using
+`crypto.getRandomValues`: a 256-bit AES-GCM encryption key, a 256-bit mailbox
+write token, and a 128-bit mailbox recovery token. The relay stores a hash of
+the write token and a hash of the recovery token, never the AES key. The pairing
+bundle contains mailbox ID, API base, encryption key, write token, and recovery
+token. It is encoded only after `#` in the pairing URL and QR code.
 
-The relay receives only the encrypted blob, nonce, expiry, public drop ID, and
-operational counters. The key is placed after `#` in the receive URL. URL
-fragments are not included in HTTP requests, so the relay and normal access
-logs never receive the key. The recipient fetches ciphertext, decrypts in the
-browser, validates the envelope and declared length, then renders or downloads
-it. Authentication failure produces a generic invalid-or-damaged message.
+Each item uses the inbox AES key with a fresh random 96-bit nonce. The encrypted
+JSON envelope contains version, item kind, filename, media type, byte length,
+sender device label, created time, expiry, and content. Mailbox ID and item ID
+are authenticated as AES-GCM additional data. The relay stores only ciphertext,
+nonce, timestamps, counters, and opaque IDs.
 
-Each encryption operation uses a fresh key and nonce. No password-derived keys,
-home-grown cipher, server-side decryption, or reusable master key is included.
-The app is served only over HTTPS because Web Crypto is restricted to secure
-contexts. Third-party scripts are forbidden so the encryption boundary remains
-auditable.
+Pairing safety words are derived locally from a digest of the AES key and both
+device challenges. They are a human check against scanning the wrong code, not
+a substitute for HTTPS. Third-party scripts are forbidden. The PWA requires
+HTTPS because Web Crypto is restricted to secure contexts.
 
-Version one deliberately caps plaintext at 20 MiB. The browser must hold the
-payload and encrypted result briefly in memory, so the interface checks size
-before reading. Chunked encryption is reserved for a native-client milestone.
+Version one stores inbox secrets in IndexedDB. It offers an explicit encrypted
+recovery file export and warns that clearing browser data removes the device.
+Automatic clipboard reading is forbidden. Password-manager content receives no
+special access or collection path.
 
 ## Relay API and storage
 
-The Go relay listens on numeric loopback only and is published through the
-existing Cloudflare and nginx path. Its API is:
+The Go relay listens on numeric loopback only and is exposed through the
+existing Cloudflare and nginx site:
 
-- `POST /api/nine/v1/drops` creates an empty drop and returns a random ID,
-  single-use upload token, and accepted limits.
-- `PUT /api/nine/v1/drops/{id}` accepts one opaque encrypted blob with the
-  upload token. A failed or interrupted upload never becomes readable.
-- `GET /api/nine/v1/drops/{id}` returns the immutable encrypted blob and
-  expiry metadata, with a maximum of five successful fetches.
-- `DELETE /api/nine/v1/drops/{id}` removes a drop when presented with the
-  creator token.
-- `GET /healthz` reports process readiness without storage contents.
+- `POST /api/nine/v1/inboxes` creates an inbox from client-supplied token hashes
+  and returns a random mailbox ID plus accepted limits.
+- `GET /api/nine/v1/inboxes/{id}` returns opaque item headers after write-token
+  authentication.
+- `POST /api/nine/v1/inboxes/{id}/items` atomically stores one encrypted item.
+- `GET /api/nine/v1/inboxes/{id}/items/{item}` returns its ciphertext.
+- `DELETE /api/nine/v1/inboxes/{id}/items/{item}` removes one item.
+- `DELETE /api/nine/v1/inboxes/{id}` removes the whole inbox using the recovery
+  token.
+- `GET /healthz` reports readiness without mailbox contents.
 
-IDs and tokens contain at least 128 random bits. Error responses are fixed JSON
-objects and do not reveal whether a guessed ID existed where that distinction
-is unnecessary. Creation, upload, and fetch have separate IP limits at nginx.
-The application additionally limits concurrent uploads, request bodies, drop
-count, total stored bytes, and expiry to one or 24 hours.
+Public IDs contain at least 128 random bits. Tokens are checked with constant-
+time hash comparison. The API never accepts an encryption key. Failed or
+interrupted writes remain invisible. Fixed JSON error codes cover malformed,
+unauthorized, missing, expired, oversized, full, and internal states.
 
-Ciphertext and small metadata records are written to a dedicated data directory
-using temporary files, file synchronization, and atomic rename. A sweeper
-deletes expired or incomplete records. Startup reconciles metadata with blobs
-and removes stale temporary files. The process never follows symlinks and uses
-random server-selected filenames rather than user input.
+Ciphertext and metadata use server-selected filenames, temporary writes, file
+sync, and atomic rename. Startup reconciles orphaned or expired records and
+removes stale temporary files without following symlinks. A sweeper enforces
+item expiry, per-inbox limits, the 2 GiB total service cap, and incomplete-
+upload expiry.
 
-## Failure handling and operations
+## Abuse, privacy, and operations
 
-The sender keeps the plaintext selection in the page if creation or upload
-fails, allowing a retry without reselecting it. Offline, quota, expiry, missing,
-oversized, and damaged-link states have different human messages but stable API
-codes. The recipient never receives a half-written upload.
+Accountless storage can be abused even when the server cannot read content.
+The initial limits are deliberately conservative: 20 MiB per item, 50 MiB and
+200 items per inbox, seven days for files, 30 days only for pinned text/links,
+five inbox creations per IP per day, bounded concurrent uploads, and 2 GiB total
+ciphertext. Nginx adds per-IP body, request, connection, and method limits.
 
-The relay emits structured logs containing request ID, route, result code,
-duration, and byte count. It does not log tokens, fragments, filenames, text,
-media types from the encrypted envelope, or request bodies. Health checks and
-disk usage are observable. Deployment includes a systemd sandbox, loopback-only
-bind, nginx body and rate limits, and a total storage ceiling. The relay can be
-disabled without affecting the node, explorer, wallet gateway, OTC bot, or site.
+The relay logs request ID, route class, result, duration, and byte count. It
+does not log tokens, URL fragments, ciphertext bodies, decrypted filenames,
+text, media types, device names, or search. The service is isolated by systemd
+and can be disabled without affecting the node, explorer, wallet gateway, OTC
+bot, website, or Discord services.
 
-Deployment starts with a 20 MiB item limit, 2 GiB total ciphertext cap, five
-downloads per item, and 24-hour maximum expiry. These limits are intentionally
-conservative after the recent denial-of-service event. Usage data, errors, and
-abuse reports determine whether limits rise; optimism does not.
+Deletion is real: item deletion removes its blob and metadata, while inbox
+deletion removes the entire mailbox. Backups for this service are disabled in
+version one so deleted or expired ciphertext is not silently retained. The
+privacy page states that network metadata and operational logs still exist.
 
 ## Testing and release gate
 
-Go tests cover random identifiers, lifecycle transitions, atomic persistence,
-expiry, quota enforcement, interrupted uploads, restart recovery, traversal
-resistance, response headers, and fixed error contracts. JavaScript tests run
-the same envelope code under Node Web Crypto and prove round-trip, wrong-key,
-tamper, oversize, and malformed-envelope behavior. Browser tests exercise the
-real send and receive flows at desktop and mobile sizes.
+Go tests cover token hashing, lifecycle, atomic writes, quota and count limits,
+expiry, deletion, restart recovery, symlink and traversal rejection, concurrent
+writes, headers, and fixed API errors. JavaScript tests use Node Web Crypto for
+pairing-bundle round trips, text and binary envelopes, wrong key, tamper, wrong
+mailbox/item binding, oversize input, and malformed data. Browser tests cover
+first device, QR pairing, compose, sync, search, copy, link, download, delete,
+recovery export, full quota, offline, and expired states.
 
-The release gate is: `go test ./...`, `go vet ./...`, JavaScript tests, a race
-run for the relay package, vulnerability scan, static asset contract tests,
-visual inspection at 1280x800 and 390x844, nginx configuration test, live upload
-and download through Cloudflare, ciphertext inspection proving no plaintext or
-filename at rest, service restart recovery, and health checks for all existing
-BTC09 services. Website and Discord copy are published only after the live flow
-passes from a clean browser.
+The release gate includes all Go tests and vet, race tests, JavaScript tests,
+vulnerability scan, visual inspection at 1280x800 and 390x844, nginx validation,
+live two-browser pairing through Cloudflare, ciphertext-at-rest inspection,
+service restart recovery, and read-back of every existing BTC09 service. Public
+website and Discord copy are published only after that live path succeeds.
 
 ## Explicitly deferred
 
-- Native Android, iOS, macOS, and Linux shells
-- Background paired-device inbox and push notifications
-- Large-file chunking, resumable uploads, and LAN-direct transfer
-- Accounts, contact lists, cloud drive, chat, password management, or VPN
-- BTC09 payments for ordinary use, paid tiers, token gates, or ads
-- Automatic clipboard collection
+- Native Android, iOS, macOS, and Linux clients
+- Push notifications and guaranteed screen-off/background delivery
+- Automatic or continuous clipboard collection
+- Large, resumable, directory, or LAN-direct transfer
+- SMS mirroring, phone notifications, remote control, chat, cloud drive, VPN,
+  password management, or AI features
+- BTC09 payment requirements, token gates, paid tiers, or ads
 
-These are not promises for the first release. The next milestone is chosen from
-observed use: paired inbox if repeat send-to-self dominates, native share-sheet
-clients if installation demand is real, or large direct transfer if the 20 MiB
-ceiling is the main failure.
+Usage decides the next milestone. Repeat web use supports native clients; demand
+for immediate delivery supports push; large-file failure supports a direct
+transfer engine. None is prebuilt on speculation.

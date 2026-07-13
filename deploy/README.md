@@ -4,6 +4,40 @@ These commands are for Ubuntu and must be run as root unless shown with
 `runuser`. Keep order intake disabled through install, migration, restart
 testing, and the separate controlled-pilot gate.
 
+## Nine Inbox
+
+Nine Inbox runs as a separate unprivileged service. It stores only encrypted
+item envelopes and listens on numeric loopback; nginx is the only public
+boundary. The installer builds a dedicated binary, installs the hardened unit
+and bounded nginx routes, validates both configurations, then checks loopback
+health and the public TLS page.
+
+```bash
+/opt/btc09/bitcoin09/deploy/scripts/install-nine-inbox.sh \
+  /opt/btc09/bitcoin09
+systemctl status btc09-nine-inbox --no-pager
+curl -fsS http://127.0.0.1:8020/healthz
+```
+
+The canonical nginx host must already restore Cloudflare client addresses from
+the reviewed official ranges. The Nine Inbox rate zones deliberately use that
+restored `$binary_remote_addr`; the app does not trust arbitrary forwarding
+headers. Port 8020 remains closed at the cloud firewall and binds only to
+`127.0.0.1`.
+
+For a production host without a Go compiler, build from a clean reviewed
+checkout and pass the verified artifact explicitly:
+
+```bash
+BTC09_NINE_BINARY_SOURCE=/secure/staging/btc09-linux-amd64 \
+BTC09_NINE_BINARY_SHA256=REVIEWED_SHA256 \
+  /opt/btc09/bitcoin09/deploy/scripts/install-nine-inbox.sh \
+  /opt/btc09/bitcoin09
+```
+
+The installer verifies the supplied SHA-256 before it changes the service,
+binary, or nginx configuration.
+
 ## 1. Install dependencies and separate service accounts
 
 ```bash

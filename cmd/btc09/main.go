@@ -3,6 +3,7 @@
 //	btc09 node   [-mine] [-listen :9009] [-seeds host:port,...]
 //	btc09 wallet [new|list|snapshot]
 //	btc09 send   -to ADDRESS -amount DECIMAL [-fee DECIMAL] [-wallet-file FILE]
+//	btc09 nine-inbox [-listen 127.0.0.1:8020] [-data-dir DIR]
 //	btc09 genesis-mine        (maintainer tool: finds the mainnet genesis nonce)
 package main
 
@@ -181,6 +182,8 @@ func main() {
 		cmdSend(args)
 	case "mine-pool":
 		cmdMinePool(args)
+	case "nine-inbox":
+		cmdNineInbox(args)
 	case "prepare-send":
 		if code := runMachineCommand("prepare-send", args, os.Stdin, os.Stdout); code != 0 {
 			os.Exit(code)
@@ -240,6 +243,7 @@ usage:
   btc09 wallet snapshot -wallet-file FILE -datadir DIR -network NETWORK -expected-tip-hash HASH -expected-tip-height HEIGHT -json
   btc09 send   -to ADDRESS -amount DECIMAL [-fee DECIMAL] [-datadir DIR] [-wallet-file FILE] [-seeds host:port,...]
   btc09 mine-pool -pool https://HOST -address ADDRESS [-worker NAME] [-workers N] [-network mainnet|regtest]
+  btc09 nine-inbox [-listen 127.0.0.1:8020] [-data-dir DIR]
   btc09 prepare-send -to ADDRESS -amount DECIMAL -fee DECIMAL -datadir DIR -network NETWORK -wallet-file FILE -expected-tip-hash HASH -expected-tip-height HEIGHT -exclude-outpoints-json - -json
   btc09 inspect-tx -tx-hex - -network NETWORK -json
   btc09 broadcast-tx -tx-hex - -expected-txid TXID -datadir DIR -network NETWORK -seeds HOSTS -json -require-broadcast=true

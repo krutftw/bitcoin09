@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Nine Inbox">
+  <rect width="512" height="512" rx="112" fill="#111715"/>
+  <path d="M116 142h280v228H116z" fill="none" stroke="#f3f5f4" stroke-width="30"/>
+  <path d="M116 286h82l24 38h68l24-38h82" fill="none" stroke="#ff5a1f" stroke-width="30" stroke-linejoin="round"/>
+  <circle cx="256" cy="210" r="20" fill="#f3f5f4"/>
+</svg>

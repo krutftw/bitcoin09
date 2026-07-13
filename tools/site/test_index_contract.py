@@ -60,6 +60,37 @@ class IndexContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)
 
+    def test_nine_inbox_is_a_plain_optional_utility(self):
+        for token in (
+            'href="/inbox/"',
+            "Send yourself anything",
+            "No account and no 09C needed",
+            "client-side encrypted",
+            "20 MiB",
+            "seven days",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.html)
+        self.assertNotIn("always delivered in the background", self.html.lower())
+
+    def test_nine_inbox_documentation_covers_the_security_boundary(self):
+        guide = pathlib.Path("docs/NINE-INBOX.md").read_text(encoding="utf-8")
+        for token in (
+            "https://btc09.org/inbox/",
+            "does not need an account",
+            "does not need 09C",
+            "AES-256-GCM",
+            "pairing link",
+            "encrypted recovery file",
+            "20 MiB",
+            "seven days",
+            "30 days",
+            "server can see",
+            "Background delivery",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, guide)
+
 
 if __name__ == "__main__":
     unittest.main()

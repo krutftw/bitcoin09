@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111715">
+  <meta name="description" content="Send yourself notes, links, photos, and small files without an account.">
+  <title>Nine Inbox</title>
+  <link rel="manifest" href="/inbox/manifest.webmanifest">
+  <link rel="icon" href="/inbox/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/inbox/app.css">
+</head>
+<body>
+  <header class="masthead">
+    <a class="wordmark" href="/inbox/" aria-label="Nine Inbox home"><span>9</span><strong>Nine Inbox</strong></a>
+    <div class="connection"><i id="connection-dot" aria-hidden="true"></i><span id="connection-label">Starting</span></div>
+  </header>
+
+  <main>
+    <section id="setup-view" class="setup-view" aria-labelledby="setup-title">
+      <div class="setup-copy">
+        <p class="eyebrow">PRIVATE CROSS-DEVICE INBOX</p>
+        <h1 id="setup-title">Send yourself anything.</h1>
+        <p class="lede">Notes, links, photos, and small files. Open them on your other devices without emailing yourself.</p>
+        <p class="plain-promise">No account. No 09C. No automatic clipboard collection.</p>
+      </div>
+      <div class="setup-actions">
+        <button id="create-inbox" class="primary" type="button">Create my inbox</button>
+        <button id="open-pair" class="secondary" type="button">Pair this device</button>
+        <p>Encrypted on this device before anything is uploaded.</p>
+      </div>
+    </section>
+
+    <section id="pair-view" class="pair-view" aria-labelledby="pair-title" hidden>
+      <button class="back-link" type="button" data-action="back">← Back</button>
+      <div class="pairing-grid">
+        <div>
+          <p class="eyebrow">PAIR A DEVICE</p>
+          <h1 id="pair-title">Open Nine Inbox on your other device.</h1>
+          <p>Scan this code with the camera app, or copy the pairing link. The link contains your inbox keys. Send it only to yourself.</p>
+          <div id="pairing-qr" class="pairing-qr" role="img" aria-label="Pairing QR code"></div>
+        </div>
+        <div class="pairing-details">
+          <label for="pairing-link">PAIRING LINK</label>
+          <div class="copy-line"><input id="pairing-link" readonly><button id="copy-pairing" type="button">Copy</button></div>
+          <p class="micro">Compare these words on both devices:</p>
+          <output id="pairing-words" class="safety-words">— —</output>
+          <button id="finish-pairing" class="primary" type="button">Go to my inbox</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="pair-device-view" class="pair-device-view" aria-labelledby="pair-device-title" hidden>
+      <button class="back-link" type="button" data-action="back">← Back</button>
+      <div class="narrow-sheet">
+        <p class="eyebrow">PAIR THIS DEVICE</p>
+        <h1 id="pair-device-title">Paste your pairing link.</h1>
+        <p>Get it from a device already connected to your Nine Inbox.</p>
+        <form id="pair-device-form">
+          <label for="pair-code">PAIRING LINK</label>
+          <textarea id="pair-code" rows="4" required spellcheck="false" autocomplete="off"></textarea>
+          <button class="primary" type="submit">Pair securely</button>
+        </form>
+        <div class="recovery-divider"><span>or recover this inbox</span></div>
+        <label class="file-picker" for="recovery-file"><span>Choose encrypted recovery file</span><small>.nine file</small></label>
+        <input id="recovery-file" type="file" accept=".nine,application/json">
+        <button id="restore-recovery" class="secondary" type="button">Unlock recovery file</button>
+      </div>
+    </section>
+
+    <section id="inbox-view" class="inbox-view" aria-labelledby="inbox-title" hidden>
+      <div class="inbox-head">
+        <div><p class="eyebrow">YOUR PRIVATE STREAM</p><h1 id="inbox-title">Inbox</h1></div>
+        <div class="head-actions"><button id="show-pairing" type="button">Pair device</button><button id="open-settings" type="button">Settings</button></div>
+      </div>
+      <div class="inbox-tools">
+        <label class="search-field"><span>SEARCH</span><input id="inbox-search" type="search" aria-label="Search your inbox" placeholder="Find text, links, or filenames"></label>
+        <div class="storage-block"><span id="storage-copy">0 of 50 MiB</span><progress id="storage-meter" max="52428800" value="0">0%</progress></div>
+      </div>
+      <p id="sync-note" class="sync-note" aria-live="polite">Syncs while this page is open.</p>
+      <div id="inbox-list" class="inbox-stream"></div>
+      <div id="empty-inbox" class="empty-inbox"><span aria-hidden="true">↓</span><h2>Nothing here yet.</h2><p>Send a note, link, photo, or document from any paired device.</p></div>
+      <button id="open-composer" class="compose-button" type="button"><span>+</span> Send something</button>
+    </section>
+  </main>
+
+  <dialog id="composer-sheet" class="composer-sheet">
+    <form id="composer" method="dialog">
+      <div class="sheet-head"><div><p class="eyebrow">NEW ITEM</p><h2>Send yourself something.</h2></div><button class="icon-button" value="cancel" aria-label="Close composer">×</button></div>
+      <label for="item-text">NOTE OR LINK</label>
+      <textarea id="item-text" rows="6" maxlength="1000000" placeholder="Paste a link or write a note"></textarea>
+      <div class="or-line"><span>or attach one file</span></div>
+      <label class="file-picker" for="item-file"><span>Choose photo or document</span><small>20 MiB maximum</small></label>
+      <input id="item-file" type="file" accept="image/*,text/*,application/pdf,application/zip">
+      <p id="chosen-file" class="chosen-file">No file selected</p>
+      <label class="check-line"><input id="pin-item" type="checkbox"><span>Keep text or links for 30 days</span></label>
+      <p class="expiry-copy">Files expire after 7 days. Text and links expire after 7 days unless kept for 30.</p>
+      <div class="sheet-actions"><button class="secondary" value="cancel">Cancel</button><button id="send-item" class="primary" value="default">Encrypt and send</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="settings-sheet" class="settings-sheet">
+    <form method="dialog">
+      <div class="sheet-head"><div><p class="eyebrow">THIS DEVICE</p><h2>Inbox settings</h2></div><button class="icon-button" value="cancel" aria-label="Close settings">×</button></div>
+      <label for="device-label">DEVICE NAME</label><input id="device-label" maxlength="64">
+      <button id="save-device" class="secondary" value="default">Save device name</button>
+      <hr>
+      <h3>Recovery and deletion</h3>
+      <p>Export an encrypted recovery file before clearing browser data. Anyone with the pairing link can read this inbox.</p>
+      <button id="recovery-export" class="secondary" value="default">Export encrypted recovery</button>
+      <button id="forget-device" class="danger" value="default">Forget inbox on this device</button>
+      <button id="delete-inbox" class="danger" value="default">Delete shared inbox</button>
+      <details><summary>Technical details</summary><p>Items use AES-256-GCM with a fresh nonce. The relay stores ciphertext, sizes, and expiry times. It can still see your IP address and request timing.</p></details>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="/inbox/app.mjs"></script>
+</body>
+</html>
