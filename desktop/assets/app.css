@@ -74,6 +74,12 @@ button { color: inherit; }
 .privacy-note { margin-top: auto; padding: 15px; display: grid; grid-template-columns: 10px 1fr; gap: 9px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; background: rgba(255,255,255,.04); color: #b9bcaf; }
 .privacy-note > span { color: #77a786; font-size: 9px; }
 .privacy-note p { margin: 0; font-size: 13px; line-height: 1.45; }
+.inbox-utility { margin-top: 12px; padding: 13px 14px; display: grid; gap: 4px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; background: rgba(255,255,255,.04); color: var(--paper-bright); text-decoration: none; }
+.inbox-utility span { color: var(--copper); font: 10px var(--mono); letter-spacing: .06em; }
+.inbox-utility strong { font-size: 13px; font-weight: 500; line-height: 1.35; }
+.inbox-utility strong b { color: var(--copper); font-weight: 400; }
+.inbox-utility small { color: #aeb2a5; font: 10px/1.4 var(--mono); }
+.inbox-utility:hover { border-color: rgba(255,255,255,.28); background: rgba(255,255,255,.07); }
 .version-stamp { margin-top: 18px; color: #aeb2a5; font: 11px/1.4 var(--mono); letter-spacing: .05em; }
 .version-stamp strong { float: right; color: var(--paper-bright); }
 
@@ -205,7 +211,7 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
   .app-shell { display: block; min-height: 0; }
   .status-rail { min-height: auto; padding: 10px 16px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; background: var(--ink); }
   .status-rail > div:first-child { display: contents; }
-  .rail-heading, .privacy-note, .version-stamp { display: none; }
+  .rail-heading, .privacy-note, .inbox-utility, .version-stamp { display: none; }
   .rail-readout { margin: 0; padding: 2px 8px; border: 0; }
   .rail-readout span { margin-bottom: 3px; font-size: 10px; }
   .rail-readout strong { font-size: 12px; }

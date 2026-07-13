@@ -58,6 +58,18 @@ public balance data from `https://btc09.org`, builds and signs payments on this
 computer, and sends only the signed transaction for relay. Private keys never
 leave the wallet file. Run `btc09 app -mode full` to verify through a local node.
 
+### Nine Inbox
+
+[Nine Inbox](https://btc09.org/inbox/) moves notes, links, photos, and files
+between your own phone and computer. It works without an account and without
+09C. Devices pair with a QR code or link, and item contents are encrypted in the
+browser before upload. The BTC09 wallet links to it as an optional utility; it
+does not share wallet keys, addresses, balances, or payment activity with the
+inbox.
+
+Read [docs/NINE-INBOX.md](docs/NINE-INBOX.md) for pairing, expiry, recovery,
+server-visible metadata, limits, and the current background-delivery boundary.
+
 ### Build or run the node
 
 You need [Go 1.25+](https://go.dev/dl/).

@@ -18,6 +18,9 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 		}
 		contents[name] = string(body)
 		lower := strings.ToLower(contents[name])
+		if name == "assets/index.html" {
+			lower = strings.Replace(lower, `href="https://btc09.org/inbox/"`, "", 1)
+		}
 		if strings.Contains(lower, "https://") || strings.Contains(lower, "http://") || strings.Contains(lower, "//cdn") {
 			t.Fatalf("%s contains an external resource", name)
 		}
@@ -139,6 +142,35 @@ func TestEmbeddedInterfaceIncludesHonestOfficialSoloMiner(t *testing.T) {
 			if strings.Contains(strings.ToLower(content), strings.ToLower(forbidden)) {
 				t.Errorf("%s contains forbidden claim %q", test.name, forbidden)
 			}
+		}
+	}
+}
+
+func TestEmbeddedInterfaceLinksToNineInboxWithoutChangingWalletActions(t *testing.T) {
+	htmlBody, err := fs.ReadFile(assetsFS, "assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(htmlBody)
+	for _, required := range []string{
+		`class="inbox-utility"`, `href="https://btc09.org/inbox/"`,
+		`target="_blank"`, `rel="noopener noreferrer"`, `Nine Inbox`,
+		`No account or 09C needed`,
+	} {
+		if !strings.Contains(html, required) {
+			t.Errorf("index is missing %q", required)
+		}
+	}
+	if count := strings.Count(html, `data-panel=`); count != 4 {
+		t.Fatalf("wallet action count = %d, want 4", count)
+	}
+	cssBody, err := fs.ReadFile(assetsFS, "assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{`.inbox-utility`, `.inbox-utility strong`, `.inbox-utility small`} {
+		if !strings.Contains(string(cssBody), required) {
+			t.Errorf("app stylesheet is missing %q", required)
 		}
 	}
 }
