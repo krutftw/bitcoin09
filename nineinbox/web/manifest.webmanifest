@@ -1,0 +1,26 @@
+{
+  "name": "Nine Inbox",
+  "short_name": "Nine",
+  "description": "Send yourself notes, links, photos, and small files without an account.",
+  "start_url": "/inbox/",
+  "scope": "/inbox/",
+  "display": "standalone",
+  "background_color": "#f3f5f4",
+  "theme_color": "#111715",
+  "icons": [
+    { "src": "/inbox/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ],
+  "share_target": {
+    "action": "/inbox/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        { "name": "files", "accept": ["image/*", "text/*", "application/pdf", "application/zip"] }
+      ]
+    }
+  }
+}

@@ -12,7 +12,9 @@ import {
   decryptItem,
   encodePairingFragment,
   encryptItem,
+  exportRecoveryFile,
   hashToken,
+  importRecoveryFile,
   safetyWords,
 } from "./crypto.mjs";
 
@@ -70,6 +72,7 @@ test("pairing fragments round-trip independent secrets without padding", () => {
   assert.deepEqual(decoded.key, first.key);
   assert.deepEqual(decoded.writeToken, first.writeToken);
   assert.deepEqual(decoded.recoveryToken, first.recoveryToken);
+  assert.ok(new TextEncoder().encode(`https://btc09.org/inbox/#pair=${fragment}`).length <= 321);
 });
 
 test("pairing decoder rejects malformed, padded, incomplete, and insecure bundles", () => {
@@ -172,4 +175,25 @@ test("invalid metadata and content over 20 MiB are rejected before encryption", 
     () => encryptItem(textInput({ kind: "file", name: "large.bin", text: "", data: new Uint8Array(MAX_CONTENT_BYTES + 1) }), bundle, mailboxId, itemId),
     /20 MiB/i,
   );
+});
+
+test("recovery files encrypt pairing secrets with a password", async () => {
+  const original = fixedBundle();
+  const file = await exportRecoveryFile(original, "correct horse battery staple");
+  const parsed = JSON.parse(file);
+  assert.equal(parsed.v, 1);
+  assert.equal(parsed.kdf, "PBKDF2-SHA-256");
+  assert.ok(!file.includes(original.mailboxId));
+  assert.ok(!file.includes("AQEBAQ"));
+
+  const restored = await importRecoveryFile(file, "correct horse battery staple");
+  assert.equal(restored.mailboxId, original.mailboxId);
+  assert.deepEqual(restored.key, original.key);
+  assert.deepEqual(restored.writeToken, original.writeToken);
+  assert.deepEqual(restored.recoveryToken, original.recoveryToken);
+  await assert.rejects(() => importRecoveryFile(file, "wrong password"), /recovery/i);
+
+  const tampered = { ...parsed, ciphertext: parsed.ciphertext.slice(0, -1) + (parsed.ciphertext.endsWith("A") ? "B" : "A") };
+  await assert.rejects(() => importRecoveryFile(JSON.stringify(tampered), "correct horse battery staple"), /recovery/i);
+  await assert.rejects(() => exportRecoveryFile(original, "short"), /password/i);
 });

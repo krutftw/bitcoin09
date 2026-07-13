@@ -119,25 +119,27 @@ export function encodePairingFragment(bundle) {
   const value = normalizePairingBundle(bundle);
   return base64urlEncode(textEncoder.encode(JSON.stringify({
     v: value.v,
-    apiBase: value.apiBase,
-    mailboxId: value.mailboxId,
-    key: base64urlEncode(value.key),
-    writeToken: base64urlEncode(value.writeToken),
-    recoveryToken: base64urlEncode(value.recoveryToken),
+    a: value.apiBase,
+    m: value.mailboxId,
+    k: base64urlEncode(value.key),
+    w: base64urlEncode(value.writeToken),
+    r: base64urlEncode(value.recoveryToken),
   })));
 }
 
 export function decodePairingFragment(value) {
   try {
     const parsed = JSON.parse(textDecoder.decode(base64urlDecode(value)));
-    if (!parsed || Object.keys(parsed).sort().join(",") !== "apiBase,key,mailboxId,recoveryToken,v,writeToken") {
+    if (!parsed || Object.keys(parsed).sort().join(",") !== "a,k,m,r,v,w") {
       throw new Error("shape");
     }
     return normalizePairingBundle({
-      ...parsed,
-      key: base64urlDecode(parsed.key),
-      writeToken: base64urlDecode(parsed.writeToken),
-      recoveryToken: base64urlDecode(parsed.recoveryToken),
+      v: parsed.v,
+      apiBase: parsed.a,
+      mailboxId: parsed.m,
+      key: base64urlDecode(parsed.k),
+      writeToken: base64urlDecode(parsed.w),
+      recoveryToken: base64urlDecode(parsed.r),
     });
   } catch {
     throw new Error("Invalid pairing code.");
@@ -278,5 +280,71 @@ export async function decryptItem(ciphertext, bundle, mailboxId, itemId) {
     return item;
   } catch {
     throw new Error("Unable to decrypt item.");
+  }
+}
+
+const RECOVERY_ITERATIONS = 210000;
+
+function validRecoveryPassword(password) {
+  if (typeof password !== "string" || password.length < 12 || password.length > 256) {
+    throw new Error("Recovery password must be at least 12 characters.");
+  }
+  return password;
+}
+
+async function recoveryKey(password, salt) {
+  const material = await crypto.subtle.importKey("raw", textEncoder.encode(validRecoveryPassword(password)), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({
+    name: "PBKDF2",
+    hash: "SHA-256",
+    salt,
+    iterations: RECOVERY_ITERATIONS,
+  }, material, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+
+export async function exportRecoveryFile(bundle, password) {
+  const pairing = encodePairingFragment(bundle);
+  const salt = randomBytes(16);
+  const nonce = randomBytes(NONCE_BYTES);
+  const key = await recoveryKey(password, salt);
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({
+    name: "AES-GCM",
+    iv: nonce,
+    additionalData: textEncoder.encode("nine-inbox:recovery:v1"),
+    tagLength: 128,
+  }, key, textEncoder.encode(pairing)));
+  return JSON.stringify({
+    v: 1,
+    kdf: "PBKDF2-SHA-256",
+    iterations: RECOVERY_ITERATIONS,
+    salt: base64urlEncode(salt),
+    nonce: base64urlEncode(nonce),
+    ciphertext: base64urlEncode(ciphertext),
+  });
+}
+
+export async function importRecoveryFile(content, password) {
+  try {
+    if (typeof content !== "string" || content.length > 8192) throw new Error("size");
+    const parsed = JSON.parse(content);
+    if (!parsed || Object.keys(parsed).sort().join(",") !== "ciphertext,iterations,kdf,nonce,salt,v" ||
+        parsed.v !== 1 || parsed.kdf !== "PBKDF2-SHA-256" || parsed.iterations !== RECOVERY_ITERATIONS) {
+      throw new Error("shape");
+    }
+    const salt = base64urlDecode(parsed.salt, "recovery file");
+    const nonce = base64urlDecode(parsed.nonce, "recovery file");
+    const ciphertext = base64urlDecode(parsed.ciphertext, "recovery file");
+    if (salt.length !== 16 || nonce.length !== NONCE_BYTES || ciphertext.length < 17) throw new Error("length");
+    const key = await recoveryKey(password, salt);
+    const plaintext = await crypto.subtle.decrypt({
+      name: "AES-GCM",
+      iv: nonce,
+      additionalData: textEncoder.encode("nine-inbox:recovery:v1"),
+      tagLength: 128,
+    }, key, ciphertext);
+    return decodePairingFragment(textDecoder.decode(plaintext));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("password must")) throw error;
+    throw new Error("Recovery file or password is invalid.");
   }
 }
