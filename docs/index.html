@@ -324,7 +324,7 @@ p {
 
 .command-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
 }
 
@@ -493,10 +493,10 @@ seed 178.128.105.41:9009
 seed 103.80.18.140:9009
 seed 108.190.240.138:9009
 pool ntmminer.com/btc09 (third-party)
-release v0.1.24</pre>
+release v0.1.25</pre>
 <div class="status-card">
 <b>09C mainnet</b>
-<span>The official desktop wallet, site, explorer, and separate P2P-only public seed are live.</span>
+<span>The official desktop wallet and CPU miner, site, explorer, and public seeds are live.</span>
 <span><a href="https://github.com/krutftw/bitcoin09/releases/latest">download</a> / <a href="https://discord.gg/fUuGzwRTzP">discord</a> / <a href="https://explorer.btc09.org">explorer</a></span>
 </div>
 </div>
@@ -506,7 +506,7 @@ release v0.1.24</pre>
 
 <main class="content">
 <div class="wrap">
-<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.org">live explorer</a>. Current release: v0.1.24 with the fast, non-custodial desktop wallet. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
+<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.org">live explorer</a>. Current release: v0.1.25 with the fast wallet and official CPU miner. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
 
 <section class="panel">
 <h2>What It Is</h2>
@@ -579,13 +579,13 @@ release v0.1.24</pre>
 </section>
 
 <section class="panel">
-<h2>Desktop Wallet</h2>
-<p>BTC09 now has a proper local wallet app for Windows, macOS, and Linux. Open the downloaded program with no command and it launches a compact wallet in your normal browser. Create and back up the wallet, see balance and sync state, receive with an address or QR code, and review the exact amount, fee, and destination before sending.</p>
+<h2>Desktop wallet and miner</h2>
+<p>BTC09 has one local app for Windows, macOS, and Linux. Open the downloaded program with no command to create or load your wallet, receive and send 09C, and mine from the same screen. Open the wallet, choose Mine, set the CPU threads, and press Start mining. The app fills your payout address automatically and reconnects after short network faults.</p>
 <pre>.\btc09-windows-amd64.exe
 
 # or explicitly
 btc09 app</pre>
-<p class="muted">The interface binds only to a random <code>127.0.0.1</code> port. It has no cloud account, analytics, CDN, or remote web assets. Private keys stay in the existing local wallet file, so current users do not need to import or migrate anything.</p>
+<p class="muted">The interface binds only to a random <code>127.0.0.1</code> port. It has no account or analytics. Private keys stay in the local wallet file. Mining sends only the public payout address and optional worker name to the coordinator. No partial-share payouts: this is open solo mining, so a block pays the wallet directly and results have high variance.</p>
 <p><a href="https://github.com/krutftw/bitcoin09/releases/latest">Download the latest BTC09 wallet</a></p>
 </section>
 
@@ -593,12 +593,17 @@ btc09 app</pre>
 <h2>Start Mining</h2>
 <div class="command-grid">
 <div class="command">
-<h3>Solo mine</h3>
-<p>Download the latest release, then run the node with mining enabled.</p>
+<h3>Official wallet miner</h3>
+<p>Open the wallet, choose Mine, select CPU threads, and start.</p>
+<pre>btc09 app</pre>
+</div>
+<div class="command">
+<h3>Full-node solo mine</h3>
+<p>Download the chain and build your own block templates.</p>
 <pre>btc09 node -mine</pre>
 </div>
 <div class="command">
-<h3>Pool mine</h3>
+<h3>Third-party pool</h3>
 <p>Use your 09C payout address and the current instructions on the community-operated pool page.</p>
 <pre>https://www.ntmminer.com/btc09</pre>
 </div>
@@ -613,7 +618,8 @@ btc09 app</pre>
 <section class="panel">
 <h2>Open-source remote solo mining</h2>
 <p>The official Go client now includes a native remote-solo protocol. A coordinator builds the block template; your computer runs Argon2id locally and submits only a winning nonce. Your payout address stays in the coordinator-owned template, and the client never sends a wallet key or seed phrase.</p>
-<pre>btc09 mine-pool -pool https://mine.example.org -address YOUR_09C_ADDRESS -worker rig-1</pre>
+<pre>btc09 mine-pool -pool https://btc09.org -address YOUR_09C_ADDRESS -worker rig-1</pre>
+<p>The official coordinator accepts work requests at <code>https://btc09.org/api/v1/work</code>. The open two-route format is documented in <a href="https://github.com/krutftw/bitcoin09/blob/master/docs/OPEN-MINING-PROTOCOL.md">Open Mining Protocol v1</a>.</p>
 <p>Anyone can run an independent coordinator from a synced node and put its local API behind TLS:</p>
 <pre>btc09 node -solo-api 127.0.0.1:9010</pre>
 <p class="muted">This removes the need for each remote miner to run a full node, but it does not smooth solo-mining variance. PPLNS is not live in the official software. The non-custodial PPLNS phase needs separate accounting, restart, reorg, and security tests before it is offered on mainnet.</p>

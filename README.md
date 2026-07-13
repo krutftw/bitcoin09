@@ -319,10 +319,10 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.24 is current. The desktop wallet now opens quickly in non-custodial Fast
-mode, receives to locally held addresses, validates public spendable-output data,
-and signs every payment on the device before relay. Full node mode remains
-available. There are no consensus changes.
+v0.1.25 is current. The non-custodial Fast wallet now includes the official
+open-source CPU miner. It still receives to locally held addresses and signs
+every payment on the device. Full node mode remains available. There are no
+consensus changes.
 
 Network:
 

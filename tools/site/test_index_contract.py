@@ -48,6 +48,18 @@ class IndexContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)
 
+    def test_v025_makes_the_official_wallet_miner_the_easy_path(self):
+        for token in (
+            "Current release: v0.1.25",
+            "Desktop wallet and miner",
+            "Open the wallet, choose Mine",
+            "https://btc09.org/api/v1/work",
+            "No partial-share payouts",
+            "third-party closed-source binary miner",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.html)
+
 
 if __name__ == "__main__":
     unittest.main()
