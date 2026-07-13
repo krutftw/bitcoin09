@@ -22,7 +22,7 @@ terms from the exchange before paying or supplying liquidity.
 | Venue | Current status | Decision |
 | --- | --- | --- |
 | SafeTrade | Application `#39826` for an initial `09C/USDT` market was received on 11 July and remains under review. | First priority. Do not describe it as a listing until SafeTrade confirms one. |
-| CoinEx | The official application page and `listing@coinex.com` accept project submissions. No public upfront application fee is shown. | Prepare the honest native-chain package in `COINEX-LISTING-REQUEST.md`, then submit through the official route. |
+| CoinEx | The native-chain package was sent to the official `listing@coinex.com` address on 13 July. No public upfront application fee was shown and no fee was paid. | Await review and answer any request for formal team or legal documents honestly. This is not a confirmed listing. |
 | NonKYC | The official listing page quotes native-chain integration from **$3,499**, plus locked liquidity of **$400 in 09C and $400 in the paired asset per market**. | Do not pay now. One market starts at $4,299 before any other costs. |
 | XeggeX | The official listing page displays the integration fee as **`5.000$`** and requires at least **$400 total liquidity per spot market**. | Treat that as a $5,000 quote unless XeggeX confirms otherwise in writing. Do not pay now. |
 | TradeOgre | No current official public application route or written terms were verified. | Do not contact brokers or unofficial accounts claiming they can arrange a listing. |

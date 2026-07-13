@@ -8,6 +8,12 @@ Official routes:
 This is a factual application draft for a native chain. Do not invent a company,
 CEO, investor, fundraising round, legal opinion, market cap, or offering price.
 
+## Submission status
+
+Sent to `listing@coinex.com` through the official project Gmail account on
+13 July 2026. Gmail read-back confirmed the complete message in Sent. No fee
+was requested or paid. Awaiting CoinEx review.
+
 ## Subject
 
 Bitcoin 09 (09C) native-chain listing application
