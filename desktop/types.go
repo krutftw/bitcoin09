@@ -7,6 +7,8 @@ type Status struct {
 	Network          string   `json:"network"`
 	Mode             string   `json:"mode"`
 	WalletExists     bool     `json:"wallet_exists"`
+	WalletVersion    int      `json:"wallet_version"`
+	NeedsUnlock      bool     `json:"needs_unlock"`
 	WalletPath       string   `json:"wallet_path"`
 	Addresses        []string `json:"addresses"`
 	BalanceUnits     int64    `json:"balance_units"`
@@ -16,6 +18,28 @@ type Status struct {
 	PeerCount        int      `json:"peer_count"`
 	SyncState        string   `json:"sync_state"`
 	SendAvailable    bool     `json:"send_available"`
+}
+
+type RecoveryWalletCreateRequest struct {
+	Password string `json:"password"`
+}
+
+type RecoveryWalletRestoreRequest struct {
+	Password       string `json:"password"`
+	RecoveryPhrase string `json:"recovery_phrase"`
+}
+
+type RecoveryWalletUnlockRequest struct {
+	Password string `json:"password"`
+}
+
+type RecoveryWalletCreateResult struct {
+	Status         Status `json:"status"`
+	RecoveryPhrase string `json:"recovery_phrase"`
+}
+
+type RecoveryPhraseResult struct {
+	RecoveryPhrase string `json:"recovery_phrase"`
 }
 
 type AddressResult struct {
@@ -91,6 +115,16 @@ type Service interface {
 	Backup(context.Context, string) (BackupResult, error)
 	PreviewSend(context.Context, SendRequest) (SendPreview, error)
 	ConfirmSend(context.Context, string) (SendResult, error)
+}
+
+// RecoveryWalletService is implemented by desktop services that support the
+// encrypted deterministic Wallet V2 format. Keeping it optional preserves
+// compatibility with minimal wallet-only service implementations.
+type RecoveryWalletService interface {
+	CreateRecoveryWallet(context.Context, RecoveryWalletCreateRequest) (RecoveryWalletCreateResult, error)
+	RestoreRecoveryWallet(context.Context, RecoveryWalletRestoreRequest) (Status, error)
+	UnlockRecoveryWallet(context.Context, RecoveryWalletUnlockRequest) (Status, error)
+	RecoveryPhrase(context.Context, RecoveryWalletUnlockRequest) (RecoveryPhraseResult, error)
 }
 
 type PublicError struct {

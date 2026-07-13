@@ -38,6 +38,12 @@
 </section>
 
 <section>
+<h2>Desktop wallet</h2>
+<p>The wallet runs on a random local <code>127.0.0.1</code> port. New wallet files are encrypted on the device. Passwords, recovery words, private keys, and unsigned payments are not sent to Bitcoin 09 public services.</p>
+<p>In Fast mode, the wallet gateway receives public addresses to return public chain data and receives a signed transaction when you choose to broadcast it. The official remote solo miner receives the public payout address and an optional worker name. Full node mode can verify the chain without the wallet gateway.</p>
+</section>
+
+<section>
 <h2>Nine Inbox</h2>
 <p>Nine Inbox encrypts notes, links, filenames, content types, and files with AES-256-GCM on your device before upload. The relay stores ciphertext plus the mailbox and item identifiers, sizes, creation and expiry times, and retention state. It can also see your IP address and request timing.</p>
 <p>Items normally expire after seven days. Pinned text and links can remain for 30 days. Deleted or expired items are removed from the service; the v1 service does not keep content backups. The pairing link contains the keys and write credentials, so anyone who receives it may read or add items.</p>

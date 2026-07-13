@@ -139,6 +139,99 @@ func TestAppServiceFastModeReadsRemoteFundsAndSignsLocally(t *testing.T) {
 func (p *appTestPeers) PeerCount() int           { return p.count }
 func (p *appTestPeers) BroadcastTx(*core.Tx) int { return p.writes }
 
+func TestAppServiceRecoveryWalletCreateRestartUnlockAndRestore(t *testing.T) {
+	walletPath := filepath.Join(t.TempDir(), "wallet-regtest.json")
+	newService := func(path string) *appService {
+		service, err := newAppService(appServiceConfig{
+			Version: "test", Network: core.RegTestMachineID, Params: &core.RegTest,
+			Mode: "fast", DataDir: filepath.Join(t.TempDir(), "chain"), WalletFile: path, Gateway: &appTestGateway{},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return service
+	}
+
+	service := newService(walletPath)
+	created, err := service.CreateRecoveryWallet(context.Background(), desktop.RecoveryWalletCreateRequest{Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.Status.WalletExists || created.Status.WalletVersion != wallet.SchemaVersionV2 || created.Status.NeedsUnlock || len(created.Status.Addresses) != 1 || len(strings.Fields(created.RecoveryPhrase)) != wallet.RecoveryWordCount {
+		t.Fatalf("created = %+v", created)
+	}
+	createdAddress := created.Status.Addresses[0]
+	backupPath := filepath.Join(t.TempDir(), "wallet-v2-backup.json")
+	if _, err := service.Backup(context.Background(), backupPath); err != nil {
+		t.Fatalf("Backup recovery wallet: %v", err)
+	}
+	backedUp, err := wallet.OpenV2(backupPath, core.RegTestMachineID, []byte("correct horse battery staple"))
+	if err != nil {
+		t.Fatalf("open recovery backup: %v", err)
+	}
+	backupAddresses, err := backedUp.AddressesE()
+	backedUp.Close()
+	if err != nil || len(backupAddresses) != 1 || backupAddresses[0] != createdAddress {
+		t.Fatalf("backup addresses = %v, %v", backupAddresses, err)
+	}
+	service.Close()
+
+	restarted := newService(walletPath)
+	locked, err := restarted.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !locked.WalletExists || locked.WalletVersion != wallet.SchemaVersionV2 || !locked.NeedsUnlock || len(locked.Addresses) != 0 || locked.SendAvailable {
+		t.Fatalf("locked status = %+v", locked)
+	}
+	if _, err := restarted.UnlockRecoveryWallet(context.Background(), desktop.RecoveryWalletUnlockRequest{Password: "wrong password"}); err == nil {
+		t.Fatal("wrong password unlocked wallet")
+	}
+	unlocked, err := restarted.UnlockRecoveryWallet(context.Background(), desktop.RecoveryWalletUnlockRequest{Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unlocked.NeedsUnlock || unlocked.WalletVersion != wallet.SchemaVersionV2 || len(unlocked.Addresses) != 1 || unlocked.Addresses[0] != createdAddress {
+		t.Fatalf("unlocked status = %+v", unlocked)
+	}
+	shown, err := restarted.RecoveryPhrase(context.Background(), desktop.RecoveryWalletUnlockRequest{Password: "correct horse battery staple"})
+	if err != nil || shown.RecoveryPhrase != created.RecoveryPhrase {
+		t.Fatalf("recovery phrase = %q, %v", shown.RecoveryPhrase, err)
+	}
+
+	restorePath := filepath.Join(t.TempDir(), "restored-regtest.json")
+	restoredService := newService(restorePath)
+	restored, err := restoredService.RestoreRecoveryWallet(context.Background(), desktop.RecoveryWalletRestoreRequest{
+		Password: "different local password", RecoveryPhrase: created.RecoveryPhrase,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.WalletVersion != wallet.SchemaVersionV2 || len(restored.Addresses) != 1 || restored.Addresses[0] != createdAddress {
+		t.Fatalf("restored status = %+v", restored)
+	}
+	restarted.Close()
+	restoredService.Close()
+}
+
+func TestAppServiceRecoveryWalletRejectsWeakOrNonCanonicalInput(t *testing.T) {
+	service, err := newAppService(appServiceConfig{
+		Version: "test", Network: core.RegTestMachineID, Params: &core.RegTest,
+		Mode: "fast", DataDir: filepath.Join(t.TempDir(), "chain"), WalletFile: filepath.Join(t.TempDir(), "wallet.json"), Gateway: &appTestGateway{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	if _, err := service.CreateRecoveryWallet(context.Background(), desktop.RecoveryWalletCreateRequest{Password: "short"}); err == nil {
+		t.Fatal("weak password was accepted")
+	}
+	phrase := strings.TrimSpace(strings.Repeat("abandon ", 23)) + " art"
+	if _, err := service.RestoreRecoveryWallet(context.Background(), desktop.RecoveryWalletRestoreRequest{Password: "long enough password", RecoveryPhrase: " " + phrase}); err == nil {
+		t.Fatal("noncanonical recovery phrase was accepted")
+	}
+}
+
 func newAppTestService(t *testing.T) (*appService, *core.Chain, string) {
 	t.Helper()
 	dataDir := filepath.Join(t.TempDir(), "chain")

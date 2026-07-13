@@ -7,6 +7,7 @@ const state = {
   toastTimer: null,
   miner: null,
   minerPollTimer: null,
+  recoveryPhrase: null,
 };
 
 const byId = (id) => document.getElementById(id);
@@ -73,11 +74,14 @@ function renderStatus(status) {
 	byId("status-lamp").classList.toggle("is-online", connected);
 	byId("status-lamp").classList.toggle("is-ready", !connected && status.sync_state === "ready");
   byId("loading-view").hidden = true;
-  byId("first-run").hidden = status.wallet_exists;
-  byId("wallet-view").hidden = !status.wallet_exists;
+  const showingRecovery = Boolean(state.recoveryPhrase);
+  byId("first-run").hidden = status.wallet_exists || showingRecovery;
+  byId("locked-view").hidden = !status.wallet_exists || !status.needs_unlock || showingRecovery;
+  byId("recovery-backup").hidden = !showingRecovery;
+  byId("wallet-view").hidden = !status.wallet_exists || status.needs_unlock || showingRecovery;
   byId("first-run-path").textContent = status.wallet_path || "—";
 
-  if (!status.wallet_exists) {
+  if (!status.wallet_exists || status.needs_unlock) {
     clearTimeout(state.minerPollTimer);
     state.minerPollTimer = null;
     return;
@@ -94,6 +98,15 @@ function renderStatus(status) {
   byId("receive-address").textContent = address || "No receive address";
   byId("address-chip-text").textContent = address ? `${address.slice(0, 7)}…${address.slice(-5)}` : "No address";
   byId("receive-qr").src = address ? `/api/v1/receive-qr?address=${encodeURIComponent(address)}` : "";
+  const recoveryWallet = status.wallet_version === 2;
+  byId("new-address").hidden = recoveryWallet;
+  byId("receive-note").textContent = recoveryWallet
+    ? "This stable address is recovered from your 24 words. Never share the words themselves."
+    : "A new address still belongs to this wallet. Never share the wallet file itself.";
+  byId("show-recovery-form").hidden = !recoveryWallet;
+  byId("backup-intro").textContent = recoveryWallet
+    ? "Your recovery words are the main backup. An encrypted file copy is useful for this device too."
+    : "Save a copy to a disconnected USB drive or another offline location.";
   byId("backup-destination").value ||= suggestedBackupPath(status.wallet_path);
   const canSend = Boolean(status.send_available);
   byId("preview-send").disabled = !canSend;
@@ -116,12 +129,160 @@ async function refreshStatus({ quiet = false } = {}) {
   }
 }
 
-async function createWallet() {
+function switchSetup(mode) {
+  const restoring = mode === "restore";
+  byId("create-wallet-form").hidden = restoring;
+  byId("restore-wallet-form").hidden = !restoring;
+  byId("show-create").classList.toggle("is-active", !restoring);
+  byId("show-restore").classList.toggle("is-active", restoring);
+}
+
+function matchingPassword(firstID, secondID) {
+  const password = byId(firstID).value;
+  if (password.length < 12) {
+    showToast("Use at least 12 characters for the wallet password.", true);
+    return null;
+  }
+  if (password !== byId(secondID).value) {
+    showToast("The two passwords do not match.", true);
+    return null;
+  }
+  return password;
+}
+
+function renderRecoveryPhrase(phrase) {
+  const words = phrase.split(" ");
+  if (words.length !== 24) throw new Error("BTC09 returned an invalid recovery phrase.");
+  const list = byId("recovery-word-grid");
+  list.replaceChildren();
+  words.forEach((word) => {
+    const item = document.createElement("li");
+    const value = document.createElement("span");
+    value.textContent = word;
+    item.append(value);
+    list.append(item);
+  });
+  byId("recovery-write-step").hidden = false;
+  byId("recovery-confirm-step").hidden = true;
+}
+
+async function createWallet(event) {
+  event.preventDefault();
+  if (!byId("wallet-safety-ack").checked) {
+    showToast("Confirm that you understand the recovery responsibility.", true);
+    return;
+  }
+  const password = matchingPassword("create-password", "create-password-confirm");
+  if (password === null) return;
   const button = byId("create-wallet");
   setBusy(button, true, "Creating safely…");
   try {
-    renderStatus(await api("/api/v1/wallet/create", { method: "POST", body: "{}" }));
-    showToast("Wallet created. Make your offline backup next.");
+    const result = await api("/api/v1/wallet/v2/create", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+    state.recoveryPhrase = result.recovery_phrase;
+    renderRecoveryPhrase(state.recoveryPhrase);
+    renderStatus(result.status);
+    byId("create-wallet-form").reset();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function restoreWallet(event) {
+  event.preventDefault();
+  const password = matchingPassword("restore-password", "restore-password-confirm");
+  if (password === null) return;
+  const recoveryPhrase = byId("restore-phrase").value.trim().split(/\s+/).join(" ").toLowerCase();
+  if (recoveryPhrase.split(" ").length !== 24) {
+    showToast("Enter all 24 recovery words in order.", true);
+    return;
+  }
+  const button = byId("restore-wallet");
+  setBusy(button, true, "Restoring…");
+  try {
+    renderStatus(await api("/api/v1/wallet/v2/restore", {
+      method: "POST",
+      body: JSON.stringify({ password, recovery_phrase: recoveryPhrase }),
+    }));
+    byId("restore-wallet-form").reset();
+    showToast("Wallet restored and encrypted on this device.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function unlockWallet(event) {
+  event.preventDefault();
+  const button = byId("unlock-wallet");
+  const password = byId("unlock-password").value;
+  if (!password) return;
+  setBusy(button, true, "Unlocking…");
+  try {
+    renderStatus(await api("/api/v1/wallet/v2/unlock", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }));
+    byId("unlock-wallet-form").reset();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+function startRecoveryConfirmation() {
+  byId("recovery-write-step").hidden = true;
+  byId("recovery-confirm-step").hidden = false;
+  byId("confirm-word-4").focus();
+}
+
+function showRecoveryWordsAgain() {
+  byId("recovery-confirm-step").reset();
+  byId("recovery-confirm-step").hidden = true;
+  byId("recovery-write-step").hidden = false;
+}
+
+function confirmRecoveryBackup(event) {
+  event.preventDefault();
+  const words = state.recoveryPhrase?.split(" ") || [];
+  const checks = [
+    [3, "confirm-word-4"],
+    [11, "confirm-word-12"],
+    [20, "confirm-word-21"],
+  ];
+  const matches = checks.every(([index, id]) => byId(id).value.trim().toLowerCase() === words[index]);
+  if (!matches) {
+    showToast("One or more words do not match. Check your written backup.", true);
+    return;
+  }
+  byId("recovery-confirm-step").reset();
+  byId("recovery-word-grid").replaceChildren();
+  state.recoveryPhrase = null;
+  renderStatus(state.status);
+  showToast("Recovery backup checked. Your wallet is ready.");
+}
+
+async function showRecoveryPhrase(event) {
+  event.preventDefault();
+  const button = byId("show-recovery-phrase");
+  const password = byId("recovery-password").value;
+  if (!password) return;
+  setBusy(button, true, "Checking…");
+  try {
+    const result = await api("/api/v1/wallet/v2/recovery", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+    byId("show-recovery-form").reset();
+    state.recoveryPhrase = result.recovery_phrase;
+    renderRecoveryPhrase(state.recoveryPhrase);
+    renderStatus(state.status);
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -405,8 +566,15 @@ function selectPanel(button) {
 }
 
 function bindEvents() {
-  byId("wallet-safety-ack").addEventListener("change", (event) => { byId("create-wallet").disabled = !event.target.checked; });
-  byId("create-wallet").addEventListener("click", createWallet);
+  byId("show-create").addEventListener("click", () => switchSetup("create"));
+  byId("show-restore").addEventListener("click", () => switchSetup("restore"));
+  byId("create-wallet-form").addEventListener("submit", createWallet);
+  byId("restore-wallet-form").addEventListener("submit", restoreWallet);
+  byId("unlock-wallet-form").addEventListener("submit", unlockWallet);
+  byId("start-recovery-confirm").addEventListener("click", startRecoveryConfirmation);
+  byId("show-recovery-words").addEventListener("click", showRecoveryWordsAgain);
+  byId("recovery-confirm-step").addEventListener("submit", confirmRecoveryBackup);
+  byId("show-recovery-form").addEventListener("submit", showRecoveryPhrase);
   byId("copy-address").addEventListener("click", copyAddress);
   byId("new-address").addEventListener("click", newAddress);
   byId("backup-wallet").addEventListener("click", backupWallet);

@@ -102,7 +102,9 @@ The info channels are configured so `@everyone` cannot send messages. The script
 
 ## Live Stats Bot
 
-`stats-bot.mjs` reads the public pool API and explorer status, then formats the current miner count, hashrate, height, payouts, and top pool addresses.
+`stats-bot.mjs` reads the official explorer status and formats the current
+height, difficulty, supply, and recent network activity. It does not advertise
+a community pool as official or report pool payouts that BTC09 cannot verify.
 
 Print the current stats locally:
 

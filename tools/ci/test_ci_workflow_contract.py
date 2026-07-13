@@ -28,6 +28,8 @@ class CIWorkflowContractTest(unittest.TestCase):
             "actions/checkout@v4",
             "actions/setup-go@v5",
             "go-version-file: go.mod",
+            "golang/govulncheck-action@v1",
+            "go-package: ./...",
             "go vet ./...",
             "go test -race ./...",
         ):

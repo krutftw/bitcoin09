@@ -43,6 +43,7 @@ const (
 	walletMissing walletDiskState = iota
 	walletLegacy
 	walletV1
+	walletV2
 )
 
 type keyFile struct {
@@ -57,7 +58,53 @@ type Wallet struct {
 	path          string
 	network       string
 	allowLegacy   bool
+	requireV2     bool
+	v2Password    []byte
 	afterSnapshot func() // test seam; invoked under the wallet lock
+}
+
+// Close wipes the cached Wallet V2 file-unlock secret. V1 wallets have no
+// cached secret, so Close is safe to call for either format.
+func (w *Wallet) Close() {
+	if w == nil {
+		return
+	}
+	clear(w.v2Password)
+	w.v2Password = nil
+}
+
+// Schema reports the wallet file schema represented by this handle. An
+// unlocked deterministic recovery wallet reports V2; legacy and V1 handles
+// report V1 because both use the non-recovery API surface.
+func (w *Wallet) Schema() int {
+	if w != nil && w.requireV2 {
+		return SchemaVersionV2
+	}
+	return SchemaVersion
+}
+
+// ValidateCopy verifies that another wallet file can be opened with the same
+// network and, for V2, the same cached unlock secret. It does not modify either
+// file and is intended for post-write backup validation.
+func (w *Wallet) ValidateCopy(path string) error {
+	if w == nil {
+		return errors.New("nil wallet")
+	}
+	if w.requireV2 {
+		if len(w.v2Password) == 0 {
+			return ErrWalletUnlock
+		}
+		password := append([]byte(nil), w.v2Password...)
+		defer clear(password)
+		copyWallet, err := OpenV2(path, w.network, password)
+		if err != nil {
+			return err
+		}
+		copyWallet.Close()
+		return nil
+	}
+	_, err := Open(path, w.network)
+	return err
 }
 
 // Open validates a dedicated V1 wallet if it exists. It never creates a key.
@@ -230,31 +277,32 @@ func (w *Wallet) withKeys(requireKey bool, fn func([]ed25519.PrivateKey) error) 
 }
 
 func (w *Wallet) readKeysLocked() ([]ed25519.PrivateKey, walletDiskState, error) {
-	file, err := os.Open(w.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, walletMissing, nil
+	b, state, err := w.readWalletBytesLocked()
+	if err != nil || state == walletMissing {
+		return nil, state, err
 	}
-	if err != nil {
-		return nil, walletMissing, err
+	var probe struct {
+		SchemaVersion int `json:"schema_version"`
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, walletMissing, err
+	if err := json.Unmarshal(b, &probe); err == nil && probe.SchemaVersion == SchemaVersionV2 {
+		if len(w.v2Password) == 0 {
+			return nil, walletMissing, ErrWalletUnlock
+		}
+		payload, err := openRecoveryPayload(b, w.v2Password, w.network)
+		if err != nil {
+			return nil, walletMissing, err
+		}
+		defer clear(payload.Entropy)
+		keys, err := recoveryKeysFromPayload(payload, w.network)
+		if err != nil {
+			return nil, walletMissing, err
+		}
+		return keys, walletV2, nil
 	}
-	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > MaxWalletFileBytes {
-		return nil, walletMissing, errors.New("wallet file size or type is invalid")
+	if w.requireV2 {
+		return nil, walletMissing, walletV2FormatError("wallet is not a V2 recovery wallet")
 	}
-	b, err := io.ReadAll(io.LimitReader(file, MaxWalletFileBytes+1))
-	if err != nil {
-		return nil, walletMissing, err
-	}
-	if len(b) == 0 || len(b) > MaxWalletFileBytes {
-		return nil, walletMissing, errors.New("wallet file exceeds size bound")
-	}
-	if err := rejectWalletHardLink(w.path); err != nil {
-		return nil, walletMissing, err
-	}
+
 	dec := json.NewDecoder(bytes.NewReader(b))
 	disk, state, err := decodeKeyFile(dec)
 	if err != nil {
@@ -299,6 +347,35 @@ func (w *Wallet) readKeysLocked() ([]ed25519.PrivateKey, walletDiskState, error)
 		clear(seed)
 	}
 	return keys, state, nil
+}
+
+func (w *Wallet) readWalletBytesLocked() ([]byte, walletDiskState, error) {
+	file, err := os.Open(w.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, walletMissing, nil
+	}
+	if err != nil {
+		return nil, walletMissing, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, walletMissing, err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > MaxWalletFileBytes {
+		return nil, walletMissing, errors.New("wallet file size or type is invalid")
+	}
+	b, err := io.ReadAll(io.LimitReader(file, MaxWalletFileBytes+1))
+	if err != nil {
+		return nil, walletMissing, err
+	}
+	if len(b) == 0 || len(b) > MaxWalletFileBytes {
+		return nil, walletMissing, errors.New("wallet file exceeds size bound")
+	}
+	if err := rejectWalletHardLink(w.path); err != nil {
+		return nil, walletMissing, err
+	}
+	return b, walletV1, nil
 }
 
 func decodeKeyFile(dec *json.Decoder) (keyFile, walletDiskState, error) {
@@ -455,13 +532,33 @@ func (w *Wallet) NewAddress() (address string, err error) {
 	if err := rejectWalletHardLink(w.path); err != nil {
 		return "", err
 	}
-	keys, _, err := w.readKeysLocked()
+	keys, state, err := w.readKeysLocked()
 	if err != nil {
 		return "", err
 	}
 	defer func() { wipeCurrentKeys(&keys) }()
 	if len(keys) >= MaxWalletKeys {
 		return "", errors.New("wallet key count limit reached")
+	}
+	if state == walletV2 {
+		payload, err := w.readRecoveryPayloadLocked()
+		if err != nil {
+			return "", err
+		}
+		defer clear(payload.Entropy)
+		if int(payload.AddressCount) != len(keys) {
+			return "", walletV2FormatError("wallet address count changed during locked update")
+		}
+		key, err := deriveRecoveryPrivateKeyFromEntropy(payload.Entropy, w.network, payload.AddressCount)
+		if err != nil {
+			return "", err
+		}
+		defer clear(key)
+		payload.AddressCount++
+		if err := w.writeRecoveryPayloadLocked(payload); err != nil {
+			return "", err
+		}
+		return addressForKey(key), nil
 	}
 	key, err := generateWalletKey()
 	if err != nil {

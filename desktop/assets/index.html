@@ -51,17 +51,73 @@
         <section id="first-run" class="first-run" hidden>
           <div class="setup-mark" aria-hidden="true">09</div>
           <p class="kicker">WELCOME TO BTC09</p>
-          <h1>Create your wallet</h1>
-          <p class="setup-intro">Your private keys are stored in one wallet file on this computer. BTC09 never uploads them.</p>
+          <h1>Set up your wallet</h1>
+          <p class="setup-intro">Create a new wallet or restore one with its 24 recovery words. Keys never leave this computer.</p>
           <div class="file-location">
             <span>WALLET FILE</span>
             <code id="first-run-path">—</code>
           </div>
-          <label class="safety-check">
-            <input id="wallet-safety-ack" type="checkbox">
-            <span>I understand that I need an offline backup. Anyone with the wallet file can spend my 09C.</span>
-          </label>
-          <button id="create-wallet" class="primary-action full-action" type="button" disabled>Create wallet</button>
+          <div class="setup-switch" role="group" aria-label="Wallet setup choice">
+            <button id="show-create" class="is-active" type="button">New wallet</button>
+            <button id="show-restore" type="button">Restore wallet</button>
+          </div>
+
+          <form id="create-wallet-form" novalidate>
+            <div class="password-stack">
+              <label class="field"><span class="field-label">WALLET PASSWORD</span><input id="create-password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required></label>
+              <label class="field"><span class="field-label">CONFIRM PASSWORD</span><input id="create-password-confirm" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required></label>
+            </div>
+            <p class="field-note">Use at least 12 characters. This password unlocks the encrypted wallet file on this device.</p>
+            <label class="safety-check">
+              <input id="wallet-safety-ack" type="checkbox">
+              <span>I understand that BTC09 cannot recover my password or recovery words.</span>
+            </label>
+            <button id="create-wallet" class="primary-action full-action" type="submit">Create wallet</button>
+          </form>
+
+          <form id="restore-wallet-form" hidden novalidate>
+            <label class="field wide-field"><span class="field-label">24 RECOVERY WORDS</span><textarea id="restore-phrase" rows="5" autocomplete="off" autocapitalize="none" spellcheck="false" required></textarea></label>
+            <div class="password-stack">
+              <label class="field"><span class="field-label">NEW LOCAL PASSWORD</span><input id="restore-password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required></label>
+              <label class="field"><span class="field-label">CONFIRM PASSWORD</span><input id="restore-password-confirm" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required></label>
+            </div>
+            <p class="field-note">The words restore your wallet. The new password only protects this local wallet file.</p>
+            <button id="restore-wallet" class="primary-action full-action" type="submit">Restore wallet</button>
+          </form>
+        </section>
+
+        <section id="locked-view" class="first-run locked-view" hidden>
+          <div class="setup-mark lock-mark" aria-hidden="true">••</div>
+          <p class="kicker">WALLET LOCKED</p>
+          <h1>Welcome back</h1>
+          <p class="setup-intro">Enter your local password to unlock this wallet. It stays on this computer.</p>
+          <form id="unlock-wallet-form" novalidate>
+            <label class="field"><span class="field-label">WALLET PASSWORD</span><input id="unlock-password" type="password" maxlength="1024" autocomplete="current-password" required autofocus></label>
+            <button id="unlock-wallet" class="primary-action full-action" type="submit">Unlock wallet</button>
+          </form>
+        </section>
+
+        <section id="recovery-backup" class="first-run recovery-backup" hidden>
+          <div class="setup-mark" aria-hidden="true">24</div>
+          <p class="kicker">RECOVERY BACKUP</p>
+          <h1>Write down these words</h1>
+          <p class="setup-intro">Keep them offline and in order. Anyone with these words can spend your 09C. BTC09 will never ask you to send them.</p>
+          <div id="recovery-write-step">
+            <ol id="recovery-word-grid" class="recovery-word-grid" aria-label="24 recovery words"></ol>
+            <button id="start-recovery-confirm" class="primary-action full-action" type="button">I wrote them down</button>
+          </div>
+          <form id="recovery-confirm-step" hidden novalidate>
+            <p class="field-note recovery-check-note">Put the words away, then enter these three to check your backup.</p>
+            <div class="recovery-confirm-grid">
+              <label class="field"><span class="field-label">WORD 4</span><input id="confirm-word-4" autocomplete="off" autocapitalize="none" spellcheck="false" required></label>
+              <label class="field"><span class="field-label">WORD 12</span><input id="confirm-word-12" autocomplete="off" autocapitalize="none" spellcheck="false" required></label>
+              <label class="field"><span class="field-label">WORD 21</span><input id="confirm-word-21" autocomplete="off" autocapitalize="none" spellcheck="false" required></label>
+            </div>
+            <div class="recovery-actions">
+              <button id="show-recovery-words" class="quiet-action" type="button">Show words again</button>
+              <button id="confirm-recovery-backup" class="primary-action" type="submit">Finish backup</button>
+            </div>
+          </form>
         </section>
 
         <section id="wallet-view" class="wallet-view" hidden>
@@ -100,7 +156,7 @@
                   <div class="button-row">
                     <button id="new-address" class="quiet-action" type="button">Create new address</button>
                   </div>
-                  <p class="field-note">A new address still belongs to this wallet. Never share the wallet file itself.</p>
+                  <p id="receive-note" class="field-note">A new address still belongs to this wallet. Never share the wallet file itself.</p>
                 </div>
               </div>
             </section>
@@ -121,7 +177,12 @@
 
             <section id="safety-panel" class="ledger-panel" hidden>
               <div class="panel-heading"><div><p class="kicker">SECURITY</p><h2>Back up your wallet</h2></div></div>
-              <p class="panel-intro">Save a copy to a disconnected USB drive or another offline location.</p>
+              <p id="backup-intro" class="panel-intro">Save a copy to a disconnected USB drive or another offline location.</p>
+              <form id="show-recovery-form" class="recovery-access" hidden novalidate>
+                <label class="field"><span class="field-label">SHOW RECOVERY WORDS</span><input id="recovery-password" type="password" maxlength="1024" autocomplete="current-password" placeholder="Enter wallet password" required></label>
+                <button id="show-recovery-phrase" class="quiet-action" type="submit">Show words</button>
+                <p class="field-note">Only reveal them somewhere private. BTC09 checks your password first.</p>
+              </form>
               <div class="backup-copy">
                 <label class="field wide-field"><span class="field-label">BACKUP FILE</span><input id="backup-destination" autocomplete="off" spellcheck="false"></label>
                 <button id="backup-wallet" class="primary-action full-action" type="button">Create backup</button>

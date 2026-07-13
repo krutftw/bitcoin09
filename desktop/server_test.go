@@ -38,6 +38,42 @@ type fakeMinerService struct {
 	minerErr    error
 }
 
+type fakeRecoveryService struct {
+	fakeService
+	createRecoveryInput RecoveryWalletCreateRequest
+	restoreInput        RecoveryWalletRestoreRequest
+	unlockInput         RecoveryWalletUnlockRequest
+	recoveryInput       RecoveryWalletUnlockRequest
+	createRecoveryCalls int
+	restoreCalls        int
+	unlockCalls         int
+	recoveryCalls       int
+}
+
+func (f *fakeRecoveryService) CreateRecoveryWallet(_ context.Context, request RecoveryWalletCreateRequest) (RecoveryWalletCreateResult, error) {
+	f.createRecoveryCalls++
+	f.createRecoveryInput = request
+	return RecoveryWalletCreateResult{Status: f.status, RecoveryPhrase: strings.TrimSpace(strings.Repeat("abandon ", 23)) + " art"}, f.err
+}
+
+func (f *fakeRecoveryService) RestoreRecoveryWallet(_ context.Context, request RecoveryWalletRestoreRequest) (Status, error) {
+	f.restoreCalls++
+	f.restoreInput = request
+	return f.status, f.err
+}
+
+func (f *fakeRecoveryService) UnlockRecoveryWallet(_ context.Context, request RecoveryWalletUnlockRequest) (Status, error) {
+	f.unlockCalls++
+	f.unlockInput = request
+	return f.status, f.err
+}
+
+func (f *fakeRecoveryService) RecoveryPhrase(_ context.Context, request RecoveryWalletUnlockRequest) (RecoveryPhraseResult, error) {
+	f.recoveryCalls++
+	f.recoveryInput = request
+	return RecoveryPhraseResult{RecoveryPhrase: strings.TrimSpace(strings.Repeat("abandon ", 23)) + " art"}, f.err
+}
+
 func (f *fakeMinerService) MinerStatus(context.Context) (MinerStatus, error) {
 	return f.minerStatus, f.minerErr
 }
@@ -195,7 +231,9 @@ func TestServerSetsStrictBrowserSecurityHeaders(t *testing.T) {
 		}
 	}
 	csp := rr.Header().Get("Content-Security-Policy")
-	if strings.Contains(csp, "unsafe-inline") || strings.Contains(csp, "unsafe-eval") || !strings.Contains(csp, "object-src 'none'") {
+	if strings.Contains(csp, "unsafe-inline") || strings.Contains(csp, "unsafe-eval") ||
+		!strings.Contains(csp, "object-src 'none'") || !strings.Contains(csp, "require-trusted-types-for 'script'") ||
+		!strings.Contains(csp, "trusted-types 'none'") {
 		t.Fatalf("unsafe CSP: %q", csp)
 	}
 }
@@ -347,6 +385,46 @@ func TestWalletActionsUseStrictTypedAPI(t *testing.T) {
 	unknownRR := authenticatedPost(t, server, cookie, statusEnvelope.Data.CSRF, "/api/v1/wallet/backup", `{"destination":"x","private_key":true}`)
 	if unknownRR.Code != http.StatusBadRequest || service.backupCalls != 1 {
 		t.Fatalf("unknown-field status=%d calls=%d body=%s", unknownRR.Code, service.backupCalls, unknownRR.Body.String())
+	}
+}
+
+func TestRecoveryWalletActionsUseStrictTypedAPI(t *testing.T) {
+	service := &fakeRecoveryService{fakeService: fakeService{status: Status{
+		WalletExists: true, WalletVersion: 2, Addresses: []string{"09recovery"},
+	}}}
+	server, err := NewServer(Config{
+		LaunchToken: strings.Repeat("a", 64),
+		Origin:      "http://127.0.0.1:49152",
+		Version:     "test",
+		Service:     service,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie, csrf := launchSession(t, server)
+	phrase := strings.TrimSpace(strings.Repeat("abandon ", 23)) + " art"
+
+	create := authenticatedPost(t, server, cookie, csrf, "/api/v1/wallet/v2/create", `{"password":"long local password"}`)
+	if create.Code != http.StatusOK || service.createRecoveryCalls != 1 || service.createRecoveryInput.Password != "long local password" || !strings.Contains(create.Body.String(), `"recovery_phrase"`) {
+		t.Fatalf("create status=%d calls=%d input=%+v body=%s", create.Code, service.createRecoveryCalls, service.createRecoveryInput, create.Body.String())
+	}
+	restoreBody, _ := json.Marshal(RecoveryWalletRestoreRequest{Password: "replacement password", RecoveryPhrase: phrase})
+	restore := authenticatedPost(t, server, cookie, csrf, "/api/v1/wallet/v2/restore", string(restoreBody))
+	if restore.Code != http.StatusOK || service.restoreCalls != 1 || service.restoreInput.RecoveryPhrase != phrase {
+		t.Fatalf("restore status=%d calls=%d input=%+v body=%s", restore.Code, service.restoreCalls, service.restoreInput, restore.Body.String())
+	}
+	unlock := authenticatedPost(t, server, cookie, csrf, "/api/v1/wallet/v2/unlock", `{"password":"long local password"}`)
+	if unlock.Code != http.StatusOK || service.unlockCalls != 1 || service.unlockInput.Password != "long local password" {
+		t.Fatalf("unlock status=%d calls=%d input=%+v body=%s", unlock.Code, service.unlockCalls, service.unlockInput, unlock.Body.String())
+	}
+	recovery := authenticatedPost(t, server, cookie, csrf, "/api/v1/wallet/v2/recovery", `{"password":"long local password"}`)
+	if recovery.Code != http.StatusOK || service.recoveryCalls != 1 || service.recoveryInput.Password != "long local password" || !strings.Contains(recovery.Body.String(), phrase) {
+		t.Fatalf("recovery status=%d calls=%d input=%+v body=%s", recovery.Code, service.recoveryCalls, service.recoveryInput, recovery.Body.String())
+	}
+
+	invalid := authenticatedPost(t, server, cookie, csrf, "/api/v1/wallet/v2/create", `{"password":"secret","unknown":true}`)
+	if invalid.Code != http.StatusBadRequest || service.createRecoveryCalls != 1 {
+		t.Fatalf("invalid status=%d calls=%d body=%s", invalid.Code, service.createRecoveryCalls, invalid.Body.String())
 	}
 }
 
