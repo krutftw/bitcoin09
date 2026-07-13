@@ -35,6 +35,7 @@ class OpenMinerDeploymentContract(unittest.TestCase):
             "proxy_connect_timeout 2s;",
             "proxy_send_timeout 10s;",
             "proxy_read_timeout 35s;",
+            "proxy_hide_header X-Content-Type-Options;",
             "proxy_set_header X-Real-IP $remote_addr;",
         ):
             self.assertIn(required, text)
