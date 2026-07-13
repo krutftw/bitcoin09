@@ -25,6 +25,19 @@ restored `$binary_remote_addr`; the app does not trust arbitrary forwarding
 headers. Port 8020 remains closed at the cloud firewall and binds only to
 `127.0.0.1`.
 
+For a production host without a Go compiler, build from a clean reviewed
+checkout and pass the verified artifact explicitly:
+
+```bash
+BTC09_NINE_BINARY_SOURCE=/secure/staging/btc09-linux-amd64 \
+BTC09_NINE_BINARY_SHA256=REVIEWED_SHA256 \
+  /opt/btc09/bitcoin09/deploy/scripts/install-nine-inbox.sh \
+  /opt/btc09/bitcoin09
+```
+
+The installer verifies the supplied SHA-256 before it changes the service,
+binary, or nginx configuration.
+
 ## 1. Install dependencies and separate service accounts
 
 ```bash

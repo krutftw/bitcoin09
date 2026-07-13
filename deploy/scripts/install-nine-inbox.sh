@@ -7,6 +7,7 @@ if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
 fi
 
 repo_root=${1:-/opt/btc09/bitcoin09}
+binary_source=${BTC09_NINE_BINARY_SOURCE:-}
 http_source="$repo_root/deploy/nginx/bitcoin09-nine-inbox-http.conf"
 server_source="$repo_root/deploy/nginx/bitcoin09-nine-inbox-server.conf"
 service_source="$repo_root/deploy/systemd/btc09-nine-inbox.service"
@@ -28,6 +29,11 @@ done
 [[ -d "$repo_root" && ! -L "$repo_root" ]] || { echo "repository root is missing or unsafe" >&2; exit 1; }
 [[ -f "$site_target" && ! -L "$site_target" ]] || { echo "canonical nginx site is missing or unsafe" >&2; exit 1; }
 [[ -d /opt/btc09 && ! -L /opt/btc09 ]] || { echo "/opt/btc09 is missing or unsafe" >&2; exit 1; }
+if [[ -n "$binary_source" ]]; then
+    [[ -f "$binary_source" && ! -L "$binary_source" ]] || { echo "prebuilt binary is missing or unsafe" >&2; exit 1; }
+    [[ ${BTC09_NINE_BINARY_SHA256:-} =~ ^[0-9a-f]{64}$ ]] || { echo "set BTC09_NINE_BINARY_SHA256 for the prebuilt binary" >&2; exit 1; }
+    printf '%s  %s\n' "$BTC09_NINE_BINARY_SHA256" "$binary_source" | sha256sum --check --strict -
+fi
 
 backup_file() {
     local target=$1 name=$2
@@ -78,9 +84,13 @@ if systemctl is-enabled --quiet btc09-nine-inbox 2>/dev/null; then
     was_enabled=1
 fi
 
-cd "$repo_root"
-go test ./nineinbox ./cmd/btc09 -count=1
-go build -trimpath -o "$staged_binary" ./cmd/btc09
+if [[ -n "$binary_source" ]]; then
+    install -o root -g root -m 0755 "$binary_source" "$staged_binary"
+else
+    cd "$repo_root"
+    go test ./nineinbox ./cmd/btc09 -count=1
+    go build -trimpath -o "$staged_binary" ./cmd/btc09
+fi
 chmod 0755 "$staged_binary"
 chown root:root "$staged_binary"
 "$staged_binary" version >/dev/null

@@ -77,6 +77,10 @@ class NineInboxDeploymentContract(unittest.TestCase):
         for required in (
             "set -Eeuo pipefail",
             "go build -trimpath",
+            "BTC09_NINE_BINARY_SOURCE",
+            "BTC09_NINE_BINARY_SHA256",
+            "sha256sum --check --strict",
+            '[[ -f "$binary_source" && ! -L "$binary_source" ]]',
             "systemd-analyze verify",
             "nginx -t",
             "systemctl enable --now btc09-nine-inbox",
