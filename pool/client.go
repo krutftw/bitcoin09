@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"mime"
 	"net/http"
 	"net/url"
@@ -26,14 +27,41 @@ type RemoteClientConfig struct {
 	Workers           int
 	AllowInsecureHTTP bool
 	HTTPClient        *http.Client
+	ProgressInterval  time.Duration
 }
 
 // RemoteClient mines coordinator-owned jobs while keeping the payout address
 // under the miner's control.
 type RemoteClient struct {
-	baseURL string
-	config  RemoteClientConfig
-	client  *http.Client
+	baseURL  string
+	config   RemoteClientConfig
+	client   *http.Client
+	retryMin time.Duration
+	retryMax time.Duration
+	random   func() float64
+}
+
+type ClientEventType string
+
+const (
+	ClientEventJob      ClientEventType = "job"
+	ClientEventProgress ClientEventType = "progress"
+	ClientEventAccepted ClientEventType = "accepted"
+	ClientEventRetrying ClientEventType = "retrying"
+)
+
+type ClientEvent struct {
+	Type     ClientEventType
+	At       time.Time
+	JobID    string
+	Height   int64
+	Hashes   uint64
+	Hashrate float64
+	Elapsed  time.Duration
+	Final    bool
+	BlockID  string
+	RetryIn  time.Duration
+	Error    string
 }
 
 type RemoteAPIError struct {
@@ -76,10 +104,16 @@ func NewRemoteClient(config RemoteClientConfig) (*RemoteClient, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
+	if config.ProgressInterval <= 0 {
+		config.ProgressInterval = time.Second
+	}
 	return &RemoteClient{
-		baseURL: strings.TrimRight(parsed.String(), "/"),
-		config:  config,
-		client:  client,
+		baseURL:  strings.TrimRight(parsed.String(), "/"),
+		config:   config,
+		client:   client,
+		retryMin: time.Second,
+		retryMax: 30 * time.Second,
+		random:   rand.Float64,
 	}, nil
 }
 
@@ -159,6 +193,149 @@ func (c *RemoteClient) Run(ctx context.Context, accepted func(MineResult, Submit
 		return err
 	}
 	return ctx.Err()
+}
+
+// RunWithEvents continuously mines and emits observable state for interactive
+// clients. Temporary transport and server failures are retried with bounded
+// backoff; protocol and permanent client errors stop the session.
+func (c *RemoteClient) RunWithEvents(ctx context.Context, emit func(ClientEvent)) error {
+	attempt := 0
+	for ctx.Err() == nil {
+		work, err := c.RequestWork(ctx)
+		if err != nil {
+			if c.normalJobError(err) {
+				continue
+			}
+			if !isRetryableMiningError(err) {
+				return err
+			}
+			delay := c.retryDelay(attempt)
+			attempt++
+			c.emit(emit, ClientEvent{Type: ClientEventRetrying, RetryIn: delay, Error: miningErrorText(err)})
+			if err := waitForRetry(ctx, delay); err != nil {
+				return err
+			}
+			continue
+		}
+		attempt = 0
+		c.emit(emit, ClientEvent{Type: ClientEventJob, JobID: work.JobID, Height: work.Height})
+		mined, err := MineWorkWithProgress(
+			ctx,
+			work,
+			c.config.Params,
+			c.config.Workers,
+			c.config.ProgressInterval,
+			func(progress MineProgress) {
+				c.emit(emit, ClientEvent{
+					Type: ClientEventProgress, JobID: work.JobID, Height: work.Height,
+					Hashes: progress.Hashes, Hashrate: progress.Hashrate,
+					Elapsed: progress.Elapsed, Final: progress.Final,
+				})
+			},
+		)
+		if err != nil {
+			return err
+		}
+		if !mined.Found {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			continue
+		}
+		result, err := c.Submit(ctx, work.JobID, mined.Nonce)
+		if err != nil {
+			if c.normalJobError(err) {
+				continue
+			}
+			if !isRetryableMiningError(err) {
+				return err
+			}
+			delay := c.retryDelay(attempt)
+			attempt++
+			c.emit(emit, ClientEvent{Type: ClientEventRetrying, RetryIn: delay, Error: miningErrorText(err)})
+			if err := waitForRetry(ctx, delay); err != nil {
+				return err
+			}
+			continue
+		}
+		c.emit(emit, ClientEvent{
+			Type: ClientEventAccepted, JobID: work.JobID, Height: result.Height,
+			Hashes: mined.Hashes, BlockID: result.BlockID,
+		})
+	}
+	return ctx.Err()
+}
+
+func (c *RemoteClient) emit(callback func(ClientEvent), event ClientEvent) {
+	if callback == nil {
+		return
+	}
+	event.At = time.Now().UTC()
+	callback(event)
+}
+
+func (c *RemoteClient) normalJobError(err error) bool {
+	var apiError *RemoteAPIError
+	return errors.As(err, &apiError) &&
+		(apiError.Code == "stale_job" || apiError.Code == "expired_job" || apiError.Code == "unknown_job")
+}
+
+func isRetryableMiningError(err error) bool {
+	var apiError *RemoteAPIError
+	if errors.As(err, &apiError) {
+		return apiError.StatusCode == http.StatusTooManyRequests || apiError.StatusCode >= 500
+	}
+	var urlError *url.Error
+	return errors.As(err, &urlError)
+}
+
+func miningErrorText(err error) string {
+	var apiError *RemoteAPIError
+	if errors.As(err, &apiError) {
+		if apiError.StatusCode == http.StatusTooManyRequests {
+			return "The mining endpoint is busy."
+		}
+		return "The mining endpoint is temporarily unavailable."
+	}
+	return "The mining endpoint could not be reached."
+}
+
+func (c *RemoteClient) retryDelay(attempt int) time.Duration {
+	if c.retryMin <= 0 {
+		c.retryMin = time.Second
+	}
+	if c.retryMax < c.retryMin {
+		c.retryMax = c.retryMin
+	}
+	delay := c.retryMin
+	for i := 0; i < attempt && delay < c.retryMax; i++ {
+		if delay > c.retryMax/2 {
+			delay = c.retryMax
+			break
+		}
+		delay *= 2
+	}
+	if delay > c.retryMax {
+		delay = c.retryMax
+	}
+	if c.random != nil {
+		delay += time.Duration(float64(delay) * 0.2 * c.random())
+		if delay > c.retryMax {
+			delay = c.retryMax
+		}
+	}
+	return delay
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (c *RemoteClient) post(ctx context.Context, path string, input, output any) error {
