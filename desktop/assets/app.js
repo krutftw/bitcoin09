@@ -5,6 +5,8 @@ const state = {
   status: null,
   pending: null,
   toastTimer: null,
+  miner: null,
+  minerPollTimer: null,
 };
 
 const byId = (id) => document.getElementById(id);
@@ -75,7 +77,11 @@ function renderStatus(status) {
   byId("wallet-view").hidden = !status.wallet_exists;
   byId("first-run-path").textContent = status.wallet_path || "—";
 
-  if (!status.wallet_exists) return;
+  if (!status.wallet_exists) {
+    clearTimeout(state.minerPollTimer);
+    state.minerPollTimer = null;
+    return;
+  }
 	const balanceAvailable = Boolean(status.balance_available);
 	const formatted = formatCoins(status.balance_units).split(".");
 	byId("balance-major").textContent = balanceAvailable ? Number(formatted[0]).toLocaleString() : "—";
@@ -98,6 +104,7 @@ function renderStatus(status) {
 	  : (fastMode
 	    ? "Wallet service is temporarily unavailable. Your funds are safe; try again."
 	    : "Sending unlocks after the local chain has data and at least one peer is connected.");
+  refreshMinerStatus({ quiet: true });
 }
 
 async function refreshStatus({ quiet = false } = {}) {
@@ -230,12 +237,123 @@ async function confirmPayment() {
   }
 }
 
+function formatHashrate(value) {
+  const rate = Number(value || 0);
+  if (!Number.isFinite(rate) || rate <= 0) return "0.00 H/s";
+  if (rate >= 1000000) return `${(rate / 1000000).toFixed(2)} MH/s`;
+  if (rate >= 1000) return `${(rate / 1000).toFixed(2)} KH/s`;
+  return `${rate.toFixed(2)} H/s`;
+}
+
+function formatElapsed(seconds) {
+  const value = Math.max(0, Number(seconds || 0));
+  if (value < 60) return `${Math.floor(value)}s`;
+  if (value < 3600) return `${Math.floor(value / 60)}m ${Math.floor(value % 60)}s`;
+  return `${Math.floor(value / 3600)}h ${Math.floor((value % 3600) / 60)}m`;
+}
+
+function minerIsActive(status) {
+  return ["connecting", "mining", "retrying", "stopping"].includes(status?.state);
+}
+
+function minerStateCopy(status) {
+  if (!status?.available) return "The official miner is not available in this build.";
+  if (!status.wallet_ready) return "Create your wallet before starting the miner.";
+  if (status.state === "connecting") return "Connecting to the official Open solo endpoint…";
+  if (status.state === "mining") return status.blocks_accepted > 0
+    ? `Block accepted at height ${Number(status.height).toLocaleString()}. Mining the next job.`
+    : `Mining job at height ${Number(status.height || 0).toLocaleString()}.`;
+  if (status.state === "retrying") return `${status.last_error || "Connection interrupted."} Retrying in ${status.retry_in_seconds || 1}s.`;
+  if (status.state === "stopping") return "Stopping after the current hash attempt…";
+  if (status.state === "error") return status.last_error || "Mining stopped after an endpoint error.";
+  return "Ready when you are.";
+}
+
+function renderMinerStatus(status) {
+  state.miner = status;
+  const active = minerIsActive(status);
+  const logicalCPUs = Math.max(1, Number(status.logical_cpus || 1));
+  const workers = byId("miner-workers");
+  workers.max = String(logicalCPUs);
+  if (!workers.dataset.ready || active) {
+    const suggested = Number(status.workers || Math.max(1, logicalCPUs - 1));
+    workers.value = String(Math.min(logicalCPUs, Math.max(1, suggested)));
+    workers.dataset.ready = "true";
+  }
+  byId("miner-workers-value").textContent = `${workers.value} of ${logicalCPUs}`;
+  const fallbackAddress = state.status?.addresses?.[0] || "";
+  byId("miner-address").textContent = status.address || fallbackAddress || "Create a wallet first";
+  byId("miner-current-hashrate").textContent = formatHashrate(status.current_hashrate);
+  byId("miner-average-hashrate").textContent = formatHashrate(status.average_hashrate);
+  byId("miner-total-hashes").textContent = Number(status.total_hashes || 0).toLocaleString();
+  byId("miner-blocks").textContent = Number(status.blocks_accepted || 0).toLocaleString();
+  byId("miner-state").textContent = (status.state || "stopped").replace(/^./, (letter) => letter.toUpperCase());
+  byId("miner-state").dataset.state = status.state || "stopped";
+  byId("miner-state-line").textContent = minerStateCopy(status);
+  byId("miner-session-meta").textContent = `${Number(status.jobs || 0).toLocaleString()} jobs · ${Number(status.reconnects || 0).toLocaleString()} reconnects · ${formatElapsed(status.elapsed_seconds)}`;
+  byId("start-miner").disabled = active || !status.available || !status.wallet_ready;
+  byId("stop-miner").disabled = !active || status.state === "stopping";
+  workers.disabled = active;
+  byId("miner-worker").disabled = active;
+
+  clearTimeout(state.minerPollTimer);
+  state.minerPollTimer = null;
+  if (active) state.minerPollTimer = setTimeout(refreshMinerStatus, 1000);
+}
+
+async function refreshMinerStatus({ quiet = true } = {}) {
+  try {
+    renderMinerStatus(await api("/api/v1/miner/status"));
+  } catch (error) {
+    clearTimeout(state.minerPollTimer);
+    state.minerPollTimer = null;
+    if (!quiet) showToast(error.message, true);
+  }
+}
+
+async function startMiner(event) {
+  event.preventDefault();
+  const worker = byId("miner-worker").value.trim();
+  const workers = Number(byId("miner-workers").value);
+  if (worker && !/^[A-Za-z0-9._-]{1,64}$/.test(worker)) {
+    showToast("Worker names can use letters, numbers, dots, dashes, and underscores.", true);
+    return;
+  }
+  const button = byId("start-miner");
+  setBusy(button, true, "Connecting…");
+  try {
+    renderMinerStatus(await api("/api/v1/miner/start", {
+      method: "POST",
+      body: JSON.stringify({ workers, worker }),
+    }));
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, false);
+    if (state.miner) renderMinerStatus(state.miner);
+  }
+}
+
+async function stopMiner() {
+  const button = byId("stop-miner");
+  setBusy(button, true, "Stopping…");
+  try {
+    renderMinerStatus(await api("/api/v1/miner/stop", { method: "POST", body: "{}" }));
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, false);
+    if (state.miner) renderMinerStatus(state.miner);
+  }
+}
+
 function selectPanel(button) {
   document.querySelectorAll(".ledger-tab").forEach((tab) => {
     const active = tab === button;
     tab.classList.toggle("is-active", active);
     byId(tab.dataset.panel).hidden = !active;
   });
+  if (button.dataset.panel === "miner-panel") refreshMinerStatus({ quiet: true });
 }
 
 function bindEvents() {
@@ -245,6 +363,11 @@ function bindEvents() {
   byId("new-address").addEventListener("click", newAddress);
   byId("backup-wallet").addEventListener("click", backupWallet);
   byId("send-form").addEventListener("submit", previewPayment);
+  byId("miner-form").addEventListener("submit", startMiner);
+  byId("stop-miner").addEventListener("click", stopMiner);
+  byId("miner-workers").addEventListener("input", (event) => {
+    byId("miner-workers-value").textContent = `${event.target.value} of ${event.target.max}`;
+  });
   byId("confirm-send").addEventListener("click", confirmPayment);
   byId("dismiss-result").addEventListener("click", () => { byId("send-result").hidden = true; });
   document.querySelectorAll(".ledger-tab").forEach((button) => button.addEventListener("click", () => selectPanel(button)));
