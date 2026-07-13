@@ -258,6 +258,21 @@ const marketBoardComponents = [
 const seedPosts = [
   {
     channelKey: "announcements",
+    marker: "Nine Inbox is live.",
+    content: [
+      "Nine Inbox is live.",
+      "",
+      "https://btc09.org/inbox/",
+      "",
+      "Move notes, links, photos, and files between your phone and computer. Open it on one device, then scan the pairing code on the other. No account and no 09C needed.",
+      "",
+      "Items are encrypted in your browser before upload. Files last 7 days; pinned text and links last 30 days. It syncs while the page is open. Closed-browser push is not part of this version.",
+      "",
+      "Post bugs in #🐞-bug-reports.",
+    ].join("\n"),
+  },
+  {
+    channelKey: "announcements",
     marker: "Bitcoin 09 Discord is live.",
     content: [
       "Bitcoin 09 Discord is live.",
