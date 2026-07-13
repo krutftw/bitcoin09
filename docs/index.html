@@ -493,7 +493,7 @@ seed 178.128.105.41:9009
 seed 103.80.18.140:9009
 seed 108.190.240.138:9009
 pool ntmminer.com/btc09 (third-party)
-release v0.1.25</pre>
+release v0.1.26</pre>
 <div class="status-card">
 <b>09C mainnet</b>
 <span>The official desktop wallet and CPU miner, site, explorer, and public seeds are live.</span>
@@ -506,7 +506,7 @@ release v0.1.25</pre>
 
 <main class="content">
 <div class="wrap">
-<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.org">live explorer</a>. Current release: v0.1.25 with the fast wallet and official CPU miner. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
+<p id="live" class="livebar">Network status: <a href="https://explorer.btc09.org">live explorer</a>. Current release: v0.1.26 with Nine Inbox, the fast wallet, and official CPU miner. Discord: <a href="https://discord.gg/fUuGzwRTzP">join the server</a>. Markets: <a href="markets.html">public OTC board</a>.</p>
 
 <section class="panel" id="nine-inbox">
 <h2>Nine Inbox</h2>
@@ -586,7 +586,7 @@ release v0.1.25</pre>
 <p class="muted">Expected time, not a guarantee. Solo mining has high variance. A pool smooths payouts but does not increase your expected share before fees.</p>
 </section>
 
-<section class="panel">
+<section class="panel" id="mining-guide">
 <h2>Desktop wallet and miner</h2>
 <p>BTC09 has one local app for Windows, macOS, and Linux. Open the downloaded program with no command to create or load your wallet, receive and send 09C, and mine from the same screen. Open the wallet, choose Mine, set the CPU threads, and press Start mining. The app fills your payout address automatically and reconnects after short network faults.</p>
 <pre>.\btc09-windows-amd64.exe
@@ -594,6 +594,7 @@ release v0.1.25</pre>
 # or explicitly
 btc09 app</pre>
 <p class="muted">The interface binds only to a random <code>127.0.0.1</code> port. It has no account or analytics. Private keys stay in the local wallet file. Mining sends only the public payout address and optional worker name to the coordinator. No partial-share payouts: this is open solo mining, so a block pays the wallet directly and results have high variance.</p>
+<p>If mining does not start, check the wallet, endpoint, and CPU readiness row in the Mine tab. <strong>Copy help report</strong> gives Discord support the app version, connection state, thread count, hashrate, jobs, and last error. It leaves out your wallet address and worker name.</p>
 <p><a href="https://github.com/krutftw/bitcoin09/releases/latest">Download the latest BTC09 wallet</a></p>
 </section>
 

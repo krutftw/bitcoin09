@@ -318,6 +318,29 @@ func TestAppMinerCloseCancelsActiveSession(t *testing.T) {
 	}
 }
 
+func TestAppMinerFatalEndpointErrorGivesActionableSupportStep(t *testing.T) {
+	service, _, _ := newAppTestService(t)
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	service.newMiner = func(config pool.RemoteClientConfig) (appMinerClient, error) {
+		return &appTestMinerClient{run: func(context.Context, func(pool.ClientEvent)) error {
+			return errors.New("private upstream parser detail")
+		}}, nil
+	}
+	if _, err := service.StartMiner(context.Background(), desktop.MinerStartRequest{Workers: 1}); err != nil {
+		t.Fatal(err)
+	}
+	status := waitForMinerStatus(t, service, func(status desktop.MinerStatus) bool { return status.State == "error" })
+	const want = "The official mining endpoint returned incompatible data. Update BTC09, then copy the help report if it happens again."
+	if status.LastError != want {
+		t.Fatalf("LastError = %q, want %q", status.LastError, want)
+	}
+	if strings.Contains(status.LastError, "private upstream parser detail") {
+		t.Fatal("miner exposed an internal endpoint error")
+	}
+}
+
 func TestAppServiceFirstRunCreatesNoWalletUntilApproved(t *testing.T) {
 	service, _, walletPath := newAppTestService(t)
 	status, err := service.Status(context.Background())

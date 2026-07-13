@@ -152,6 +152,13 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
 .miner-state-badge[data-state="connecting"], .miner-state-badge[data-state="retrying"] { border-color: #b58d4d; color: #775820; }
 .miner-state-badge[data-state="mining"] { border-color: #78937a; color: #365e3d; }
 .miner-state-badge[data-state="error"] { border-color: var(--warning); color: var(--warning); }
+.miner-readiness { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: -4px 0 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); }
+.miner-readiness div { min-width: 0; padding: 8px 10px; border-right: 1px solid var(--line); }
+.miner-readiness div:last-child { border-right: 0; }
+.miner-readiness span { display: block; color: var(--ink-muted); font: 9px var(--mono); letter-spacing: .05em; }
+.miner-readiness strong { display: block; margin-top: 3px; overflow: hidden; color: var(--ink); font: 12px var(--mono); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+#miner-endpoint-check[data-state="mining"] { color: #365e3d; }
+#miner-endpoint-check[data-state="retrying"], #miner-endpoint-check[data-state="error"] { color: var(--warning); }
 .miner-instruments { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--line); }
 .miner-instruments > div { min-width: 0; padding: 13px 12px 12px; border-right: 1px solid var(--line); }
 .miner-instruments > div:first-child { padding-left: 0; }
@@ -166,10 +173,14 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
 .miner-thread-field .field-label { display: flex; justify-content: space-between; gap: 12px; }
 .miner-thread-field output { color: var(--copper-dark); font: inherit; }
 .miner-thread-field input { width: 100%; accent-color: var(--copper); }
+.miner-cpu-guidance { color: var(--ink-muted); font-size: 11px; line-height: 1.4; }
 .miner-actions { margin-top: 16px; display: flex; align-items: center; gap: 10px; }
 .miner-actions button { min-height: 42px; padding-inline: 17px; }
+.miner-actions .miner-copy-action { color: var(--copper-dark); }
 .miner-actions #miner-session-meta { margin-left: auto; color: var(--ink-muted); font: 11px var(--mono); white-space: nowrap; }
-.miner-privacy { margin: 16px 0 0; padding-top: 13px; border-top: 1px solid var(--line); color: var(--ink-muted); font-size: 12px; line-height: 1.5; }
+.miner-help-row { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: start; margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--line); }
+.miner-privacy { margin: 0; color: var(--ink-muted); font-size: 12px; line-height: 1.5; }
+.miner-help-row a { color: var(--copper-dark); font: 11px var(--mono); white-space: nowrap; }
 
 #send-form, .backup-copy { max-width: 590px; }
 .field { display: block; }
@@ -245,6 +256,7 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
   .miner-address-field { grid-column: auto; }
   .miner-actions { flex-wrap: wrap; }
   .miner-actions #miner-session-meta { width: 100%; margin: 2px 0 0; }
+  .miner-help-row { grid-template-columns: 1fr; gap: 8px; }
   .review-ledger div { grid-template-columns: 88px 1fr; }
 }
 

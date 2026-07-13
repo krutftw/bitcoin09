@@ -30,7 +30,7 @@ with `.\btc09-windows-amd64.exe` unless you renamed or installed the binary.
 Current release:
 
 ```text
-Bitcoin 09 (09C) reference node v0.1.25
+Bitcoin 09 (09C) reference node v0.1.26
 ```
 
 ## Open the Desktop Wallet

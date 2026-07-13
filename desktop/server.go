@@ -98,7 +98,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.exchangeLaunchToken(w, r)
 		return
 	}
-	if r.URL.Path == "/" || r.URL.Path == "/assets/app.css" || r.URL.Path == "/assets/app.js" {
+	if r.URL.Path == "/" || r.URL.Path == "/assets/app.css" || r.URL.Path == "/assets/app.js" || r.URL.Path == "/assets/icon.svg" {
 		s.handleAsset(w, r)
 		return
 	}
@@ -157,6 +157,8 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 		name, contentType = "assets/app.css", "text/css; charset=utf-8"
 	case "/assets/app.js":
 		name, contentType = "assets/app.js", "text/javascript; charset=utf-8"
+	case "/assets/icon.svg":
+		name, contentType = "assets/icon.svg", "image/svg+xml; charset=utf-8"
 	default:
 		s.writeError(w, http.StatusNotFound, "not_found", "That BTC09 Wallet page was not found.")
 		return

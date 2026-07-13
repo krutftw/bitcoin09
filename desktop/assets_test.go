@@ -9,7 +9,7 @@ import (
 )
 
 func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
-	files := []string{"assets/index.html", "assets/app.css", "assets/app.js"}
+	files := []string{"assets/index.html", "assets/app.css", "assets/app.js", "assets/icon.svg"}
 	contents := make(map[string]string, len(files))
 	for _, name := range files {
 		body, err := fs.ReadFile(assetsFS, name)
@@ -20,6 +20,7 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 		lower := strings.ToLower(contents[name])
 		if name == "assets/index.html" {
 			lower = strings.Replace(lower, `href="https://btc09.org/inbox/"`, "", 1)
+			lower = strings.Replace(lower, `href="https://btc09.org/#mining-guide"`, "", 1)
 		}
 		if strings.Contains(lower, "https://") || strings.Contains(lower, "http://") || strings.Contains(lower, "//cdn") {
 			t.Fatalf("%s contains an external resource", name)
@@ -29,6 +30,7 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 	html := contents["assets/index.html"]
 	for _, required := range []string{
 		`<main`, `aria-live="polite"`, `id="first-run"`, `id="wallet-view"`,
+		`rel="icon"`, `href="/assets/icon.svg"`,
 		`id="create-wallet"`, `id="receive-address"`, `id="copy-address"`,
 		`id="new-address"`, `id="backup-wallet"`, `id="send-form"`,
 		`id="review-payment"`, `id="confirm-send"`, `id="send-result"`,
@@ -146,6 +148,64 @@ func TestEmbeddedInterfaceIncludesHonestOfficialSoloMiner(t *testing.T) {
 	}
 }
 
+func TestEmbeddedMinerSupportDiagnosticsAreUsefulAndPrivate(t *testing.T) {
+	htmlBody, err := fs.ReadFile(assetsFS, "assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(htmlBody)
+	for _, required := range []string{
+		`class="miner-readiness"`, `id="miner-wallet-check"`, `id="miner-endpoint-check"`,
+		`id="miner-cpu-check"`, `id="miner-cpu-guidance"`, `id="copy-miner-report"`,
+		`href="https://btc09.org/#mining-guide"`, `Leave one thread free`, `Copy help report`,
+		`id="copy-miner-report" class="quiet-action miner-copy-action"`,
+	} {
+		if !strings.Contains(html, required) {
+			t.Errorf("index is missing %q", required)
+		}
+	}
+
+	javascriptBody, err := fs.ReadFile(assetsFS, "assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(javascriptBody)
+	for _, required := range []string{
+		`function minerSupportReport(status)`, `BTC09 miner help report`, `Version:`, `Wallet mode:`,
+		`Miner state:`, `CPU threads:`, `Jobs:`, `Reconnects:`, `Last error:`,
+		`status.jobs > 0 ? "Last check passed" : "Not tested"`,
+		`navigator.clipboard.writeText(minerSupportReport(state.miner))`,
+	} {
+		if !strings.Contains(javascript, required) {
+			t.Errorf("app script is missing %q", required)
+		}
+	}
+	start := strings.Index(javascript, "function minerSupportReport(status)")
+	if start < 0 {
+		t.Fatal("could not find miner support report function")
+	}
+	end := strings.Index(javascript[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("could not isolate miner support report function")
+	}
+	reportFunction := javascript[start : start+end]
+	for _, private := range []string{"status.address", "status.worker", "wallet_path", "addresses"} {
+		if strings.Contains(reportFunction, private) {
+			t.Errorf("support report includes private field %q", private)
+		}
+	}
+
+	cssBody, err := fs.ReadFile(assetsFS, "assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{`.miner-readiness`, `.miner-help-row`, `.miner-cpu-guidance`} {
+		if !strings.Contains(string(cssBody), required) {
+			t.Errorf("app stylesheet is missing %q", required)
+		}
+	}
+}
+
 func TestEmbeddedInterfaceLinksToNineInboxWithoutChangingWalletActions(t *testing.T) {
 	htmlBody, err := fs.ReadFile(assetsFS, "assets/index.html")
 	if err != nil {
@@ -186,6 +246,7 @@ func TestAuthenticatedRootServesInterfaceAndAssets(t *testing.T) {
 		{path: "/", contentType: "text/html", contains: "BTC09 Wallet"},
 		{path: "/assets/app.css", contentType: "text/css", contains: "--copper"},
 		{path: "/assets/app.js", contentType: "text/javascript", contains: "/api/v1/status"},
+		{path: "/assets/icon.svg", contentType: "image/svg+xml", contains: "<svg"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, test.path, nil)
 		req.Host = "127.0.0.1:49152"

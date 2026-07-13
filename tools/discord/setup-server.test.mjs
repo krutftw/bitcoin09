@@ -21,3 +21,22 @@ test("Nine Inbox announcement is concise, honest, and English", () => {
     assert.ok(!source.slice(source.indexOf('marker: "Nine Inbox is live."'), source.indexOf('marker: "Nine Inbox is live."') + 1200).includes(forbidden));
   }
 });
+
+test("v0.1.26 announcement explains the useful changes without hype", () => {
+  const start = source.indexOf('marker: "Bitcoin 09 v0.1.26 is out."');
+  assert.ok(start >= 0, "missing v0.1.26 announcement");
+  const announcement = source.slice(start, start + 1800);
+  for (const required of [
+    "Bitcoin 09 v0.1.26 is out.",
+    "Nine Inbox",
+    "Copy help report",
+    "Go 1.25.12",
+    "https://github.com/krutftw/bitcoin09/releases/tag/v0.1.26",
+    "Open solo is still solo mining",
+  ]) {
+    assert.ok(announcement.includes(required), `missing ${required}`);
+  }
+  for (const forbidden of ["revolutionary", "game-changing", "seamless", "guaranteed", "—"]) {
+    assert.ok(!announcement.includes(forbidden), `announcement contains ${forbidden}`);
+  }
+});

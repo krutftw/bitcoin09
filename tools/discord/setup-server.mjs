@@ -258,6 +258,22 @@ const marketBoardComponents = [
 const seedPosts = [
   {
     channelKey: "announcements",
+    marker: "Bitcoin 09 v0.1.26 is out.",
+    content: [
+      "Bitcoin 09 v0.1.26 is out.",
+      "",
+      "This release puts the Nine Inbox link into the downloadable wallet and makes miner problems easier to diagnose. The Mine tab now checks wallet, endpoint, and CPU readiness, gives clearer thread guidance, and adds Copy help report for Discord support. The report leaves out your wallet address and worker name.",
+      "",
+      "All release binaries are built with Go 1.25.12.",
+      "",
+      "Open solo is still solo mining. There are no partial-share payouts and no changes to consensus or coin supply.",
+      "",
+      "Release and checksums: https://github.com/krutftw/bitcoin09/releases/tag/v0.1.26",
+      "Nine Inbox: https://btc09.org/inbox/",
+    ].join("\n"),
+  },
+  {
+    channelKey: "announcements",
     marker: "Nine Inbox is live.",
     content: [
       "Nine Inbox is live.",
@@ -277,7 +293,7 @@ const seedPosts = [
     content: [
       "Bitcoin 09 Discord is live.",
       "",
-      "Current release: v0.1.25",
+      "Current release: v0.1.26",
       "Source/releases: https://github.com/krutftw/bitcoin09",
       "Explorer: https://explorer.btc09.org",
       "Public pool: https://bitcoin09.tutuit.xyz",
