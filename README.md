@@ -266,6 +266,8 @@ commands. The [exchange integration guide](docs/EXCHANGE-INTEGRATION.md) covers
 release verification, unique deposit addresses, tip-pinned scans, confirmation
 and reorg handling, withdrawal inspection, broadcast, backups, and a read-only
 smoke test. BTC09 is not claiming an exchange listing until a venue confirms it.
+The [listing spec](docs/EXCHANGE-LISTING.md) records verified outreach status,
+current commercial requirements, and the no-fake-volume funding policy.
 
 ## Brand
 
