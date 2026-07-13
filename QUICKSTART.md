@@ -88,26 +88,16 @@ btc09 node -mine -workers 3 -tag yourname
 When your node finds a block it prints `BLOCK FOUND`. The current block reward
 is 50 09C and mined rewards become spendable after 100 blocks.
 
-## Pool Mine
+## Mine in the desktop wallet
 
-Community-operated third-party pool:
+Open the BTC09 app, choose **Mine**, select how many CPU threads to use, and
+press **Start mining**. This uses the supported open-source miner and pays a
+block you find directly to your wallet.
 
-https://www.ntmminer.com/btc09
-
-Use the pool's current worker instructions from the pool page.
-
-The pool currently recommends NTMminer for pool mining. NTMminer is a
-third-party closed-source binary miner, not the official 09C wallet or node. It
-only needs your 09C payout address. Do not give any pool miner a seed phrase,
-private key, wallet file, remote access, or Discord token.
-
-NTMminer supports GPU mining for some other algorithms, but its `btc09`
-algorithm is CPU in the current public release. There is no official 09C GPU
-miner right now. 09C does not police hardware at consensus level: if a miner
-finds valid blocks, those blocks are valid.
-
-Pool miner count means payout addresses connected to that public pool, not
-guaranteed unique people and not solo miners.
+The official software currently supports local solo and remote solo mining.
+Pooled reward accounting is not live yet. Only download BTC09 from the GitHub
+releases page, and never give mining software your recovery words, private key,
+wallet file, remote access, or Discord token.
 
 ## Open-source Remote Solo Mining
 
