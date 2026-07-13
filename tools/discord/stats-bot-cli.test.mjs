@@ -62,36 +62,28 @@ function jsonResponse(value, status = 200) {
   });
 }
 
-test("chain stats remain useful when every third-party pool request fails", async () => {
+test("chain stats use the official explorer without calling miner download or pool services", async () => {
+  const calls = [];
   const stats = await getStats(async (url) => {
+    calls.push(url);
     if (url.includes("explorer.btc09.org")) return jsonResponse(explorerStatus);
-    throw new Error("third-party pool offline");
+    throw new Error(`unexpected service ${url}`);
   });
   const message = formatStatsMessage(stats);
+  assert.deepEqual(calls, ["https://explorer.btc09.org/api/status"]);
   assert.match(message, /Network height \/ peers: \*\*7,386 \/ 6\*\*/);
   assert.match(message, /Estimated network hashrate: \*\*16\.30 KH\/s\*\*/);
   assert.match(message, /Top payout address, last 100 blocks: \*\*100\.0%/);
   assert.doesNotMatch(message, /Community pool/);
+  assert.doesNotMatch(message, /ntmminer/i);
 });
 
-test("available pool stats are appended and clearly marked third-party", async () => {
-  const stats = await getStats(async (url) => {
-    if (url.includes("explorer.btc09.org")) return jsonResponse(explorerStatus);
-    if (url.includes("/miners")) return jsonResponse([{ miner: "09c-address", hashrate: 1200 }]);
-    if (url.includes("/blocks")) return jsonResponse([{ miner: "09c-address" }]);
-    if (url.includes("/payments")) return jsonResponse([{ address: "09c-address" }]);
-    return jsonResponse({
-      pool: {
-        poolStats: { connectedMiners: 1, poolHashrate: 1200 },
-        totalBlocks: 12,
-        totalPaid: 50,
-      },
-    });
-  });
-  const message = formatStatsMessage(stats);
-  assert.match(message, /Community pool \(third-party\)/);
-  assert.match(message, /Active pool payout addresses: \*\*1\*\*/);
-  assert.match(message, /09c-address/);
+test("stats implementation contains no retired pool dependency", async () => {
+  const source = await import("node:fs/promises").then(({ readFile }) =>
+    readFile(scriptPath, "utf8"),
+  );
+  assert.doesNotMatch(source, /ntmminer/i);
+  assert.doesNotMatch(source, /POOL_BASE/);
 });
 
 test("registered stats commands and role buttons are routed", () => {

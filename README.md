@@ -275,21 +275,19 @@ Logo and brand files are in [BRAND.md](BRAND.md). Use these instead of
 random coin art so Bitcoin 09 looks consistent across Discord, pool pages,
 forum posts and listings.
 
-## Third-party pool miners
+## Mining software
 
 The official Bitcoin 09 software is `btc09`: reference node, wallet, solo
-miner and explorer.
+miner and explorer. Download it only from the project's
+[GitHub releases](https://github.com/krutftw/bitcoin09/releases) and verify the
+published checksums.
 
-The public pool currently recommends NTMminer for pool mining. NTMminer is a
-third-party closed-source binary miner that added `-a btc09` support in its
-v1.13.0 release. It only needs a payout address. Do not give any pool miner a
-seed phrase, private key, wallet file, remote access or Discord token.
-
-NTMminer has NVIDIA GPU support for some other algorithms, but its public
-`btc09` backend is listed as CPU-only. There is no official 09C GPU miner
-right now. If a third-party GPU miner appears later, that is still
-permissionless mining. Treat any closed-source pool miner carefully: use only
-a payout address and never give it wallet secrets.
+The official miner is open-source CPU solo mining. There is no official 09C
+GPU miner, and pooled payouts are not live in the official software. Do not
+run miner binaries sent through DMs or file-sharing links. Permissionless
+third-party software may appear, but the project does not endorse it or ask
+you to provide a seed phrase, private key, wallet file, remote access, or
+Discord token.
 
 ## Open-source remote solo mining
 

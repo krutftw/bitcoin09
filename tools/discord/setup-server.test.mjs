@@ -40,3 +40,22 @@ test("v0.1.26 announcement explains the useful changes without hype", () => {
     assert.ok(!announcement.includes(forbidden), `announcement contains ${forbidden}`);
   }
 });
+
+test("mining support update points people to the official client only", () => {
+  const start = source.indexOf('marker: "Mining support update"');
+  assert.ok(start >= 0, "missing mining support update");
+  const announcement = source.slice(start, start + 1400);
+  for (const required of [
+    "Mining support update",
+    "Download BTC09 only from the official GitHub releases page.",
+    "open-source CPU solo miner",
+    "Pooled payouts are not live in the official software.",
+    "No pool or GPU miner is currently endorsed by the project.",
+    "https://github.com/krutftw/bitcoin09/releases",
+  ]) {
+    assert.ok(announcement.includes(required), `missing ${required}`);
+  }
+  for (const forbidden of ["ntmminer", "mediafire", "bitcoin09.tutuit.xyz", "—"]) {
+    assert.ok(!source.toLowerCase().includes(forbidden), `setup contains ${forbidden}`);
+  }
+});

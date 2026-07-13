@@ -1685,26 +1685,6 @@ h1 {
 <p class="muted">The target is the rule. The observed average is what miners are seeing right now.</p>
 </div>
 </details>
-<details class="technical-note">
-<summary>Community pool data</summary>
-<div class="technical-content">
-<h3 id="pool-heading">Community pool <a href="https://www.ntmminer.com/btc09">ntmminer.com</a> <small>(third-party, not run by 09C)</small></h3>
-<p id="pool-note" class="muted">Pool data is from a community-operated third-party pool and may lag or be unavailable. Chain data above comes from the official 09C node.</p>
-<div class="stat-grid">
-<div class="stat"><b id="stat-miners">-</b><span>active pool miner addresses</span></div>
-<div class="stat"><b id="stat-pool-hashrate">-</b><span>pool hashrate</span></div>
-<div class="stat"><b id="stat-blocks">-</b><span>pool blocks found</span></div>
-<div class="stat"><b id="stat-paid">-</b><span>09C paid by pool</span></div>
-</div>
-<details class="miner-list">
-<summary>Top active pool addresses</summary>
-<table>
-<thead><tr><th scope="col">Address</th><th scope="col">Hashrate</th></tr></thead>
-<tbody id="miner-rows"><tr><td colspan="2">Loading...</td></tr></tbody>
-</table>
-</details>
-</div>
-</details>
 </div>
 </div>
 </section>
@@ -1751,9 +1731,9 @@ h1 {
 <pre>btc09 node -mine</pre>
 </div>
 <div class="command">
-<h3>Third-party pool</h3>
-<p>Use your 09C payout address and the current instructions on the community-operated pool page.</p>
-<pre>https://www.ntmminer.com/btc09</pre>
+<h3>Remote solo mine</h3>
+<p>Mine against the official open coordinator without downloading the full chain.</p>
+<pre>btc09 mine-pool -pool https://btc09.org -address YOUR_09C_ADDRESS</pre>
 </div>
 <div class="command">
 <h3>Run a node</h3>
@@ -1803,11 +1783,11 @@ curl https://explorer.btc09.org/api/circulating_supply</pre>
 </details>
 
 <details class="technical-note">
-<summary>Third-party miner safety</summary>
+<summary>Unofficial miner warning</summary>
 <div class="technical-content">
-<h3>Third-party miners</h3>
-<p>NTMminer is a third-party closed-source binary miner, not the official 09C wallet or node. It only needs your payout address. Do not give any pool miner a seed phrase, private key, wallet file, remote access, or Discord token.</p>
-<p>NTMminer has GPU support for some other algorithms, but the current public <code>btc09</code> backend is listed as CPU-only. There is no official 09C GPU miner right now. If a third-party GPU miner appears, it is still permissionless mining. Treat any closed-source miner carefully: use only a payout address.</p>
+<h3>Use the supported miner</h3>
+<p><strong>Only download the official BTC09 client from GitHub.</strong> The wallet includes the open-source CPU solo miner. There is no official 09C GPU miner. Pooled payouts are not live in the official software.</p>
+<p>Do not run miner binaries sent through DMs or file-sharing links. Permissionless third-party software may appear, but the project does not endorse it. Never give mining software a seed phrase, private key, wallet file, remote access, or Discord token.</p>
 </div>
 </details>
 </div>
@@ -1861,8 +1841,6 @@ curl https://explorer.btc09.org/api/circulating_supply</pre>
 </footer>
 
 <script>
-const poolApi = 'https://www.ntmminer.com/api-btc09/pools/btc09';
-const minerApi = 'https://www.ntmminer.com/api-btc09/pools/btc09/miners?pageSize=20';
 const explorerApi = 'https://explorer.btc09.org/api/status';
 let currentNetworkStatus = null;
 
@@ -1956,19 +1934,15 @@ async function fetchJson(url) {
   return response.json();
 }
 
-function setLiveSummary(status, pool, miners) {
+function setLiveSummary(status) {
   const live = document.getElementById('live');
-  const heightValue = status?.height ?? pool?.networkStats?.blockHeight;
-  const difficultyValue = status?.difficulty ?? pool?.networkStats?.networkDifficulty;
-  const height = Number(heightValue ?? 0).toLocaleString();
-  const difficulty = fixed(difficultyValue, 2);
-  const peers = status ? Number(status.peers ?? 0).toLocaleString() : 'unknown';
-  const networkHashrate = status ? hashRate(status.estimated_network_hashrate_hps) : 'unavailable';
+  const height = Number(status.height ?? 0).toLocaleString();
+  const difficulty = fixed(status.difficulty, 2);
+  const peers = Number(status.peers ?? 0).toLocaleString();
+  const networkHashrate = hashRate(status.estimated_network_hashrate_hps);
   const retarget = status?.blocks_to_retarget != null ? ', retarget in ' + Number(status.blocks_to_retarget).toLocaleString() + ' blocks' : '';
   live.replaceChildren(
     document.createTextNode('network now: height ' + height + ', peers ' + peers + ', difficulty ' + difficulty + retarget + ', estimated hashrate ' + networkHashrate + '. '),
-    Object.assign(document.createElement('a'), { href: 'https://www.ntmminer.com/btc09', textContent: 'pool' }),
-    document.createTextNode(' / '),
     Object.assign(document.createElement('a'), { href: 'https://explorer.btc09.org', textContent: 'explorer' }),
     document.createTextNode(' / '),
     Object.assign(document.createElement('a'), { href: 'https://discord.gg/fUuGzwRTzP', textContent: 'Discord' }),
@@ -1976,78 +1950,30 @@ function setLiveSummary(status, pool, miners) {
   );
 }
 
-function renderMiners(miners) {
-  const rows = document.getElementById('miner-rows');
-  rows.replaceChildren();
-  if (!miners.length) {
-    const row = document.createElement('tr');
-    const cell = document.createElement('td');
-    cell.colSpan = 2;
-    cell.textContent = 'No pool miners reported right now.';
-    row.append(cell);
-    rows.append(row);
-    return;
-  }
-
-  for (const miner of miners.slice(0, 10)) {
-    const row = document.createElement('tr');
-    const address = document.createElement('td');
-    const hashrate = document.createElement('td');
-    address.textContent = miner.miner;
-    hashrate.textContent = hashRate(miner.hashrate);
-    row.append(address, hashrate);
-    rows.append(row);
-  }
-}
-
 async function refreshStats() {
   const note = document.getElementById('stats-note');
   try {
-    const [statusResult, poolResult, minersResult] = await Promise.allSettled([
-      fetchJson(explorerApi),
-      fetchJson(poolApi),
-      fetchJson(minerApi),
-    ]);
-
-    const status = statusResult.status === 'fulfilled' ? statusResult.value : null;
-    const poolData = poolResult.status === 'fulfilled' ? poolResult.value : null;
-    const miners = minersResult.status === 'fulfilled' ? minersResult.value : [];
-    const pool = poolData?.pool;
+    const status = await fetchJson(explorerApi);
     const updated = new Date();
 
-    if (!status && !pool) throw new Error('no live status source');
-
-    text('stat-height', status ? Number(status.height ?? 0).toLocaleString() : Number(pool?.networkStats?.blockHeight ?? 0).toLocaleString());
-    text('stat-peers', status ? Number(status.peers ?? 0).toLocaleString() : '-');
-    text('stat-difficulty', fixed(status?.difficulty ?? pool?.networkStats?.networkDifficulty, 2));
+    text('stat-height', Number(status.height ?? 0).toLocaleString());
+    text('stat-peers', Number(status.peers ?? 0).toLocaleString());
+    text('stat-difficulty', fixed(status.difficulty, 2));
     text('stat-target', secondsText(status?.target_block_seconds));
     text('stat-avg-block', secondsText(status?.epoch_average_block_seconds));
     text('stat-retarget', status?.blocks_to_retarget != null ? Number(status.blocks_to_retarget).toLocaleString() : '-');
     text('stat-next-diff', fixed(status?.estimated_next_difficulty, 2));
-    text('stat-supply', status ? fixed(status.circulating_supply, 2) : '-');
+    text('stat-supply', fixed(status.circulating_supply, 2));
     const payoutWindows = Array.isArray(status?.payout_address_windows) ? status.payout_address_windows : [];
     const window100 = payoutWindows.find((window) => Number(window.requested_blocks) === 100);
-    text('stat-network-hashrate', status ? hashRate(status.estimated_network_hashrate_hps) : '-');
+    text('stat-network-hashrate', hashRate(status.estimated_network_hashrate_hps));
     text('stat-top-share-100', window100 ? fixed(window100.top_share_percent, 1) + '%' : '-');
     text('stat-distinct-100', window100 ? Number(window100.distinct_payout_addresses).toLocaleString() : '-');
-    text('stat-miners', pool ? Number(pool.poolStats?.connectedMiners ?? miners.length).toLocaleString() : '-');
-    text('stat-pool-hashrate', pool ? hashRate(pool.poolStats?.poolHashrate) : '-');
-    text('stat-blocks', pool ? Number(pool.totalBlocks ?? 0).toLocaleString() : '-');
-    text('stat-paid', pool ? fixed(pool.totalPaid, 2) : '-');
     note.className = 'muted';
     note.textContent = 'Official node data. Updated ' + updated.toLocaleTimeString() + '.';
-    const poolNote = document.getElementById('pool-note');
-    if (poolNote) {
-      poolNote.className = pool ? 'muted' : 'error';
-      poolNote.textContent = pool
-        ? 'Pool data from the community-operated third-party pool (ntmminer.com). Miner count means pool payout addresses, not guaranteed unique people. Updated ' + updated.toLocaleTimeString() + '.'
-        : 'Community pool data is unavailable right now (the third-party pool API did not respond). Chain data above is unaffected.';
-    }
-
-    renderMiners(miners);
     currentNetworkStatus = status;
     renderSoloEstimate();
-    setLiveSummary(status, pool, miners);
+    setLiveSummary(status);
   } catch (error) {
     note.className = 'error';
     note.textContent = 'Live chain stats are unavailable right now. Use the explorer link below.';
