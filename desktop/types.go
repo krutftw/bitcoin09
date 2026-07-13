@@ -81,24 +81,28 @@ type MinerStartRequest struct {
 }
 
 type MinerStatus struct {
-	Available       bool    `json:"available"`
-	WalletReady     bool    `json:"wallet_ready"`
-	State           string  `json:"state"`
-	Address         string  `json:"address"`
-	Worker          string  `json:"worker"`
-	Workers         int     `json:"workers"`
-	LogicalCPUs     int     `json:"logical_cpus"`
-	CurrentHashrate float64 `json:"current_hashrate"`
-	AverageHashrate float64 `json:"average_hashrate"`
-	TotalHashes     uint64  `json:"total_hashes"`
-	ElapsedSeconds  int64   `json:"elapsed_seconds"`
-	Jobs            uint64  `json:"jobs"`
-	Reconnects      uint64  `json:"reconnects"`
-	BlocksAccepted  uint64  `json:"blocks_accepted"`
-	Height          int64   `json:"height"`
-	LastBlockID     string  `json:"last_block_id"`
-	LastError       string  `json:"last_error"`
-	RetryInSeconds  int64   `json:"retry_in_seconds"`
+	Available         bool    `json:"available"`
+	WalletReady       bool    `json:"wallet_ready"`
+	State             string  `json:"state"`
+	Address           string  `json:"address"`
+	Worker            string  `json:"worker"`
+	Workers           int     `json:"workers"`
+	LogicalCPUs       int     `json:"logical_cpus"`
+	CurrentHashrate   float64 `json:"current_hashrate"`
+	AverageHashrate   float64 `json:"average_hashrate"`
+	TotalHashes       uint64  `json:"total_hashes"`
+	ElapsedSeconds    int64   `json:"elapsed_seconds"`
+	Jobs              uint64  `json:"jobs"`
+	Reconnects        uint64  `json:"reconnects"`
+	MiningMode        string  `json:"mining_mode"`
+	PoolFeeBPS        int     `json:"pool_fee_bps"`
+	SharesAccepted    uint64  `json:"shares_accepted"`
+	BlocksAccepted    uint64  `json:"blocks_accepted"`
+	Height            int64   `json:"height"`
+	LastBlockID       string  `json:"last_block_id"`
+	LastShareSequence uint64  `json:"last_share_sequence"`
+	LastError         string  `json:"last_error"`
+	RetryInSeconds    int64   `json:"retry_in_seconds"`
 }
 
 // MinerService is optional. Wallet-only services do not need to implement it.

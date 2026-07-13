@@ -51,17 +51,20 @@ const (
 )
 
 type ClientEvent struct {
-	Type     ClientEventType
-	At       time.Time
-	JobID    string
-	Height   int64
-	Hashes   uint64
-	Hashrate float64
-	Elapsed  time.Duration
-	Final    bool
-	BlockID  string
-	RetryIn  time.Duration
-	Error    string
+	Type          ClientEventType
+	At            time.Time
+	JobID         string
+	Height        int64
+	Hashes        uint64
+	Hashrate      float64
+	Elapsed       time.Duration
+	Final         bool
+	BlockID       string
+	Status        string
+	ShareHash     string
+	ShareSequence uint64
+	RetryIn       time.Duration
+	Error         string
 }
 
 type RemoteAPIError struct {

@@ -511,18 +511,25 @@ An unexpected range diff blocks installation. Re-run the installer only after
 updating and reviewing the exact range fragment; repeat `nginx -t` and inspect
 `nginx -T` after every nginx or Certbot change.
 
-### Official Open solo miner
+### Official PPLNS miner
 
 The official coordinator shares the synced node but binds only to loopback.
-Add `-solo-api 127.0.0.1:9010` to the node service, restart it, and confirm the
-listener is not public:
+Add `-solo-api 127.0.0.1:9010` and a durable `-pplns-state` path to the node
+service, restart it, and confirm the listener is not public:
+
+```bash
+-solo-api 127.0.0.1:9010 \
+-pplns-state /opt/btc09/data/pplns-window.json \
+-pplns-window 256 \
+-pplns-max-addresses 64
+```
 
 ```bash
 ss -lntp | grep '127.0.0.1:9010'
 ! ss -lntp | grep -E '0\.0\.0\.0:9010|\[::\]:9010'
 ```
 
-Install the exact two-route nginx boundary in the existing Cloudflare-protected
+Install the exact five-route nginx boundary in the existing Cloudflare-protected
 `btc09.org` TLS host. Pass any valid public mainnet payout address only for the
 loopback work health check; the installer does not store it.
 
@@ -534,8 +541,9 @@ nginx -T 2>/dev/null | grep -nE 'btc09_miner|127.0.0.1:9010'
 ```
 
 No Cloud Firewall rule is added for 9010. Cloudflare and nginx receive HTTPS;
-nginx restores the client IP, applies separate work and submit limits, and
-proxies only `POST /api/v1/work` and `POST /api/v1/submit` to loopback.
+nginx restores the client IP, applies separate v1 and v2 limits, and proxies
+only the two v1 routes plus `POST /api/v2/pool/work`,
+`POST /api/v2/pool/submit`, and `GET /api/v2/pool/status` to loopback.
 
 ## 8. Restore and rollback
 

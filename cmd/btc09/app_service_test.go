@@ -270,6 +270,15 @@ func waitForMinerStatus(t *testing.T, service *appService, predicate func(deskto
 
 func TestAppMinerRequiresWalletAndUsesItsPrimaryAddress(t *testing.T) {
 	service, _, _ := newAppTestService(t)
+	defaultClient, err := service.newMiner(pool.RemoteClientConfig{
+		PoolURL: "http://127.0.0.1:9010", Address: core.EncodeAddress([20]byte{1}), Params: &core.RegTest, AllowInsecureHTTP: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := defaultClient.(*pool.PPLNSRemoteClient); !ok {
+		t.Fatalf("desktop miner client = %T, want PPLNS", defaultClient)
+	}
 	if _, err := service.StartMiner(context.Background(), desktop.MinerStartRequest{Workers: 1}); err == nil {
 		t.Fatal("miner started without a wallet")
 	}
@@ -332,7 +341,8 @@ func TestAppMinerTracksRetriesJobsAndAcceptedBlocksWithoutDoubleCounting(t *test
 			emit(pool.ClientEvent{Type: pool.ClientEventRetrying, RetryIn: time.Second, Error: "Endpoint unavailable."})
 			emit(pool.ClientEvent{Type: pool.ClientEventJob, JobID: "job-2", Height: 61})
 			emit(pool.ClientEvent{Type: pool.ClientEventProgress, JobID: "job-2", Hashes: 8, Hashrate: 8, Final: true})
-			emit(pool.ClientEvent{Type: pool.ClientEventAccepted, JobID: "job-2", Height: 61, Hashes: 8, BlockID: "block-1"})
+			emit(pool.ClientEvent{Type: pool.ClientEventAccepted, JobID: "job-2", Height: 61, Hashes: 8, Status: "share_accepted", ShareHash: strings.Repeat("a", 64), ShareSequence: 7})
+			emit(pool.ClientEvent{Type: pool.ClientEventAccepted, JobID: "job-2", Height: 61, Hashes: 8, Status: "block_accepted", ShareHash: strings.Repeat("b", 64), ShareSequence: 8, BlockID: "block-1"})
 			<-ctx.Done()
 			return ctx.Err()
 		}}, nil
@@ -341,7 +351,8 @@ func TestAppMinerTracksRetriesJobsAndAcceptedBlocksWithoutDoubleCounting(t *test
 		t.Fatal(err)
 	}
 	status := waitForMinerStatus(t, service, func(status desktop.MinerStatus) bool { return status.BlocksAccepted == 1 })
-	if status.TotalHashes != 38 || status.Jobs != 2 || status.Reconnects != 1 || status.LastBlockID != "block-1" || status.LastError != "" {
+	if status.TotalHashes != 38 || status.Jobs != 2 || status.Reconnects != 1 || status.SharesAccepted != 2 ||
+		status.LastShareSequence != 8 || status.LastBlockID != "block-1" || status.LastError != "" {
 		t.Fatalf("status = %+v", status)
 	}
 	_, _ = service.StopMiner(context.Background())
@@ -425,7 +436,7 @@ func TestAppMinerFatalEndpointErrorGivesActionableSupportStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := waitForMinerStatus(t, service, func(status desktop.MinerStatus) bool { return status.State == "error" })
-	const want = "The official mining endpoint returned incompatible data. Update BTC09, then copy the help report if it happens again."
+	const want = "The official pool returned incompatible data. Update BTC09, then copy the help report if it happens again."
 	if status.LastError != want {
 		t.Fatalf("LastError = %q, want %q", status.LastError, want)
 	}

@@ -420,10 +420,12 @@ function minerIsActive(status) {
 function minerStateCopy(status) {
   if (!status?.available) return "The official miner is not available in this build.";
   if (!status.wallet_ready) return "Create your wallet before starting the miner.";
-  if (status.state === "connecting") return "Connecting to the official Open solo endpoint…";
-  if (status.state === "mining") return status.blocks_accepted > 0
-    ? `Block accepted at height ${Number(status.height).toLocaleString()}. Mining the next job.`
-    : `Mining job at height ${Number(status.height || 0).toLocaleString()}.`;
+  if (status.state === "connecting") return "Connecting to the official PPLNS pool…";
+  if (status.state === "mining") {
+    if (status.blocks_accepted > 0) return `Block accepted at height ${Number(status.height).toLocaleString()}. Mining the next job.`;
+    if (status.shares_accepted > 0) return `Share ${Number(status.last_share_sequence).toLocaleString()} accepted. Mining for the next one.`;
+    return `Mining PPLNS job at height ${Number(status.height || 0).toLocaleString()}.`;
+  }
   if (status.state === "retrying") return `${status.last_error || "Connection interrupted."} Retrying in ${status.retry_in_seconds || 1}s.`;
   if (status.state === "stopping") return "Stopping after the current hash attempt…";
   if (status.state === "error") return status.last_error || "Mining stopped after an endpoint error.";
@@ -448,6 +450,10 @@ function minerSupportReport(status) {
     `Network: ${state.status?.network || "unknown"}`,
     `Wallet mode: ${state.status?.mode || "unknown"}`,
     `Miner state: ${status?.state || "unknown"}`,
+    `Pool mode: ${status?.mining_mode || "unknown"}`,
+    `Pool fee: ${Number(status?.pool_fee_bps || 0) / 100}%`,
+    `Shares: ${Number(status?.shares_accepted || 0)}`,
+    `Blocks: ${Number(status?.blocks_accepted || 0)}`,
     `CPU threads: ${selectedWorkers} of ${logicalCPUs}`,
     `Current rate: ${formatHashrate(status?.current_hashrate)}`,
     `Session average: ${formatHashrate(status?.average_hashrate)}`,
@@ -494,7 +500,7 @@ function renderMinerStatus(status) {
   byId("miner-address").textContent = status.address || fallbackAddress || "Create a wallet first";
   byId("miner-current-hashrate").textContent = formatHashrate(status.current_hashrate);
   byId("miner-average-hashrate").textContent = formatHashrate(status.average_hashrate);
-  byId("miner-total-hashes").textContent = Number(status.total_hashes || 0).toLocaleString();
+  byId("miner-shares").textContent = Number(status.shares_accepted || 0).toLocaleString();
   byId("miner-blocks").textContent = Number(status.blocks_accepted || 0).toLocaleString();
   byId("miner-state").textContent = (status.state || "stopped").replace(/^./, (letter) => letter.toUpperCase());
   byId("miner-state").dataset.state = status.state || "stopped";

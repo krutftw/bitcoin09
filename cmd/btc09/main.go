@@ -38,7 +38,7 @@ import (
 )
 
 // nodeVersion is the release version; bump alongside git tags.
-const nodeVersion = "v0.1.27"
+const nodeVersion = "v0.1.28"
 
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
@@ -237,12 +237,12 @@ func usage() {
 
 usage:
   btc09 app    [-network mainnet|regtest] [-datadir DIR] [-wallet-file FILE] [-seeds HOSTS] [-no-browser]
-  btc09 node   [-mine] [-listen :9009] [-solo-api 127.0.0.1:9010] [-seeds host:port,...] [-network mainnet|regtest] [-datadir DIR] [-wallet-file FILE] [-tag TEXT] [-no-update-check]
+  btc09 node   [-mine] [-listen :9009] [-solo-api 127.0.0.1:9010] [-pplns-state FILE] [-seeds host:port,...] [-network mainnet|regtest] [-datadir DIR] [-wallet-file FILE] [-tag TEXT] [-no-update-check]
   btc09 wallet new|list [-network mainnet|regtest] [-datadir DIR] [-wallet-file FILE]
   btc09 wallet new -wallet-file FILE -network btc09-mainnet|btc09-regtest -json
   btc09 wallet snapshot -wallet-file FILE -datadir DIR -network NETWORK -expected-tip-hash HASH -expected-tip-height HEIGHT -json
   btc09 send   -to ADDRESS -amount DECIMAL [-fee DECIMAL] [-datadir DIR] [-wallet-file FILE] [-seeds host:port,...]
-  btc09 mine-pool -pool https://HOST -address ADDRESS [-worker NAME] [-workers N] [-network mainnet|regtest]
+  btc09 mine-pool -pool https://HOST -address ADDRESS [-mode pplns|solo] [-worker NAME] [-workers N] [-network mainnet|regtest]
   btc09 nine-inbox [-listen 127.0.0.1:8020] [-data-dir DIR]
   btc09 prepare-send -to ADDRESS -amount DECIMAL -fee DECIMAL -datadir DIR -network NETWORK -wallet-file FILE -expected-tip-hash HASH -expected-tip-height HEIGHT -exclude-outpoints-json - -json
   btc09 inspect-tx -tx-hex - -network NETWORK -json
@@ -266,6 +266,7 @@ type minePoolOptions struct {
 	worker            string
 	workers           int
 	network           string
+	mode              string
 	allowInsecureHTTP bool
 }
 
@@ -278,6 +279,7 @@ func parseMinePoolArgs(args []string) (minePoolOptions, error) {
 	fs.StringVar(&options.worker, "worker", "", "optional worker label")
 	fs.IntVar(&options.workers, "workers", runtime.NumCPU(), "mining threads")
 	fs.StringVar(&options.network, "network", "mainnet", "mainnet or regtest")
+	fs.StringVar(&options.mode, "mode", "pplns", "pplns or solo")
 	fs.BoolVar(&options.allowInsecureHTTP, "allow-insecure-http", false, "allow a plain HTTP coordinator")
 	if err := fs.Parse(args); err != nil {
 		return minePoolOptions{}, err
@@ -291,6 +293,9 @@ func parseMinePoolArgs(args []string) (minePoolOptions, error) {
 	if _, err := humanParams(options.network); err != nil {
 		return minePoolOptions{}, err
 	}
+	if options.mode != "pplns" && options.mode != "solo" {
+		return minePoolOptions{}, errors.New("mine-pool mode must be pplns or solo")
+	}
 	return options, nil
 }
 
@@ -300,23 +305,42 @@ func cmdMinePool(args []string) {
 		log.Fatal(err)
 	}
 	params, _ := humanParams(options.network)
-	client, err := pool.NewRemoteClient(pool.RemoteClientConfig{
+	config := pool.RemoteClientConfig{
 		PoolURL:           options.poolURL,
 		Address:           options.address,
 		Worker:            options.worker,
 		Params:            params,
 		Workers:           options.workers,
 		AllowInsecureHTTP: options.allowInsecureHTTP,
-	})
-	if err != nil {
-		log.Fatal(err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	log.Printf("open remote-solo mining with %d threads; payout address %s", options.workers, options.address)
-	err = client.Run(ctx, func(mined pool.MineResult, accepted pool.SubmitResult) {
-		log.Printf("*** BLOCK FOUND *** height=%d id=%s hashes=%d", accepted.Height, accepted.BlockID, mined.Hashes)
-	})
+	if options.mode == "pplns" {
+		client, err := pool.NewPPLNSRemoteClient(config)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("PPLNS mining with %d threads; direct payout address %s", options.workers, options.address)
+		err = client.RunWithEvents(ctx, func(event pool.ClientEvent) {
+			if event.Type != pool.ClientEventAccepted {
+				return
+			}
+			if event.Status == "block_accepted" {
+				log.Printf("*** BLOCK ACCEPTED *** height=%d id=%s share=%d", event.Height, event.BlockID, event.ShareSequence)
+			} else {
+				log.Printf("share accepted sequence=%d height=%d", event.ShareSequence, event.Height)
+			}
+		})
+	} else {
+		client, err := pool.NewRemoteClient(config)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("remote-solo mining with %d threads; payout address %s", options.workers, options.address)
+		err = client.Run(ctx, func(mined pool.MineResult, accepted pool.SubmitResult) {
+			log.Printf("*** BLOCK FOUND *** height=%d id=%s hashes=%d", accepted.Height, accepted.BlockID, mined.Hashes)
+		})
+	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatal(err)
 	}
@@ -426,12 +450,19 @@ func cmdNode(args []string) {
 	explorerAddr := fs.String("explorer", "", "serve the block explorer on this address, e.g. :8009")
 	walletGatewayAddr := fs.String("wallet-gateway", "", "serve the light-wallet API on loopback, e.g. 127.0.0.1:8010")
 	soloAPI := fs.String("solo-api", "", "serve the open remote-solo mining API on this address, e.g. 127.0.0.1:9010")
+	pplnsState := fs.String("pplns-state", "", "enable PPLNS v2 with durable share state at this file")
+	pplnsWindow := fs.Int("pplns-window", 256, "PPLNS rolling share count")
+	pplnsMaxAddresses := fs.Int("pplns-max-addresses", 64, "maximum payout addresses in the PPLNS window")
+	pplnsShareMultiplier := fs.Uint64("pplns-share-multiplier", 64, "PPLNS share target multiplier over network target")
 	network := fs.String("network", "mainnet", "mainnet or regtest")
 	dataDir := fs.String("datadir", defaultDataDir(), "data directory")
 	walletFile := fs.String("wallet-file", "", "wallet file (legacy datadir wallet by default)")
 	tag := fs.String("tag", "", "text embedded in blocks you mine")
 	noUpdateCheck := fs.Bool("no-update-check", false, "do not check GitHub for a newer release at startup")
 	fs.Parse(args)
+	if *pplnsState != "" && *soloAPI == "" {
+		log.Fatal("-pplns-state requires -solo-api")
+	}
 
 	p := paramsFor(*network)
 	*walletFile = resolveHumanWalletPath(*walletFile, os.Getenv("BTC09_WALLET_PATH"), *dataDir, p.Name)
@@ -517,11 +548,40 @@ func cmdNode(args []string) {
 		if err != nil {
 			log.Fatalf("solo mining API: %v", err)
 		}
-		server := pool.NewHTTPServer(*soloAPI, pool.NewHTTPHandler(coordinator, pool.HTTPConfig{
+		var pplnsCoordinator *pool.PPLNSCoordinator
+		var pplnsWindowState *pool.PPLNSWindow
+		if *pplnsState != "" {
+			networkID, err := core.CanonicalNetworkID(p)
+			if err != nil {
+				log.Fatalf("PPLNS network: %v", err)
+			}
+			pplnsWindowState, err = pool.NewPPLNSWindow(networkID, pool.PPLNSConfig{
+				StatePath: *pplnsState, WindowShares: *pplnsWindow, MaxAddresses: *pplnsMaxAddresses,
+			})
+			if err != nil {
+				log.Fatalf("PPLNS state: %v", err)
+			}
+			defer func() {
+				if err := pplnsWindowState.Close(); err != nil {
+					log.Printf("PPLNS state close: %v", err)
+				}
+			}()
+			pplnsCoordinator, err = pool.NewPPLNSCoordinator(chain, pplnsWindowState, pool.PPLNSCoordinatorConfig{
+				Tag: *tag, ShareTargetMultiplier: *pplnsShareMultiplier,
+			})
+			if err != nil {
+				log.Fatalf("PPLNS coordinator: %v", err)
+			}
+		}
+		server := pool.NewHTTPServer(*soloAPI, pool.NewMiningHTTPHandler(coordinator, pplnsCoordinator, pool.HTTPConfig{
 			TrustProxyHeadersFromLoopback: true,
 		}))
 		go func() {
-			log.Printf("open remote-solo mining API on http://%s", *soloAPI)
+			if pplnsCoordinator != nil {
+				log.Printf("open mining API v1 solo + v2 PPLNS on http://%s; window=%d fee=0%%", *soloAPI, *pplnsWindow)
+			} else {
+				log.Printf("open remote-solo mining API on http://%s", *soloAPI)
+			}
 			if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Printf("solo mining API: %v", err)
 				stop()

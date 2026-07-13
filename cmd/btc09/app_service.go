@@ -155,9 +155,9 @@ func newAppService(config appServiceConfig) (*appService, error) {
 		now: time.Now,
 	}
 	service.miningHTTP = strings.HasPrefix(miningURL, "http://127.0.0.1:") || strings.HasPrefix(miningURL, "http://[::1]:")
-	service.minerStatus = desktop.MinerStatus{Available: true, State: "stopped", LogicalCPUs: runtime.NumCPU()}
+	service.minerStatus = desktop.MinerStatus{Available: true, State: "stopped", LogicalCPUs: runtime.NumCPU(), MiningMode: "pplns", PoolFeeBPS: 0}
 	service.newMiner = func(config pool.RemoteClientConfig) (appMinerClient, error) {
-		return pool.NewRemoteClient(config)
+		return pool.NewPPLNSRemoteClient(config)
 	}
 	service.submit = service.submitPayment
 	return service, nil
@@ -232,7 +232,7 @@ func (s *appService) StartMiner(ctx context.Context, request desktop.MinerStartR
 	s.minerLastHashes = 0
 	s.minerStatus = desktop.MinerStatus{
 		Available: true, WalletReady: true, State: "connecting", Address: addresses[0],
-		Worker: request.Worker, Workers: workers, LogicalCPUs: logicalCPUs,
+		Worker: request.Worker, Workers: workers, LogicalCPUs: logicalCPUs, MiningMode: "pplns", PoolFeeBPS: 0,
 	}
 	status := s.minerStatus
 	s.minerMu.Unlock()
@@ -292,7 +292,7 @@ func (s *appService) runMiner(ctx context.Context, client appMinerClient, done c
 		s.minerStatus.LastError = ""
 	} else {
 		s.minerStatus.State = "error"
-		s.minerStatus.LastError = "The official mining endpoint returned incompatible data. Update BTC09, then copy the help report if it happens again."
+		s.minerStatus.LastError = "The official pool returned incompatible data. Update BTC09, then copy the help report if it happens again."
 	}
 	if !s.minerStartedAt.IsZero() {
 		s.minerStatus.ElapsedSeconds = max(int64(0), int64(s.now().Sub(s.minerStartedAt).Seconds()))
@@ -338,8 +338,14 @@ func (s *appService) observeMinerEvent(event pool.ClientEvent) {
 		s.minerStatus.RetryInSeconds = max(int64(1), int64(event.RetryIn.Round(time.Second)/time.Second))
 	case pool.ClientEventAccepted:
 		s.minerStatus.State = "mining"
-		s.minerStatus.BlocksAccepted++
-		s.minerStatus.LastBlockID = event.BlockID
+		if event.Status == "share_accepted" || event.Status == "block_accepted" {
+			s.minerStatus.SharesAccepted++
+			s.minerStatus.LastShareSequence = event.ShareSequence
+		}
+		if event.Status == "block_accepted" || event.Status == "" && event.BlockID != "" {
+			s.minerStatus.BlocksAccepted++
+			s.minerStatus.LastBlockID = event.BlockID
+		}
 		s.minerStatus.Height = event.Height
 		s.minerStatus.LastError = ""
 		s.minerStatus.RetryInSeconds = 0

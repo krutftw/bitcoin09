@@ -56,6 +56,8 @@ health_address=${BTC09_MINER_HEALTH_ADDRESS:-}
 health_json="{\"address\":\"$health_address\",\"worker\":\"deploy-check\"}"
 curl --fail --silent --show-error -H 'Content-Type: application/json' \
     --data "$health_json" http://127.0.0.1:9010/api/v1/work >/dev/null
+curl --fail --silent --show-error \
+    http://127.0.0.1:9010/api/v2/pool/status >/dev/null
 
 backup_file "$http_target" http
 backup_file "$server_target" server
@@ -86,7 +88,9 @@ ready=0
 for _attempt in {1..10}; do
     if curl --fail --silent --show-error --resolve btc09.org:443:127.0.0.1 \
         -H 'Content-Type: application/json' --data "$health_json" \
-        https://btc09.org/api/v1/work >/dev/null; then
+        https://btc09.org/api/v1/work >/dev/null && \
+       curl --fail --silent --show-error --resolve btc09.org:443:127.0.0.1 \
+        https://btc09.org/api/v2/pool/status >/dev/null; then
         ready=1
         break
     fi
