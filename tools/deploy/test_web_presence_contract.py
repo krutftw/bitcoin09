@@ -8,6 +8,9 @@ class WebPresenceContractTest(unittest.TestCase):
         cls.config = pathlib.Path("deploy/nginx/bitcoin09-site.conf").read_text(
             encoding="utf-8"
         )
+        cls.nine_inbox = pathlib.Path(
+            "deploy/nginx/bitcoin09-nine-inbox-server.conf"
+        ).read_text(encoding="utf-8")
 
     def test_www_redirects_to_one_canonical_https_origin(self):
         self.assertIn("server_name www.btc09.org;", self.config)
@@ -39,6 +42,20 @@ class WebPresenceContractTest(unittest.TestCase):
                     self.config.count(f"proxy_hide_header {name};"),
                     2,
                     "root and explorer TLS servers should each normalize this header",
+                )
+
+    def test_nine_inbox_proxy_hides_upstream_copies_of_security_headers(self):
+        for name in (
+            "X-Content-Type-Options",
+            "X-Frame-Options",
+            "Referrer-Policy",
+            "Permissions-Policy",
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    self.nine_inbox.count(f"proxy_hide_header {name};"),
+                    6,
+                    "each browser-facing Nine Inbox route should normalize this header",
                 )
 
 
