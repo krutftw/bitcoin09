@@ -63,6 +63,101 @@ class IndexContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)
 
+    def test_homepage_gives_newcomers_a_clear_first_path(self):
+        for token in (
+            'class="skip-link"',
+            'aria-label="Primary navigation"',
+            'href="#download"',
+            'href="#network"',
+            'href="#mining-guide"',
+            'id="download"',
+            "Download for Windows",
+            "Create or open a wallet",
+            "Receive, send, or mine",
+            "Private keys stay on your computer",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.html)
+
+    def test_current_release_has_direct_platform_downloads_and_checksums(self):
+        for asset in (
+            "btc09-windows-amd64.exe",
+            "btc09-macos-apple",
+            "btc09-macos-intel",
+            "btc09-linux-amd64",
+            "btc09-linux-arm64",
+            "SHA256SUMS",
+        ):
+            with self.subTest(asset=asset):
+                self.assertIn(
+                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.26/{asset}",
+                    self.html,
+                )
+
+    def test_long_operator_material_is_progressively_disclosed(self):
+        self.assertGreaterEqual(self.html.count('class="technical-note"'), 4)
+        for heading in (
+            "Remote solo protocol",
+            "Full node and command line",
+            "Third-party miner safety",
+        ):
+            with self.subTest(heading=heading):
+                self.assertIn(f"<summary>{heading}</summary>", self.html)
+
+    def test_interactions_keep_visible_keyboard_and_reduced_motion_states(self):
+        for token in (
+            ":focus-visible",
+            "prefers-reduced-motion: reduce",
+            "scroll-margin-top",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.html)
+
+    def test_live_network_summary_is_part_of_the_network_section(self):
+        self.assertIn(
+            '<p id="live" class="network-summary">',
+            self.html,
+        )
+        self.assertNotIn('class="livebar"', self.html)
+
+    def test_primary_hero_button_overrides_dark_section_link_color(self):
+        self.assertIn(".hero .button {", self.html)
+        self.assertIn("color: var(--coal);", self.html)
+
+    def test_display_type_stays_compact(self):
+        for token in (
+            "font-size: clamp(42px, 5vw, 60px);",
+            "font-size: clamp(28px, 3vw, 38px);",
+            "font-size: 16px;",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.html)
+        self.assertNotIn("font-size: clamp(48px, 6vw, 76px);", self.html)
+
+    def test_explanatory_context_is_hidden_until_requested(self):
+        for heading in (
+            "Inbox limits and privacy",
+            "Permissionless mining policy",
+            "Miner help and privacy",
+            "Trade boundaries",
+        ):
+            with self.subTest(heading=heading):
+                self.assertIn(f"<summary>{heading}</summary>", self.html)
+
+    def test_live_network_note_is_a_short_status_line(self):
+        self.assertIn("note.textContent = 'Official node data. Updated '", self.html)
+
+    def test_homepage_avoids_generic_ai_landing_page_structure(self):
+        for token in (
+            'class="download-list"',
+            'class="download-row featured"',
+            'class="project-facts"',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.html)
+        self.assertNotIn('class="download-grid"', self.html)
+        self.assertNotIn('class="trust-strip"', self.html)
+
     def test_nine_inbox_is_a_plain_optional_utility(self):
         for token in (
             'href="/inbox/"',
