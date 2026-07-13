@@ -91,6 +91,8 @@ class NineInboxDeploymentContract(unittest.TestCase):
             "website_target=/var/www/bitcoin09/index.html",
             "restore_file \"$website_target\" website",
             "grep -Fq 'href=\"/inbox/\"'",
+            "public_ready=0",
+            "[[ $public_ready -eq 1 ]]",
             "restore_install",
             "trap restore_install ERR INT TERM",
         ):

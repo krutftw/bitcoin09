@@ -159,12 +159,20 @@ done
 [[ $ready -eq 1 ]]
 
 page=$(mktemp "$backup_dir/page.XXXXXX")
-curl --fail --silent --show-error --resolve btc09.org:443:127.0.0.1 \
-    https://btc09.org/inbox/ >"$page"
-grep -Fq 'Send yourself anything.' "$page"
-curl --fail --silent --show-error --resolve btc09.org:443:127.0.0.1 \
-    https://btc09.org/ >"$page"
-grep -Fq 'href="/inbox/"' "$page"
+public_ready=0
+for _attempt in {1..20}; do
+    if curl --fail --silent --show-error --resolve btc09.org:443:127.0.0.1 \
+        https://btc09.org/inbox/ >"$page" 2>/dev/null && \
+        grep -Fq 'Send yourself anything.' "$page" && \
+        curl --fail --silent --show-error --resolve btc09.org:443:127.0.0.1 \
+        https://btc09.org/ >"$page" 2>/dev/null && \
+        grep -Fq 'href="/inbox/"' "$page"; then
+        public_ready=1
+        break
+    fi
+    sleep 1
+done
+[[ $public_ready -eq 1 ]]
 systemctl is-active --quiet btc09-nine-inbox
 ss -ltn | grep -Fq '127.0.0.1:8020'
 if ss -ltn | grep -Eq '0\.0\.0\.0:8020|\[::\]:8020'; then
