@@ -54,11 +54,13 @@ paths and publishes test vectors:
 registration. All components are hardened because SLIP-0010 does not define
 normal public-child derivation for Ed25519.
 
-Restore begins at address zero and scans forward in bounded windows until the
-configured unused-address gap is reached. The encrypted file records progress,
-but the phrase remains sufficient because the scan can reconstruct it. The
-same phrase and network must always produce the same address sequence on every
-supported platform.
+The first desktop release uses address zero as one stable receive address and
+does not offer address rotation. That makes phrase restore complete without a
+remote address-history index. The wallet library records an explicit address
+count and already derives later indexes deterministically, but the desktop app
+will not expose them until a bounded history scanner can recover used and spent
+addresses. The same phrase and network must always produce the same address
+sequence on every supported platform.
 
 Primary references:
 
@@ -73,10 +75,12 @@ Discord, or mining coordinator. A wrong password, modified ciphertext, or
 modified authenticated metadata returns one generic unlock failure so the file
 does not become a password oracle.
 
-The app must show the recovery phrase once during setup, require a small word
-confirmation, and strongly recommend paper or another offline copy. Clipboard
-copy is optional and carries a visible warning. Screenshots, logs, telemetry,
-support reports, and browser storage must never contain the phrase.
+The app shows the recovery phrase during setup, requires a three-word
+confirmation, and recommends paper or another offline copy. An unlocked user
+can reveal it again only after re-entering the local password, which prevents a
+closed setup window from permanently losing the backup opportunity. The app
+does not offer clipboard copy or browser persistence for the phrase. Logs,
+telemetry, and support reports must never contain it.
 
 ## Legacy wallet migration
 
@@ -100,11 +104,14 @@ payouts have moved.
 ## Release gates
 
 - Official BIP39 and SLIP-0010 vectors pass.
-- Create, reopen, add-address, and phrase-restore sequences match byte-for-byte.
+- Create, reopen, deterministic derivation, and phrase-restore sequences match.
 - Wrong passwords, tampering, wrong networks, malformed JSON, hostile KDF
   settings, symlinks, hard links, crashes, and concurrent writers fail safely.
 - Wallet files contain no plaintext phrase, entropy, seed, or derived private
   key.
 - Windows, macOS, and Linux builds restore the same published address vectors.
-- The desktop create/restore/unlock flow passes browser tests and a visual pass.
-- Legacy migration is tested with immature and mature rewards before release.
+- The desktop create/restore/unlock/reveal flow passes API tests and a visual
+  browser pass.
+- Legacy wallets remain byte-identical when V2 APIs reject them. The separate
+  sweep-based migration remains a follow-on release and must be tested with
+  immature and mature rewards before it is exposed.

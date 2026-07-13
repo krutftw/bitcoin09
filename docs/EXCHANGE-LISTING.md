@@ -122,7 +122,7 @@ GET /api/v1/address/{address}/outputs?expected_tip_hash={hash}&expected_tip_heig
 ## Software and integration
 
 The latest release includes checksummed Linux amd64/arm64, macOS amd64/arm64,
-and Windows amd64 binaries. `SHA256SUMS.txt` is published beside them.
+and Windows amd64 binaries. `SHA256SUMS` is published beside them.
 
 The operator guide documents the complete flow:
 

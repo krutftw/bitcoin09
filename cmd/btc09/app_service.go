@@ -74,10 +74,12 @@ type appService struct {
 	miningURL  string
 	miningHTTP bool
 
-	mu      sync.Mutex
-	pending map[string]*appPendingPayment
-	now     func() time.Time
-	submit  func(*core.Tx) (core.TxAcceptanceResult, int, error)
+	mu             sync.Mutex
+	pending        map[string]*appPendingPayment
+	now            func() time.Time
+	submit         func(*core.Tx) (core.TxAcceptanceResult, int, error)
+	walletMu       sync.RWMutex
+	unlockedWallet *wallet.Wallet
 
 	minerMu         sync.Mutex
 	minerCancel     context.CancelFunc
@@ -87,6 +89,30 @@ type appService struct {
 	minerLastJob    string
 	minerLastHashes uint64
 	newMiner        func(pool.RemoteClientConfig) (appMinerClient, error)
+}
+
+func (s *appService) walletHandle() (*wallet.Wallet, error) {
+	s.walletMu.RLock()
+	unlocked := s.unlockedWallet
+	s.walletMu.RUnlock()
+	if unlocked != nil {
+		return unlocked, nil
+	}
+	return wallet.Open(s.walletFile, s.network)
+}
+
+func (s *appService) replaceUnlockedWallet(unlocked *wallet.Wallet) {
+	s.walletMu.Lock()
+	previous := s.unlockedWallet
+	s.unlockedWallet = unlocked
+	s.walletMu.Unlock()
+	if previous != nil && previous != unlocked {
+		previous.Close()
+	}
+}
+
+func validRecoveryPassword(password string) bool {
+	return len(password) >= 12 && len(password) <= 1024
 }
 
 func newAppService(config appServiceConfig) (*appService, error) {
@@ -150,7 +176,7 @@ func (s *appService) MinerStatus(ctx context.Context) (desktop.MinerStatus, erro
 		}
 	}
 	s.minerMu.Unlock()
-	if _, err := wallet.Open(s.walletFile, s.network); err == nil {
+	if _, err := s.walletHandle(); err == nil {
 		status.WalletReady = true
 	}
 	return status, nil
@@ -174,7 +200,7 @@ func (s *appService) StartMiner(ctx context.Context, request desktop.MinerStartR
 	if !validAppWorker(request.Worker) {
 		return desktop.MinerStatus{}, publicAppError(http.StatusBadRequest, "miner_worker_invalid", "Use up to 64 letters, numbers, dots, dashes, or underscores for the worker name.", nil)
 	}
-	w, err := wallet.Open(s.walletFile, s.network)
+	w, err := s.walletHandle()
 	if err != nil {
 		return desktop.MinerStatus{}, publicAppError(http.StatusConflict, "wallet_required", "Create the wallet before starting the miner.", err)
 	}
@@ -244,6 +270,13 @@ func (s *appService) Close() {
 	}
 	if done != nil {
 		<-done
+	}
+	s.walletMu.Lock()
+	unlocked := s.unlockedWallet
+	s.unlockedWallet = nil
+	s.walletMu.Unlock()
+	if unlocked != nil {
+		unlocked.Close()
 	}
 }
 
@@ -350,8 +383,16 @@ func (s *appService) Status(ctx context.Context) (desktop.Status, error) {
 	} else if err != nil {
 		return desktop.Status{}, err
 	}
-	w, err := wallet.Open(s.walletFile, s.network)
+	w, err := s.walletHandle()
 	if err != nil {
+		if errors.Is(err, wallet.ErrWalletUnlock) {
+			status.WalletExists = true
+			status.WalletVersion = wallet.SchemaVersionV2
+			status.NeedsUnlock = true
+			status.Addresses = []string{}
+			status.SyncState = "locked"
+			return status, nil
+		}
 		return desktop.Status{}, err
 	}
 	addresses, err := w.AddressesE()
@@ -359,6 +400,7 @@ func (s *appService) Status(ctx context.Context) (desktop.Status, error) {
 		return desktop.Status{}, err
 	}
 	status.WalletExists = true
+	status.WalletVersion = w.Schema()
 	status.Addresses = addresses
 	if s.mode == "fast" {
 		remote, err := s.gateway.Snapshot(ctx, addresses)
@@ -411,16 +453,89 @@ func (s *appService) CreateWallet(ctx context.Context) (desktop.Status, error) {
 	return s.Status(ctx)
 }
 
+func (s *appService) CreateRecoveryWallet(ctx context.Context, request desktop.RecoveryWalletCreateRequest) (desktop.RecoveryWalletCreateResult, error) {
+	if err := ctx.Err(); err != nil {
+		return desktop.RecoveryWalletCreateResult{}, err
+	}
+	if !validRecoveryPassword(request.Password) {
+		return desktop.RecoveryWalletCreateResult{}, publicAppError(http.StatusBadRequest, "wallet_password_weak", "Use a wallet password with at least 12 characters.", nil)
+	}
+	password := []byte(request.Password)
+	defer clear(password)
+	unlocked, phrase, err := wallet.CreateV2(s.walletFile, s.network, password)
+	if err != nil {
+		return desktop.RecoveryWalletCreateResult{}, publicAppError(http.StatusConflict, "wallet_create_failed", "BTC09 could not create a new recovery wallet at this location.", err)
+	}
+	s.replaceUnlockedWallet(unlocked)
+	status, err := s.Status(ctx)
+	if err != nil {
+		return desktop.RecoveryWalletCreateResult{}, err
+	}
+	return desktop.RecoveryWalletCreateResult{Status: status, RecoveryPhrase: phrase}, nil
+}
+
+func (s *appService) RestoreRecoveryWallet(ctx context.Context, request desktop.RecoveryWalletRestoreRequest) (desktop.Status, error) {
+	if err := ctx.Err(); err != nil {
+		return desktop.Status{}, err
+	}
+	if !validRecoveryPassword(request.Password) {
+		return desktop.Status{}, publicAppError(http.StatusBadRequest, "wallet_password_weak", "Use a wallet password with at least 12 characters.", nil)
+	}
+	password := []byte(request.Password)
+	defer clear(password)
+	unlocked, err := wallet.RestoreV2(s.walletFile, s.network, password, request.RecoveryPhrase, 1)
+	if err != nil {
+		return desktop.Status{}, publicAppError(http.StatusBadRequest, "wallet_restore_failed", "Check all 24 recovery words and try again.", err)
+	}
+	s.replaceUnlockedWallet(unlocked)
+	return s.Status(ctx)
+}
+
+func (s *appService) UnlockRecoveryWallet(ctx context.Context, request desktop.RecoveryWalletUnlockRequest) (desktop.Status, error) {
+	if err := ctx.Err(); err != nil {
+		return desktop.Status{}, err
+	}
+	password := []byte(request.Password)
+	defer clear(password)
+	unlocked, err := wallet.OpenV2(s.walletFile, s.network, password)
+	if err != nil {
+		return desktop.Status{}, publicAppError(http.StatusUnauthorized, "wallet_unlock_failed", "That password did not unlock this wallet.", err)
+	}
+	s.replaceUnlockedWallet(unlocked)
+	return s.Status(ctx)
+}
+
+func (s *appService) RecoveryPhrase(ctx context.Context, request desktop.RecoveryWalletUnlockRequest) (desktop.RecoveryPhraseResult, error) {
+	if err := ctx.Err(); err != nil {
+		return desktop.RecoveryPhraseResult{}, err
+	}
+	password := []byte(request.Password)
+	defer clear(password)
+	verified, err := wallet.OpenV2(s.walletFile, s.network, password)
+	if err != nil {
+		return desktop.RecoveryPhraseResult{}, publicAppError(http.StatusUnauthorized, "wallet_unlock_failed", "That password did not unlock this wallet.", err)
+	}
+	defer verified.Close()
+	phrase, err := verified.RecoveryPhrase()
+	if err != nil {
+		return desktop.RecoveryPhraseResult{}, publicAppError(http.StatusInternalServerError, "recovery_phrase_unavailable", "BTC09 could not read the recovery phrase.", err)
+	}
+	return desktop.RecoveryPhraseResult{RecoveryPhrase: phrase}, nil
+}
+
 func (s *appService) NewAddress(ctx context.Context) (desktop.AddressResult, error) {
 	if err := ctx.Err(); err != nil {
 		return desktop.AddressResult{}, err
 	}
-	w, err := wallet.Open(s.walletFile, s.network)
+	w, err := s.walletHandle()
 	if err != nil {
 		if errors.Is(err, wallet.ErrWalletNotFound) {
 			return desktop.AddressResult{}, publicAppError(http.StatusConflict, "wallet_required", "Create the wallet before adding a receive address.", err)
 		}
 		return desktop.AddressResult{}, err
+	}
+	if w.Schema() == wallet.SchemaVersionV2 {
+		return desktop.AddressResult{}, publicAppError(http.StatusConflict, "recovery_address_stable", "Recovery wallets use one stable receive address in this release.", nil)
 	}
 	address, err := w.NewAddress()
 	if err != nil {
@@ -433,7 +548,8 @@ func (s *appService) Backup(ctx context.Context, destination string) (result des
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if _, err := wallet.Open(s.walletFile, s.network); err != nil {
+	activeWallet, err := s.walletHandle()
+	if err != nil {
 		return result, publicAppError(http.StatusConflict, "wallet_required", "Create the wallet before making a backup.", err)
 	}
 	destination, err = filepath.Abs(destination)
@@ -481,7 +597,7 @@ func (s *appService) Backup(ctx context.Context, destination string) (result des
 		return result, err
 	}
 	closed = true
-	if _, err = wallet.Open(destination, s.network); err != nil {
+	if err = activeWallet.ValidateCopy(destination); err != nil {
 		return result, err
 	}
 	complete = true
@@ -512,7 +628,7 @@ func (s *appService) PreviewSend(ctx context.Context, request desktop.SendReques
 	if amount > core.MaxMoneyUnits-fee {
 		return desktop.SendPreview{}, publicAppError(http.StatusBadRequest, "amount_invalid", "The amount plus fee is too large.", nil)
 	}
-	w, err := wallet.Open(s.walletFile, s.network)
+	w, err := s.walletHandle()
 	if err != nil {
 		return desktop.SendPreview{}, publicAppError(http.StatusConflict, "wallet_required", "Create the wallet before sending 09C.", err)
 	}

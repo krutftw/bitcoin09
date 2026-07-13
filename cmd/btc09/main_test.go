@@ -759,9 +759,9 @@ func TestReleaseNewer(t *testing.T) {
 	}
 }
 
-func TestNodeVersionMatchesV026Release(t *testing.T) {
-	if nodeVersion != "v0.1.26" {
-		t.Fatalf("nodeVersion = %q, want v0.1.26", nodeVersion)
+func TestNodeVersionMatchesV027Release(t *testing.T) {
+	if nodeVersion != "v0.1.27" {
+		t.Fatalf("nodeVersion = %q, want v0.1.27", nodeVersion)
 	}
 }
 

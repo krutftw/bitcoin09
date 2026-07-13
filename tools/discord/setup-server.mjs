@@ -273,6 +273,21 @@ const seedPosts = [
   },
   {
     channelKey: "announcements",
+    marker: "Bitcoin 09 v0.1.27 is out.",
+    content: [
+      "Bitcoin 09 v0.1.27 is out.",
+      "",
+      "New desktop wallets now come with 24 recovery words and an encrypted local wallet file. The app locks after restart, and the words can restore the same address if the wallet file is lost.",
+      "",
+      "Write the words down and keep them offline. Support will never ask for them. You can also make an encrypted wallet-file backup from the app.",
+      "",
+      "Existing wallets are left alone and still use their current file backup. This release does not change mining, consensus, coin supply, or the network protocol.",
+      "",
+      "Release and checksums: https://github.com/krutftw/bitcoin09/releases/tag/v0.1.27",
+    ].join("\n"),
+  },
+  {
+    channelKey: "announcements",
     marker: "Bitcoin 09 v0.1.26 is out.",
     content: [
       "Bitcoin 09 v0.1.26 is out.",
@@ -308,7 +323,7 @@ const seedPosts = [
     content: [
       "Bitcoin 09 Discord is live.",
       "",
-      "Current release: v0.1.26",
+      "Current release: v0.1.27",
       "Source/releases: https://github.com/krutftw/bitcoin09",
       "Explorer: https://explorer.btc09.org",
       "Discord invite: https://discord.gg/fUuGzwRTzP",

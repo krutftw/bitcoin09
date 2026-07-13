@@ -49,7 +49,7 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 
 	javascript := contents["assets/app.js"]
 	for _, required := range []string{
-		`/api/v1/status`, `/api/v1/wallet/create`, `/api/v1/wallet/address`,
+		`/api/v1/status`, `/api/v1/wallet/v2/create`, `/api/v1/wallet/address`,
 		`/api/v1/wallet/backup`, `/api/v1/send/preview`, `/api/v1/send/confirm`,
 		`X-BTC09-CSRF`, `navigator.clipboard`, `pending_id`, `formatCoins`, `address-chip-text`,
 	} {
@@ -92,6 +92,54 @@ func TestEmbeddedInterfaceExplainsFastAndFullWalletModes(t *testing.T) {
 			if !strings.Contains(string(body), required) {
 				t.Errorf("%s is missing %q", test.name, required)
 			}
+		}
+	}
+}
+
+func TestEmbeddedInterfaceSupportsEncryptedRecoveryWalletLifecycle(t *testing.T) {
+	htmlBody, err := fs.ReadFile(assetsFS, "assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(htmlBody)
+	for _, required := range []string{
+		`id="create-wallet-form"`, `id="create-password"`, `id="create-password-confirm"`,
+		`id="show-restore"`, `id="restore-wallet-form"`, `id="restore-phrase"`,
+		`id="locked-view"`, `id="unlock-wallet-form"`, `id="unlock-password"`,
+		`id="recovery-backup"`, `id="recovery-word-grid"`, `id="confirm-recovery-backup"`,
+		`24 recovery words`, `at least 12 characters`,
+	} {
+		if !strings.Contains(html, required) {
+			t.Errorf("index is missing %q", required)
+		}
+	}
+
+	javascriptBody, err := fs.ReadFile(assetsFS, "assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(javascriptBody)
+	for _, required := range []string{
+		`/api/v1/wallet/v2/create`, `/api/v1/wallet/v2/restore`, `/api/v1/wallet/v2/unlock`, `/api/v1/wallet/v2/recovery`,
+		`status.needs_unlock`, `status.wallet_version`, `recovery_phrase`, `state.recoveryPhrase = null`,
+	} {
+		if !strings.Contains(javascript, required) {
+			t.Errorf("app script is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"localStorage", "sessionStorage", "indexedDB"} {
+		if strings.Contains(javascript, forbidden) {
+			t.Errorf("app script persists recovery material through %s", forbidden)
+		}
+	}
+
+	cssBody, err := fs.ReadFile(assetsFS, "assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{`.setup-switch`, `.password-stack`, `.recovery-word-grid`, `.locked-view`} {
+		if !strings.Contains(string(cssBody), required) {
+			t.Errorf("app stylesheet is missing %q", required)
 		}
 	}
 }

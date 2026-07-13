@@ -49,9 +49,9 @@ class IndexContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)
 
-    def test_v026_makes_the_supported_wallet_miner_the_easy_path(self):
+    def test_v027_makes_the_supported_wallet_miner_the_easy_path(self):
         for token in (
-            "Current release: v0.1.26",
+            "Current release: v0.1.27",
             "Desktop wallet and miner",
             "Open the wallet, choose Mine",
             'id="mining-guide"',
@@ -91,7 +91,7 @@ class IndexContractTest(unittest.TestCase):
         ):
             with self.subTest(asset=asset):
                 self.assertIn(
-                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.26/{asset}",
+                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.27/{asset}",
                     self.html,
                 )
 

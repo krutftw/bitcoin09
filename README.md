@@ -48,17 +48,20 @@ command starts the local desktop wallet in your browser:
 .\btc09-windows-amd64.exe
 ```
 
-You can also start it explicitly with `btc09 app`. The app creates and backs
-up your wallet, shows balance and sync status, generates receive addresses and
-QR codes, and reviews each payment before broadcasting it. It runs only on a
-random `127.0.0.1` port, keeps wallet keys on this computer, and does not use a
+You can also start it explicitly with `btc09 app`. New wallets use a 24-word
+recovery phrase and an Argon2id-encrypted local file. The app asks for the
+password again after restart, can restore the same stable receive address from
+the words, shows balance and sync status, and reviews each payment before
+broadcasting it. It runs only on a random `127.0.0.1` port and does not use a
 cloud account or external web assets.
 
-The app uses the same wallet file as the command-line tools, so existing users
-do not need to move or import anything. Mainnet opens in Fast mode: the app gets
-public balance data from `https://btc09.org`, builds and signs payments on this
-computer, and sends only the signed transaction for relay. Private keys never
-leave the wallet file. Run `btc09 app -mode full` to verify through a local node.
+Existing V1 wallets remain readable and are never rewritten as recovery
+wallets. Their random keys cannot truthfully be covered by a new phrase, so
+they keep the existing file-backup flow. Mainnet opens in Fast mode: the app
+gets public balance data from `https://btc09.org`, builds and signs payments on
+this computer, and sends only the signed transaction for relay. Passwords,
+recovery words, and private keys are never sent. Run `btc09 app -mode full` to
+verify through a local node.
 
 ### Nine Inbox
 
@@ -335,10 +338,11 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.26 is current. The non-custodial Fast wallet includes the official
-open-source CPU miner, safer support diagnostics, and a direct Nine Inbox link.
-It still receives to locally held addresses and signs every payment on the
-device. Full node mode remains available. There are no consensus changes.
+v0.1.27 is current. New desktop wallets now use encrypted Wallet V2 files and
+24-word recovery, while existing V1 wallets stay unchanged and readable. The
+non-custodial Fast wallet still includes the official open-source CPU miner and
+signs every payment on the device. Full node mode remains available. There are
+no consensus changes.
 
 Network:
 

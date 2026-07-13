@@ -30,7 +30,7 @@ with `.\btc09-windows-amd64.exe` unless you renamed or installed the binary.
 Current release:
 
 ```text
-Bitcoin 09 (09C) reference node v0.1.26
+Bitcoin 09 (09C) reference node v0.1.27
 ```
 
 ## Open the Desktop Wallet
@@ -43,13 +43,17 @@ Double-click the downloaded BTC09 program, or run it without a command:
 
 BTC09 opens a local wallet interface in your normal browser. Fast mode shows
 your balance without downloading the full chain and still signs payments only
-on this computer. It can create and back up the wallet, make receive addresses
-and QR codes, and review and send payments. It binds only to `127.0.0.1` on a
-random port. Your private keys remain in the wallet file on this computer.
+on this computer. A new wallet gives you 24 recovery words and encrypts its
+local file with the password you choose. It can restore the same receive
+address from those words, show a receive QR code, and review and send payments.
+It binds only to `127.0.0.1` on a random port. Passwords, recovery words, and
+private keys stay on this computer.
 
-The first screen shows the exact wallet file location. Create an offline backup
-before using the wallet for meaningful funds. The app never overwrites an
-existing backup file.
+Write the 24 words down in order and keep them offline. Anyone with the words
+can spend the wallet, and the project cannot recover them. The app checks three
+words before setup finishes. It also supports an encrypted file backup and
+never overwrites an existing backup file. Existing V1 wallets still open with
+their original addresses and must keep using file backups.
 
 If the browser does not open automatically, start it from a terminal with:
 

@@ -114,6 +114,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleCreateWallet(w, r)
 		return
 	}
+	if r.URL.Path == "/api/v1/wallet/v2/create" {
+		s.handleCreateRecoveryWallet(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/wallet/v2/restore" {
+		s.handleRestoreRecoveryWallet(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/wallet/v2/unlock" {
+		s.handleUnlockRecoveryWallet(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/wallet/v2/recovery" {
+		s.handleRecoveryPhrase(w, r)
+		return
+	}
 	if r.URL.Path == "/api/v1/wallet/address" {
 		s.handleNewAddress(w, r)
 		return
@@ -345,6 +361,98 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeData(w, http.StatusOK, status)
+}
+
+func (s *Server) recoveryWalletService(w http.ResponseWriter) (RecoveryWalletService, bool) {
+	service, ok := s.service.(RecoveryWalletService)
+	if !ok {
+		s.writeError(w, http.StatusNotImplemented, "recovery_wallet_unavailable", "This BTC09 Wallet build does not support recovery wallets.")
+	}
+	return service, ok
+}
+
+func (s *Server) handleCreateRecoveryWallet(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authorizeMutation(w, r); !ok {
+		return
+	}
+	service, ok := s.recoveryWalletService(w)
+	if !ok {
+		return
+	}
+	var request RecoveryWalletCreateRequest
+	if err := decodeJSONRequest(w, r, &request); err != nil || request.Password == "" || len(request.Password) > 1024 {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Enter a valid wallet password.")
+		return
+	}
+	result, err := service.CreateRecoveryWallet(r.Context(), request)
+	if err != nil {
+		s.writeServiceError(w, err, "wallet_create_failed", "BTC09 could not create the recovery wallet.")
+		return
+	}
+	s.writeData(w, http.StatusOK, result)
+}
+
+func (s *Server) handleRestoreRecoveryWallet(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authorizeMutation(w, r); !ok {
+		return
+	}
+	service, ok := s.recoveryWalletService(w)
+	if !ok {
+		return
+	}
+	var request RecoveryWalletRestoreRequest
+	if err := decodeJSONRequest(w, r, &request); err != nil || request.Password == "" || len(request.Password) > 1024 || request.RecoveryPhrase == "" || len(request.RecoveryPhrase) > 4096 {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Enter a valid password and recovery phrase.")
+		return
+	}
+	status, err := service.RestoreRecoveryWallet(r.Context(), request)
+	if err != nil {
+		s.writeServiceError(w, err, "wallet_restore_failed", "BTC09 could not restore that recovery wallet.")
+		return
+	}
+	s.writeData(w, http.StatusOK, status)
+}
+
+func (s *Server) handleUnlockRecoveryWallet(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authorizeMutation(w, r); !ok {
+		return
+	}
+	service, ok := s.recoveryWalletService(w)
+	if !ok {
+		return
+	}
+	var request RecoveryWalletUnlockRequest
+	if err := decodeJSONRequest(w, r, &request); err != nil || request.Password == "" || len(request.Password) > 1024 {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Enter a valid wallet password.")
+		return
+	}
+	status, err := service.UnlockRecoveryWallet(r.Context(), request)
+	if err != nil {
+		s.writeServiceError(w, err, "wallet_unlock_failed", "BTC09 could not unlock that wallet.")
+		return
+	}
+	s.writeData(w, http.StatusOK, status)
+}
+
+func (s *Server) handleRecoveryPhrase(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authorizeMutation(w, r); !ok {
+		return
+	}
+	service, ok := s.recoveryWalletService(w)
+	if !ok {
+		return
+	}
+	var request RecoveryWalletUnlockRequest
+	if err := decodeJSONRequest(w, r, &request); err != nil || request.Password == "" || len(request.Password) > 1024 {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "Enter your wallet password.")
+		return
+	}
+	result, err := service.RecoveryPhrase(r.Context(), request)
+	if err != nil {
+		s.writeServiceError(w, err, "recovery_phrase_unavailable", "BTC09 could not show the recovery phrase.")
+		return
+	}
+	s.writeData(w, http.StatusOK, result)
 }
 
 func (s *Server) handleNewAddress(w http.ResponseWriter, r *http.Request) {
@@ -586,7 +694,7 @@ func (s *Server) writeError(w http.ResponseWriter, status int, code, message str
 
 func (s *Server) setSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; worker-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; worker-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; require-trusted-types-for 'script'; trusted-types 'none'")
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
