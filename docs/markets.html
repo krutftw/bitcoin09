@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bitcoin 09 (09C) OTC Market Board</title>
 <meta name="description" content="Bitcoin 09 public OTC market board: draft community buy/sell posts, open public GitHub records, and watch completed-trade references.">
+<link rel="canonical" href="https://btc09.org/markets.html">
 <link rel="icon" type="image/png" href="assets/bitcoin09-ai-logo-512.png">
 <style>
 :root {
@@ -25,7 +26,7 @@
 
 body {
   margin: 0;
-  font-family: "Courier New", Consolas, monospace;
+  font-family: "Segoe UI", Arial, sans-serif;
   color: var(--ink);
   background: var(--paper);
   line-height: 1.5;
@@ -43,6 +44,15 @@ textarea {
   font: inherit;
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 3px solid rgba(217, 164, 65, .5);
+  outline-offset: 3px;
+}
+
 .top {
   color: #e7ddbf;
   background: var(--coal);
@@ -56,14 +66,14 @@ textarea {
 
 .hero {
   display: grid;
-  grid-template-columns: 92px 1fr;
-  gap: 18px;
+  grid-template-columns: 70px 1fr;
+  gap: 16px;
   align-items: center;
-  padding: 24px 0 22px;
+  padding: 18px 0 16px;
 }
 
 .hero img {
-  width: 92px;
+  width: 70px;
   aspect-ratio: 1;
   border: 1px solid #725d26;
   background: #0b0c0d;
@@ -72,9 +82,9 @@ textarea {
 h1 {
   margin: 0;
   color: #fff3cf;
-  font-size: clamp(30px, 7vw, 54px);
-  line-height: 1;
-  letter-spacing: 0;
+  font-size: clamp(30px, 5vw, 42px);
+  line-height: 1.08;
+  letter-spacing: -.02em;
 }
 
 .tag {
@@ -86,6 +96,7 @@ h1 {
 .nav {
   padding: 9px 0 13px;
   color: #d8c797;
+  font-size: 14px;
 }
 
 .nav a {
@@ -342,6 +353,17 @@ code {
   font-family: "Courier New", Consolas, monospace;
 }
 
+.site-footer {
+  padding: 20px 0 30px;
+  color: #d8c797;
+  background: var(--coal);
+  border-top: 3px solid var(--gold);
+  font-size: 13px;
+}
+
+.site-footer p { margin: 0; }
+.site-footer a { color: #6ce083; }
+
 .error {
   color: var(--red);
 }
@@ -360,6 +382,14 @@ code {
     display: block;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
 </style>
 </head>
 <body>
@@ -372,7 +402,7 @@ code {
 </div>
 </div>
 <div class="wrap nav">
-<a href="index.html">home</a> / <a href="https://github.com/krutftw/bitcoin09/issues?q=label%3Aotc-offer+OR+label%3Aotc-completed">public records</a> / <a href="https://discord.gg/fUuGzwRTzP">Discord</a> / <a href="https://explorer.btc09.org">explorer</a>
+<a href="index.html">home</a> / <a href="https://github.com/krutftw/bitcoin09/issues?q=label%3Aotc-offer+OR+label%3Aotc-completed">public records</a> / <a href="https://discord.gg/fUuGzwRTzP">Discord</a> / <a href="https://explorer.btc09.org">explorer</a> / <a href="privacy.html">privacy</a> / <a href="terms.html">terms</a>
 </div>
 </header>
 
@@ -405,30 +435,30 @@ Record type
 </label>
 <label>
 09C amount
-<input id="amount" inputmode="decimal" placeholder="20000">
+<input id="amount" type="text" inputmode="decimal" placeholder="20000">
 </label>
 <label>
 Total price
-<input id="total-price" placeholder="20">
+<input id="total-price" type="text" placeholder="20">
 </label>
 <label>
 Payment asset
-<input id="payment-asset" list="common-assets" maxlength="12" pattern="[A-Za-z0-9._-]{2,12}" placeholder="AUD, CNY, USDT, BTC, or custom">
+<input id="payment-asset" type="text" list="common-assets" maxlength="12" pattern="[A-Za-z0-9._-]{2,12}" placeholder="AUD, CNY, USDT, BTC, or custom">
 <datalist id="common-assets">
-<option value="AUD"><option value="USD"><option value="EUR"><option value="GBP">
-<option value="CNY"><option value="JPY"><option value="USDT"><option value="USDC">
-<option value="BTC"><option value="ETH"><option value="SOL"><option value="LTC">
-<option value="DOGE"><option value="BNB">
+<option value="AUD"></option><option value="USD"></option><option value="EUR"></option><option value="GBP"></option>
+<option value="CNY"></option><option value="JPY"></option><option value="USDT"></option><option value="USDC"></option>
+<option value="BTC"></option><option value="ETH"></option><option value="SOL"></option><option value="LTC"></option>
+<option value="DOGE"></option><option value="BNB"></option>
 </datalist>
 <small class="muted">Use a 2-12 character English asset code. Custom codes are allowed.</small>
 </label>
 <label>
 Public contact or parties
-<input id="contact" placeholder="Discord @name">
+<input id="contact" type="text" placeholder="Discord @name">
 </label>
 <label>
 Public proof or 09C tx
-<input id="proof" placeholder="explorer tx/address link or redacted proof note">
+<input id="proof" type="text" placeholder="explorer tx/address link or redacted proof note">
 </label>
 <label class="wide">
 Terms or public notes
@@ -513,7 +543,7 @@ Sort
 </label>
 <label>
 Search
-<input id="market-search" placeholder="address, handle, asset, notes">
+<input id="market-search" type="search" placeholder="address, handle, asset, notes">
 </label>
 </div>
 <div class="list" id="market-list"></div>
@@ -548,6 +578,12 @@ https://explorer.btc09.org/api/circulating_supply</pre>
 </section>
 </div>
 </main>
+
+<footer class="site-footer">
+<div class="wrap">
+<p>Bitcoin 09 OTC · The bot escrows only 09C · <a href="privacy.html">Privacy</a> / <a href="terms.html">Terms</a> / <a href="https://github.com/krutftw/bitcoin09">Source</a></p>
+</div>
+</footer>
 
 <script>
 const repo = 'krutftw/bitcoin09';

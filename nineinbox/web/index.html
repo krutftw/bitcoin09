@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -13,6 +13,7 @@
 <body>
   <header class="masthead">
     <a class="wordmark" href="/inbox/" aria-label="Nine Inbox home"><span>9</span><strong>Nine Inbox</strong></a>
+    <nav class="service-links" aria-label="Bitcoin 09 services"><a href="/">Bitcoin 09</a><a href="/privacy.html">Privacy</a><a href="/terms.html">Terms</a></nav>
     <div class="connection"><i id="connection-dot" aria-hidden="true"></i><span id="connection-label">Starting</span></div>
   </header>
 
@@ -42,7 +43,7 @@
         </div>
         <div class="pairing-details">
           <label for="pairing-link">PAIRING LINK</label>
-          <div class="copy-line"><input id="pairing-link" readonly><button id="copy-pairing" type="button">Copy</button></div>
+          <div class="copy-line"><input id="pairing-link" type="text" readonly><button id="copy-pairing" type="button">Copy</button></div>
           <p class="micro">Compare these words on both devices:</p>
           <output id="pairing-words" class="safety-words">— —</output>
           <button id="finish-pairing" class="primary" type="button">Go to my inbox</button>
@@ -84,9 +85,11 @@
     </section>
   </main>
 
+  <footer class="service-footer"><p>Encrypted in your browser. The relay cannot read item contents. <a href="/privacy.html">Read the privacy boundary</a>.</p></footer>
+
   <dialog id="composer-sheet" class="composer-sheet">
     <form id="composer" method="dialog">
-      <div class="sheet-head"><div><p class="eyebrow">NEW ITEM</p><h2>Send yourself something.</h2></div><button class="icon-button" value="cancel" aria-label="Close composer">×</button></div>
+      <div class="sheet-head"><div><p class="eyebrow">NEW ITEM</p><h2>Send yourself something.</h2></div><button class="icon-button" type="submit" value="cancel" aria-label="Close composer">×</button></div>
       <label for="item-text">NOTE OR LINK</label>
       <textarea id="item-text" rows="6" maxlength="1000000" placeholder="Paste a link or write a note"></textarea>
       <div class="or-line"><span>or attach one file</span></div>
@@ -95,21 +98,21 @@
       <p id="chosen-file" class="chosen-file">No file selected</p>
       <label class="check-line"><input id="pin-item" type="checkbox"><span>Keep text or links for 30 days</span></label>
       <p class="expiry-copy">Files expire after 7 days. Text and links expire after 7 days unless kept for 30.</p>
-      <div class="sheet-actions"><button class="secondary" value="cancel">Cancel</button><button id="send-item" class="primary" value="default">Encrypt and send</button></div>
+      <div class="sheet-actions"><button class="secondary" type="submit" value="cancel">Cancel</button><button id="send-item" class="primary" type="submit" value="default">Encrypt and send</button></div>
     </form>
   </dialog>
 
   <dialog id="settings-sheet" class="settings-sheet">
     <form method="dialog">
-      <div class="sheet-head"><div><p class="eyebrow">THIS DEVICE</p><h2>Inbox settings</h2></div><button class="icon-button" value="cancel" aria-label="Close settings">×</button></div>
-      <label for="device-label">DEVICE NAME</label><input id="device-label" maxlength="64">
-      <button id="save-device" class="secondary" value="default">Save device name</button>
+      <div class="sheet-head"><div><p class="eyebrow">THIS DEVICE</p><h2>Inbox settings</h2></div><button class="icon-button" type="submit" value="cancel" aria-label="Close settings">×</button></div>
+      <label for="device-label">DEVICE NAME</label><input id="device-label" type="text" maxlength="64">
+      <button id="save-device" class="secondary" type="submit" value="default">Save device name</button>
       <hr>
       <h3>Recovery and deletion</h3>
       <p>Export an encrypted recovery file before clearing browser data. Anyone with the pairing link can read this inbox.</p>
-      <button id="recovery-export" class="secondary" value="default">Export encrypted recovery</button>
-      <button id="forget-device" class="danger" value="default">Forget inbox on this device</button>
-      <button id="delete-inbox" class="danger" value="default">Delete shared inbox</button>
+      <button id="recovery-export" class="secondary" type="submit" value="default">Export encrypted recovery</button>
+      <button id="forget-device" class="danger" type="submit" value="default">Forget inbox on this device</button>
+      <button id="delete-inbox" class="danger" type="submit" value="default">Delete shared inbox</button>
       <details><summary>Technical details</summary><p>Items use AES-256-GCM with a fresh nonce. The relay stores ciphertext, sizes, and expiry times. It can still see your IP address and request timing.</p></details>
     </form>
   </dialog>

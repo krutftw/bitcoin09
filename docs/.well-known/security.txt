@@ -1,0 +1,5 @@
+Contact: https://github.com/krutftw/bitcoin09/security/advisories/new
+Expires: 2027-07-13T00:00:00Z
+Preferred-Languages: en
+Canonical: https://btc09.org/.well-known/security.txt
+Policy: https://btc09.org/terms.html

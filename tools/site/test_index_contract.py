@@ -6,6 +6,7 @@ class IndexContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.html = pathlib.Path("docs/index.html").read_text(encoding="utf-8")
+        cls.markets = pathlib.Path("docs/markets.html").read_text(encoding="utf-8")
 
     def test_official_mining_metrics_are_rendered(self):
         for token in (
@@ -188,6 +189,59 @@ class IndexContractTest(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, guide)
+
+    def test_public_policy_pages_cover_the_real_service_boundaries(self):
+        privacy = pathlib.Path("docs/privacy.html").read_text(encoding="utf-8")
+        terms = pathlib.Path("docs/terms.html").read_text(encoding="utf-8")
+        for token in (
+            "Last updated: 13 July 2026",
+            "No advertising or analytics",
+            "Cloudflare",
+            "DigitalOcean",
+            "Nine Inbox",
+            "Discord OTC bot",
+            "Public blockchain data",
+            "GitHub private security advisory",
+        ):
+            with self.subTest(page="privacy", token=token):
+                self.assertIn(token, privacy)
+        for token in (
+            "Last updated: 13 July 2026",
+            "self-custody",
+            "irreversible",
+            "Mining is probabilistic",
+            "escrows only 09C",
+            "outside the escrow",
+            "not financial, legal, or tax advice",
+            "third-party services",
+        ):
+            with self.subTest(page="terms", token=token):
+                self.assertIn(token, terms)
+
+    def test_policy_links_are_visible_on_public_entry_pages(self):
+        for page_name, page in (("home", self.html), ("markets", self.markets)):
+            for href in ('href="privacy.html"', 'href="terms.html"'):
+                with self.subTest(page=page_name, href=href):
+                    self.assertIn(href, page)
+
+    def test_public_discovery_and_security_files_are_present(self):
+        robots = pathlib.Path("docs/robots.txt").read_text(encoding="utf-8")
+        sitemap = pathlib.Path("docs/sitemap.xml").read_text(encoding="utf-8")
+        security = pathlib.Path("docs/.well-known/security.txt").read_text(encoding="utf-8")
+        self.assertIn("Sitemap: https://btc09.org/sitemap.xml", robots)
+        for url in (
+            "https://btc09.org/",
+            "https://btc09.org/markets.html",
+            "https://btc09.org/inbox/",
+            "https://btc09.org/privacy.html",
+            "https://btc09.org/terms.html",
+        ):
+            with self.subTest(url=url):
+                self.assertIn(f"<loc>{url}</loc>", sitemap)
+        self.assertIn(
+            "Contact: https://github.com/krutftw/bitcoin09/security/advisories/new",
+            security,
+        )
 
 
 if __name__ == "__main__":
