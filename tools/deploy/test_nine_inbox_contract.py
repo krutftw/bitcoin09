@@ -48,7 +48,7 @@ class NineInboxDeploymentContract(unittest.TestCase):
             "proxy_send_timeout 65s;",
             "proxy_read_timeout 65s;",
             "proxy_set_header X-Real-IP $remote_addr;",
-            "Cache-Control \"no-cache\"",
+            "Cache-Control \"no-store\"",
             "Cache-Control \"public, max-age=3600\"",
         ):
             self.assertIn(required, text)

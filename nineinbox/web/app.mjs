@@ -485,7 +485,7 @@ function bindEvents() {
 async function boot() {
   bindEvents();
   updateConnection();
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/inbox/service-worker.js", { scope: "/inbox/" }).catch(() => {});
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/inbox/service-worker.js", { scope: "/inbox/", updateViaCache: "none" }).catch(() => {});
   state.bundle = await storage.loadBundle();
   const fragment = location.hash.startsWith("#pair=") ? location.hash : "";
   if (fragment && !state.bundle) {

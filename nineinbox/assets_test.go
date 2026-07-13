@@ -26,6 +26,7 @@ func TestAssetsIncludeHonestAccessibleInboxInterface(t *testing.T) {
 		"app.mjs": {
 			`from "./crypto.mjs"`, `from "./storage.mjs"`, `from "./qr.mjs"`, "/api/nine/v1/inboxes",
 			"createItemId", "encryptItem", "decryptItem", "visibilitychange", "serviceWorker.register",
+			`updateViaCache: "none"`,
 			"importRecoveryFile", "restoreRecovery", "deleteSharedInbox", "scheduleSync", "setTimeout(scheduleSync, 15000)",
 		},
 	} {
@@ -120,6 +121,13 @@ func TestSiteHandlerServesOnlyEmbeddedInboxAssetsWithSecurityHeaders(t *testing.
 		if !strings.Contains(response.Header.Get("Content-Security-Policy"), "default-src 'self'") ||
 			!strings.Contains(response.Header.Get("Content-Security-Policy"), "connect-src 'self'") {
 			t.Errorf("GET %s CSP = %q", path, response.Header.Get("Content-Security-Policy"))
+		}
+		wantCache := "public, max-age=3600"
+		if path == "/inbox/" || path == "/inbox/manifest.webmanifest" || path == "/inbox/service-worker.js" {
+			wantCache = "no-store"
+		}
+		if got := response.Header.Get("Cache-Control"); got != wantCache {
+			t.Errorf("GET %s Cache-Control = %q, want %q", path, got, wantCache)
 		}
 	}
 
