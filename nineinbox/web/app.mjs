@@ -8,6 +8,7 @@ import {
   encryptItem,
   exportRecoveryFile,
   hashToken,
+  importRecoveryFile,
   safetyWords,
 } from "./crypto.mjs";
 import { renderPairingQR } from "./qr.mjs";
@@ -143,6 +144,10 @@ async function copyText(value, message = "Copied.") {
 
 function authHeaders(extra = {}) {
   return { Authorization: `Bearer ${encodeToken(state.bundle.writeToken)}`, ...extra };
+}
+
+function recoveryHeaders() {
+  return { Authorization: `Bearer ${encodeToken(state.bundle.recoveryToken)}` };
 }
 
 function formatBytes(value) {
@@ -365,6 +370,40 @@ async function exportRecovery(event) {
   } catch (error) { showToast(error.message, true); }
 }
 
+async function restoreRecovery() {
+  const file = byId("recovery-file").files[0];
+  if (!file) { showToast("Choose a recovery file first.", true); return; }
+  if (file.size > 8192) { showToast("That recovery file is not valid.", true); return; }
+  const password = prompt("Enter the recovery password.");
+  if (password == null) return;
+  const button = byId("restore-recovery");
+  setBusy(button, true, "Unlocking…");
+  try {
+    const bundle = await importRecoveryFile(await file.text(), password);
+    await storage.saveBundle(bundle);
+    state.bundle = bundle;
+    history.replaceState(null, "", "/inbox/");
+    await startInbox();
+    showToast("Inbox recovered on this device.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function deleteSharedInbox(event) {
+  event.preventDefault();
+  if (!confirm("Permanently delete this shared inbox and every item? This cannot be undone.")) return;
+  try {
+    await api(`${API_PATH}/${state.bundle.mailboxId}`, { method: "DELETE", headers: recoveryHeaders() });
+    clearTimeout(state.syncTimer);
+    await storage.clearBundle();
+    await storage.clearCachedItems();
+    location.replace("/inbox/");
+  } catch (error) { showToast(error.message, true); }
+}
+
 async function startInbox() {
   state.settings = await storage.loadSettings();
   byId("device-label").value = state.settings.deviceLabel;
@@ -429,6 +468,8 @@ function bindEvents() {
     } catch (error) { showToast(error.message, true); }
   });
   byId("recovery-export").addEventListener("click", exportRecovery);
+  byId("restore-recovery").addEventListener("click", restoreRecovery);
+  byId("delete-inbox").addEventListener("click", deleteSharedInbox);
   byId("forget-device").addEventListener("click", async (event) => {
     event.preventDefault();
     if (!confirm("Forget this inbox on this device? Export recovery first if this is your last paired device.")) return;

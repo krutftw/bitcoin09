@@ -67,6 +67,10 @@ h2 { font-size: 25px; line-height: 1.1; font-weight: 500; }
 .pairing-details .primary { width: 100%; }
 .narrow-sheet { max-width: 620px; margin: 20px auto; padding: 30px; border: 1px solid var(--steel-dark); background: var(--sheet); box-shadow: var(--shadow); }
 .narrow-sheet textarea { margin-bottom: 16px; }
+.recovery-divider { margin: 25px 0 15px; display: flex; align-items: center; gap: 10px; color: var(--ink-soft); font: 10px var(--mono); text-transform: uppercase; }
+.recovery-divider::before, .recovery-divider::after { content: ""; height: 1px; flex: 1; background: var(--steel); }
+#recovery-file { position: absolute; width: 1px; height: 1px; opacity: 0; }
+#restore-recovery { width: 100%; margin-top: 10px; }
 
 .inbox-view { padding: 38px 0 100px; }
 .inbox-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; }

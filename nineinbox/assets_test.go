@@ -16,6 +16,7 @@ func TestAssetsIncludeHonestAccessibleInboxInterface(t *testing.T) {
 			"Encrypted on this device", "Syncs while this page is open", "Files expire after 7 days", "20 MiB",
 			`id="setup-view"`, `id="pair-view"`, `id="inbox-view"`, `id="composer"`, `id="inbox-list"`,
 			`id="pairing-qr"`, `id="pairing-words"`, `id="storage-meter"`, `id="recovery-export"`,
+			`id="recovery-file"`, `id="restore-recovery"`, `id="delete-inbox"`,
 			`aria-live="polite"`, `aria-label="Search your inbox"`, `type="module"`,
 		},
 		"app.css": {
@@ -25,7 +26,7 @@ func TestAssetsIncludeHonestAccessibleInboxInterface(t *testing.T) {
 		"app.mjs": {
 			`from "./crypto.mjs"`, `from "./storage.mjs"`, `from "./qr.mjs"`, "/api/nine/v1/inboxes",
 			"createItemId", "encryptItem", "decryptItem", "visibilitychange", "serviceWorker.register",
-			"scheduleSync", "setTimeout(scheduleSync, 15000)",
+			"importRecoveryFile", "restoreRecovery", "deleteSharedInbox", "scheduleSync", "setTimeout(scheduleSync, 15000)",
 		},
 	} {
 		body, err := WebFS.ReadFile("web/" + name)

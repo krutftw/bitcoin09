@@ -61,6 +61,10 @@
           <textarea id="pair-code" rows="4" required spellcheck="false" autocomplete="off"></textarea>
           <button class="primary" type="submit">Pair securely</button>
         </form>
+        <div class="recovery-divider"><span>or recover this inbox</span></div>
+        <label class="file-picker" for="recovery-file"><span>Choose encrypted recovery file</span><small>.nine file</small></label>
+        <input id="recovery-file" type="file" accept=".nine,application/json">
+        <button id="restore-recovery" class="secondary" type="button">Unlock recovery file</button>
       </div>
     </section>
 
@@ -105,6 +109,7 @@
       <p>Export an encrypted recovery file before clearing browser data. Anyone with the pairing link can read this inbox.</p>
       <button id="recovery-export" class="secondary" value="default">Export encrypted recovery</button>
       <button id="forget-device" class="danger" value="default">Forget inbox on this device</button>
+      <button id="delete-inbox" class="danger" value="default">Delete shared inbox</button>
       <details><summary>Technical details</summary><p>Items use AES-256-GCM with a fresh nonce. The relay stores ciphertext, sizes, and expiry times. It can still see your IP address and request timing.</p></details>
     </form>
   </dialog>
