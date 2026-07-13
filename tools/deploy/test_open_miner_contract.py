@@ -46,6 +46,7 @@ class OpenMinerDeploymentContract(unittest.TestCase):
             "systemctl reload nginx",
             "curl --fail --silent --show-error",
             "127.0.0.1:9010/api/v1/work",
+            "for _attempt in {1..10}",
             "restore_nginx",
             "trap",
         ):

@@ -82,9 +82,17 @@ fi
 
 nginx -t
 systemctl reload nginx
-curl --fail --silent --show-error --resolve btc09.org:443:127.0.0.1 \
-    -H 'Content-Type: application/json' --data "$health_json" \
-    https://btc09.org/api/v1/work >/dev/null
+ready=0
+for _attempt in {1..10}; do
+    if curl --fail --silent --show-error --resolve btc09.org:443:127.0.0.1 \
+        -H 'Content-Type: application/json' --data "$health_json" \
+        https://btc09.org/api/v1/work >/dev/null; then
+        ready=1
+        break
+    fi
+    sleep 1
+done
+[[ $ready -eq 1 ]]
 
 trap - ERR INT TERM
 rm -rf -- "$backup_dir"
