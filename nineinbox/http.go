@@ -208,7 +208,7 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request, inboxID, it
 }
 
 func (h *Handler) deleteInbox(w http.ResponseWriter, r *http.Request, inboxID string) {
-	token, ok := requestToken(r)
+	token, ok := requestTokenSize(r, 16)
 	if !ok {
 		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -223,11 +223,15 @@ func (h *Handler) deleteInbox(w http.ResponseWriter, r *http.Request, inboxID st
 const timeFormat = "2006-01-02T15:04:05.000000000Z07:00"
 
 func requestToken(r *http.Request) ([]byte, bool) {
+	return requestTokenSize(r, 32)
+}
+
+func requestTokenSize(r *http.Request, size int) ([]byte, bool) {
 	value := strings.TrimSpace(r.Header.Get("Authorization"))
 	if !strings.HasPrefix(value, "Bearer ") {
 		return nil, false
 	}
-	token, err := decodeFixedBase64(strings.TrimPrefix(value, "Bearer "), 32)
+	token, err := decodeFixedBase64(strings.TrimPrefix(value, "Bearer "), size)
 	return token, err == nil
 }
 

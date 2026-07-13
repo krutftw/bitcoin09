@@ -98,7 +98,7 @@ func decodeAPIError(t *testing.T, response *http.Response) apiErrorBody {
 func TestHTTPInboxLifecycle(t *testing.T) {
 	server, _ := newHTTPTestServer(t)
 	writeToken := apiToken(0x31)
-	recoveryToken := apiToken(0x52)
+	recoveryToken := bytes.Repeat([]byte{0x52}, 16)
 	inbox := createInboxHTTP(t, server, writeToken, recoveryToken)
 
 	ciphertext := []byte("ciphertext-only-payload")
