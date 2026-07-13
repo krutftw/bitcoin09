@@ -8,16 +8,44 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/krutftw/bitcoin09/core"
 	"github.com/krutftw/bitcoin09/desktop"
 	"github.com/krutftw/bitcoin09/lightwallet"
+	"github.com/krutftw/bitcoin09/pool"
 	"github.com/krutftw/bitcoin09/wallet"
 )
+
+type appTestMinerClient struct {
+	run func(context.Context, func(pool.ClientEvent)) error
+}
+
+func (c *appTestMinerClient) RunWithEvents(ctx context.Context, emit func(pool.ClientEvent)) error {
+	return c.run(ctx, emit)
+}
+
+type appMinerConfigCapture struct {
+	mu     sync.Mutex
+	config pool.RemoteClientConfig
+}
+
+func (c *appMinerConfigCapture) set(config pool.RemoteClientConfig) {
+	c.mu.Lock()
+	c.config = config
+	c.mu.Unlock()
+}
+
+func (c *appMinerConfigCapture) get() pool.RemoteClientConfig {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.config
+}
 
 type appTestPeers struct {
 	count  int
@@ -127,6 +155,167 @@ func newAppTestService(t *testing.T) (*appService, *core.Chain, string) {
 		t.Fatal(err)
 	}
 	return service, chain, walletPath
+}
+
+func waitForMinerStatus(t *testing.T, service *appService, predicate func(desktop.MinerStatus) bool) desktop.MinerStatus {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err := service.MinerStatus(context.Background())
+		if err != nil {
+			t.Fatalf("MinerStatus: %v", err)
+		}
+		if predicate(status) {
+			return status
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	status, _ := service.MinerStatus(context.Background())
+	t.Fatalf("miner status did not reach expected state: %+v", status)
+	return desktop.MinerStatus{}
+}
+
+func TestAppMinerRequiresWalletAndUsesItsPrimaryAddress(t *testing.T) {
+	service, _, _ := newAppTestService(t)
+	if _, err := service.StartMiner(context.Background(), desktop.MinerStartRequest{Workers: 1}); err == nil {
+		t.Fatal("miner started without a wallet")
+	}
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	walletStatus, err := service.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	capture := &appMinerConfigCapture{}
+	started := make(chan struct{})
+	service.newMiner = func(config pool.RemoteClientConfig) (appMinerClient, error) {
+		capture.set(config)
+		return &appTestMinerClient{run: func(ctx context.Context, emit func(pool.ClientEvent)) error {
+			close(started)
+			emit(pool.ClientEvent{Type: pool.ClientEventJob, JobID: "job-1", Height: 50})
+			emit(pool.ClientEvent{Type: pool.ClientEventProgress, JobID: "job-1", Height: 50, Hashes: 25, Hashrate: 12.5, Elapsed: 2 * time.Second})
+			<-ctx.Done()
+			return ctx.Err()
+		}}, nil
+	}
+	status, err := service.StartMiner(context.Background(), desktop.MinerStartRequest{Workers: 1, Worker: "home-pc"})
+	if err != nil {
+		t.Fatalf("StartMiner: %v", err)
+	}
+	if status.State != "connecting" || status.Address != walletStatus.Addresses[0] {
+		t.Fatalf("start status = %+v", status)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("miner did not start")
+	}
+	running := waitForMinerStatus(t, service, func(status desktop.MinerStatus) bool { return status.State == "mining" && status.TotalHashes == 25 })
+	if running.CurrentHashrate != 12.5 || running.Jobs != 1 || running.Height != 50 {
+		t.Fatalf("running status = %+v", running)
+	}
+	config := capture.get()
+	if config.Address != walletStatus.Addresses[0] || config.Worker != "home-pc" || config.Workers != 1 || config.PoolURL == "" {
+		t.Fatalf("miner config = %+v", config)
+	}
+	if _, err := service.StopMiner(context.Background()); err != nil {
+		t.Fatalf("StopMiner: %v", err)
+	}
+	waitForMinerStatus(t, service, func(status desktop.MinerStatus) bool { return status.State == "stopped" })
+}
+
+func TestAppMinerTracksRetriesJobsAndAcceptedBlocksWithoutDoubleCounting(t *testing.T) {
+	service, _, _ := newAppTestService(t)
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	service.newMiner = func(config pool.RemoteClientConfig) (appMinerClient, error) {
+		return &appTestMinerClient{run: func(ctx context.Context, emit func(pool.ClientEvent)) error {
+			emit(pool.ClientEvent{Type: pool.ClientEventJob, JobID: "job-1", Height: 60})
+			emit(pool.ClientEvent{Type: pool.ClientEventProgress, JobID: "job-1", Hashes: 10, Hashrate: 5})
+			emit(pool.ClientEvent{Type: pool.ClientEventProgress, JobID: "job-1", Hashes: 30, Hashrate: 7})
+			emit(pool.ClientEvent{Type: pool.ClientEventRetrying, RetryIn: time.Second, Error: "Endpoint unavailable."})
+			emit(pool.ClientEvent{Type: pool.ClientEventJob, JobID: "job-2", Height: 61})
+			emit(pool.ClientEvent{Type: pool.ClientEventProgress, JobID: "job-2", Hashes: 8, Hashrate: 8, Final: true})
+			emit(pool.ClientEvent{Type: pool.ClientEventAccepted, JobID: "job-2", Height: 61, Hashes: 8, BlockID: "block-1"})
+			<-ctx.Done()
+			return ctx.Err()
+		}}, nil
+	}
+	if _, err := service.StartMiner(context.Background(), desktop.MinerStartRequest{Workers: 1}); err != nil {
+		t.Fatal(err)
+	}
+	status := waitForMinerStatus(t, service, func(status desktop.MinerStatus) bool { return status.BlocksAccepted == 1 })
+	if status.TotalHashes != 38 || status.Jobs != 2 || status.Reconnects != 1 || status.LastBlockID != "block-1" || status.LastError != "" {
+		t.Fatalf("status = %+v", status)
+	}
+	_, _ = service.StopMiner(context.Background())
+}
+
+func TestAppMinerDefaultsBoundsAndRejectsConcurrentStart(t *testing.T) {
+	service, _, _ := newAppTestService(t)
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	service.newMiner = func(config pool.RemoteClientConfig) (appMinerClient, error) {
+		return &appTestMinerClient{run: func(ctx context.Context, emit func(pool.ClientEvent)) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		}}, nil
+	}
+	status, err := service.StartMiner(context.Background(), desktop.MinerStartRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantWorkers := runtime.NumCPU() - 1
+	if wantWorkers < 1 {
+		wantWorkers = 1
+	}
+	if status.Workers != wantWorkers || status.LogicalCPUs != runtime.NumCPU() {
+		t.Fatalf("default status = %+v want workers=%d", status, wantWorkers)
+	}
+	<-started
+	if _, err := service.StartMiner(context.Background(), desktop.MinerStartRequest{Workers: 1}); err == nil {
+		t.Fatal("second miner session started")
+	}
+	if _, err := service.StartMiner(context.Background(), desktop.MinerStartRequest{Workers: runtime.NumCPU() + 1}); err == nil {
+		t.Fatal("miner accepted too many workers")
+	}
+	if _, err := service.StartMiner(context.Background(), desktop.MinerStartRequest{Workers: 1, Worker: "bad label!"}); err == nil {
+		t.Fatal("miner accepted invalid worker label")
+	}
+	_, _ = service.StopMiner(context.Background())
+	if _, err := service.StopMiner(context.Background()); err != nil {
+		t.Fatalf("idempotent StopMiner: %v", err)
+	}
+}
+
+func TestAppMinerCloseCancelsActiveSession(t *testing.T) {
+	service, _, _ := newAppTestService(t)
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan struct{})
+	service.newMiner = func(config pool.RemoteClientConfig) (appMinerClient, error) {
+		return &appTestMinerClient{run: func(ctx context.Context, emit func(pool.ClientEvent)) error {
+			<-ctx.Done()
+			close(stopped)
+			return ctx.Err()
+		}}, nil
+	}
+	if _, err := service.StartMiner(context.Background(), desktop.MinerStartRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	service.Close()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not cancel miner")
+	}
 }
 
 func TestAppServiceFirstRunCreatesNoWalletUntilApproved(t *testing.T) {

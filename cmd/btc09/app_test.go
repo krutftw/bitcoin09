@@ -60,7 +60,7 @@ func TestDesktopMainnetDefaultsToFastModeAndAllowsExplicitFullNode(t *testing.T)
 	if err != nil {
 		t.Fatalf("parse default: %v", err)
 	}
-	if fast.mode != "fast" || fast.gatewayURL != defaultMainnetWalletGateway {
+	if fast.mode != "fast" || fast.gatewayURL != defaultMainnetWalletGateway || fast.miningURL != defaultMainnetMiningEndpoint {
 		t.Fatalf("default options = %+v", fast)
 	}
 	full, err := parseAppOptions([]string{"-mode", "full", "-gateway", "https://ignored.example"})
@@ -73,10 +73,16 @@ func TestDesktopMainnetDefaultsToFastModeAndAllowsExplicitFullNode(t *testing.T)
 	for _, args := range [][]string{
 		{"-mode", "unknown"},
 		{"-mode", "fast", "-gateway", "http://wallet.example"},
+		{"-miner", "http://mine.example"},
+		{"-miner", "https://mine.example/path"},
 	} {
 		if _, err := parseAppOptions(args); err == nil {
 			t.Fatalf("parseAppOptions(%v) succeeded", args)
 		}
+	}
+	regtest, err := parseAppOptions([]string{"-network", "regtest", "-miner", "http://127.0.0.1:19010"})
+	if err != nil || regtest.miningURL != "http://127.0.0.1:19010" {
+		t.Fatalf("regtest miner options=%+v err=%v", regtest, err)
 	}
 }
 
