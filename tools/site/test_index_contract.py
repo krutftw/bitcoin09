@@ -109,6 +109,7 @@ class IndexContractTest(unittest.TestCase):
         surfaces = {
             "homepage": self.html,
             "readme": pathlib.Path("README.md").read_text(encoding="utf-8"),
+            "quickstart": pathlib.Path("QUICKSTART.md").read_text(encoding="utf-8"),
             "discord setup": pathlib.Path("tools/discord/setup-server.mjs").read_text(
                 encoding="utf-8"
             ),
