@@ -72,7 +72,9 @@ server-visible metadata, limits, and the current background-delivery boundary.
 
 ### Build or run the node
 
-You need [Go 1.25+](https://go.dev/dl/).
+You need [Go 1.25.12+](https://go.dev/dl/). Older Go 1.25 patch releases
+contain known standard-library security issues and must not be used for release
+or server builds.
 
 ```
 git clone https://github.com/krutftw/bitcoin09
