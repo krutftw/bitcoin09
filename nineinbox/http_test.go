@@ -107,6 +107,7 @@ func TestHTTPInboxLifecycle(t *testing.T) {
 	upload.ContentLength = int64(len(ciphertext))
 	upload.Header.Set("Content-Type", "application/octet-stream")
 	upload.Header.Set("X-Nine-Retention", string(RetentionStandard))
+	upload.Header.Set("X-Nine-Item-ID", encodedToken(bytes.Repeat([]byte{0x71}, 16)))
 	uploadResponse, err := http.DefaultClient.Do(upload)
 	if err != nil {
 		t.Fatalf("upload item: %v", err)
@@ -182,6 +183,56 @@ func TestHTTPInboxLifecycle(t *testing.T) {
 	deleteInboxResponse.Body.Close()
 	if deleteInboxResponse.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete inbox status = %d", deleteInboxResponse.StatusCode)
+	}
+}
+
+func TestHTTPUploadRequiresClientBoundItemID(t *testing.T) {
+	server, _ := newHTTPTestServer(t)
+	writeToken := apiToken(0x61)
+	inbox := createInboxHTTP(t, server, writeToken, apiToken(0x62))
+	url := server.URL + "/api/nine/v1/inboxes/" + inbox.ID + "/items"
+
+	upload := func(itemID string) *http.Response {
+		t.Helper()
+		request := authenticatedRequest(t, http.MethodPost, url, writeToken, strings.NewReader("opaque"))
+		request.ContentLength = 6
+		request.Header.Set("Content-Type", "application/octet-stream")
+		request.Header.Set("X-Nine-Retention", string(RetentionStandard))
+		if itemID != "" {
+			request.Header.Set("X-Nine-Item-ID", itemID)
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatalf("upload item: %v", err)
+		}
+		return response
+	}
+
+	for _, itemID := range []string{"", "too-short", encodedToken(bytes.Repeat([]byte{0x63}, 15))} {
+		response := upload(itemID)
+		if response.StatusCode != http.StatusBadRequest {
+			response.Body.Close()
+			t.Fatalf("item ID %q status = %d, want 400", itemID, response.StatusCode)
+		}
+		if got := decodeAPIError(t, response).Error.Code; got != "bad_request" {
+			t.Fatalf("item ID %q error = %q", itemID, got)
+		}
+	}
+
+	itemID := encodedToken(bytes.Repeat([]byte{0x64}, 16))
+	response := upload(itemID)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("valid item ID status = %d", response.StatusCode)
+	}
+	var envelope struct {
+		Data ItemHeader `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode upload response: %v", err)
+	}
+	if envelope.Data.ID != itemID {
+		t.Fatalf("stored item ID = %q, want client-bound %q", envelope.Data.ID, itemID)
 	}
 }
 
@@ -262,6 +313,7 @@ func TestHTTPEnforcesUploadBodyAndPinnedLimits(t *testing.T) {
 			request.ContentLength = int64(tc.size)
 			request.Header.Set("Content-Type", "application/octet-stream")
 			request.Header.Set("X-Nine-Retention", string(tc.retention))
+			request.Header.Set("X-Nine-Item-ID", encodedToken(bytes.Repeat([]byte{0x43}, 16)))
 			response, err := http.DefaultClient.Do(request)
 			if err != nil {
 				t.Fatalf("upload request: %v", err)

@@ -60,6 +60,7 @@ type Inbox struct {
 }
 
 type PutItemInput struct {
+	ID         string
 	Ciphertext io.Reader
 	Size       int64
 	Retention  Retention
@@ -242,9 +243,19 @@ func (s *Store) Put(id string, writeToken []byte, input PutItemInput) (ItemHeade
 		return ItemHeader{}, ErrServiceFull
 	}
 
-	itemID, err := s.uniqueItemID(state)
-	if err != nil {
-		return ItemHeader{}, err
+	itemID := input.ID
+	if itemID == "" {
+		itemID, err = s.uniqueItemID(state)
+		if err != nil {
+			return ItemHeader{}, err
+		}
+	} else {
+		if !validPublicID(itemID) {
+			return ItemHeader{}, ErrInvalid
+		}
+		if _, exists := state.items[itemID]; exists {
+			return ItemHeader{}, ErrInvalid
+		}
 	}
 	createdAt := s.now().UTC()
 	item := diskItem{
@@ -404,8 +415,8 @@ func validPublicID(value string) bool {
 	if len(value) < 20 || len(value) > 64 || strings.ContainsAny(value, `/\\.`) {
 		return false
 	}
-	_, err := base64.RawURLEncoding.DecodeString(value)
-	return err == nil
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	return err == nil && len(raw) >= 16 && len(raw) <= 48
 }
 
 func headerFromDisk(item diskItem) ItemHeader {

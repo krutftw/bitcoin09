@@ -156,10 +156,15 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request, inboxID string
 		writeAPIError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
+	itemID := strings.TrimSpace(r.Header.Get("X-Nine-Item-ID"))
+	if itemID == "" || itemID != r.Header.Get("X-Nine-Item-ID") || !validPublicID(itemID) {
+		writeAPIError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
 	retention := Retention(r.Header.Get("X-Nine-Retention"))
 	reader := http.MaxBytesReader(w, r.Body, h.store.limits.MaxItemBytes+1)
 	defer reader.Close()
-	item, err := h.store.Put(inboxID, token, PutItemInput{Ciphertext: reader, Size: r.ContentLength, Retention: retention})
+	item, err := h.store.Put(inboxID, token, PutItemInput{ID: itemID, Ciphertext: reader, Size: r.ContentLength, Retention: retention})
 	if err != nil {
 		writeStoreError(w, err)
 		return
