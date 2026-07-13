@@ -27,6 +27,20 @@ class WebPresenceContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.config)
 
+    def test_proxy_hides_upstream_copies_of_headers_set_by_nginx(self):
+        for name in (
+            "X-Content-Type-Options",
+            "X-Frame-Options",
+            "Referrer-Policy",
+            "Permissions-Policy",
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    self.config.count(f"proxy_hide_header {name};"),
+                    2,
+                    "root and explorer TLS servers should each normalize this header",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
