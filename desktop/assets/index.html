@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>BTC09 Wallet</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
@@ -135,6 +136,12 @@
               </div>
               <p class="panel-intro">Mine without downloading the chain. A block you find pays this wallet directly. No partial-share payouts.</p>
 
+              <div class="miner-readiness" aria-label="Mining readiness">
+                <div><span>WALLET</span><strong id="miner-wallet-check">Checking</strong></div>
+                <div><span>ENDPOINT</span><strong id="miner-endpoint-check">Not tested</strong></div>
+                <div><span>CPU</span><strong id="miner-cpu-check">1 of 1</strong></div>
+              </div>
+
               <div class="miner-instruments" aria-label="Mining session statistics">
                 <div><span>NOW</span><strong id="miner-current-hashrate">0.00 H/s</strong></div>
                 <div><span>SESSION AVG</span><strong id="miner-average-hashrate">0.00 H/s</strong></div>
@@ -157,16 +164,21 @@
                   <label class="miner-thread-field">
                     <span class="field-label">CPU THREADS <output id="miner-workers-value" for="miner-workers">1 of 1</output></span>
                     <input id="miner-workers" type="range" min="1" max="1" value="1" step="1">
+                    <small id="miner-cpu-guidance" class="miner-cpu-guidance">Leave one thread free by default so this computer stays responsive.</small>
                   </label>
                 </div>
                 <div class="miner-actions">
                   <button id="start-miner" class="primary-action" type="submit">Start mining</button>
                   <button id="stop-miner" class="quiet-action" type="button" disabled>Stop</button>
+                  <button id="copy-miner-report" class="quiet-action miner-copy-action" type="button">Copy help report</button>
                   <span id="miner-session-meta">0 jobs · 0 reconnects · 0s</span>
                 </div>
               </form>
 
-              <p class="miner-privacy">Only your public payout address and optional worker name leave this computer. Wallet keys stay here. Open solo has high payout variance; it is not a pooled-reward service.</p>
+              <div class="miner-help-row">
+                <p class="miner-privacy">Only your public payout address and optional worker name leave this computer. Wallet keys stay here. Open solo has high payout variance; it is not a pooled-reward service.</p>
+                <a href="https://btc09.org/#mining-guide" target="_blank" rel="noopener noreferrer">Mining guide ↗</a>
+              </div>
             </section>
           </div>
         </section>

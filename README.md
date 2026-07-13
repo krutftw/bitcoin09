@@ -333,10 +333,10 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.25 is current. The non-custodial Fast wallet now includes the official
-open-source CPU miner. It still receives to locally held addresses and signs
-every payment on the device. Full node mode remains available. There are no
-consensus changes.
+v0.1.26 is current. The non-custodial Fast wallet includes the official
+open-source CPU miner, safer support diagnostics, and a direct Nine Inbox link.
+It still receives to locally held addresses and signs every payment on the
+device. Full node mode remains available. There are no consensus changes.
 
 Network:
 

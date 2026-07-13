@@ -259,7 +259,7 @@ func (s *appService) runMiner(ctx context.Context, client appMinerClient, done c
 		s.minerStatus.LastError = ""
 	} else {
 		s.minerStatus.State = "error"
-		s.minerStatus.LastError = "Mining stopped because the endpoint returned an error. Try again."
+		s.minerStatus.LastError = "The official mining endpoint returned incompatible data. Update BTC09, then copy the help report if it happens again."
 	}
 	if !s.minerStartedAt.IsZero() {
 		s.minerStatus.ElapsedSeconds = max(int64(0), int64(s.now().Sub(s.minerStartedAt).Seconds()))

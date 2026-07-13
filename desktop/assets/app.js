@@ -269,6 +269,46 @@ function minerStateCopy(status) {
   return "Ready when you are.";
 }
 
+function minerEndpointCheck(status) {
+  if (!status?.available) return "Unavailable";
+  if (status.state === "mining") return "Connected";
+  if (status.state === "connecting") return "Checking";
+  if (status.state === "retrying") return "Retrying";
+  if (status.state === "error") return "Needs attention";
+  return status.jobs > 0 ? "Last check passed" : "Not tested";
+}
+
+function minerSupportReport(status) {
+  const logicalCPUs = Math.max(1, Number(status?.logical_cpus || 1));
+  const selectedWorkers = Math.max(1, Number(status?.workers || byId("miner-workers")?.value || 1));
+  return [
+    "BTC09 miner help report",
+    `Version: ${state.status?.version || "unknown"}`,
+    `Network: ${state.status?.network || "unknown"}`,
+    `Wallet mode: ${state.status?.mode || "unknown"}`,
+    `Miner state: ${status?.state || "unknown"}`,
+    `CPU threads: ${selectedWorkers} of ${logicalCPUs}`,
+    `Current rate: ${formatHashrate(status?.current_hashrate)}`,
+    `Session average: ${formatHashrate(status?.average_hashrate)}`,
+    `Jobs: ${Number(status?.jobs || 0)}`,
+    `Reconnects: ${Number(status?.reconnects || 0)}`,
+    `Session time: ${formatElapsed(status?.elapsed_seconds)}`,
+    `Job height: ${Number(status?.height || 0) || "none"}`,
+    `Last error: ${status?.last_error || "none"}`,
+  ].join("\n");
+}
+
+async function copyMinerReport() {
+  if (!state.miner) await refreshMinerStatus({ quiet: false });
+  if (!state.miner) return;
+  try {
+    await navigator.clipboard.writeText(minerSupportReport(state.miner));
+    showToast("Miner help report copied. It leaves out your wallet address and worker name.");
+  } catch {
+    showToast("The help report could not be copied. Check clipboard permission and try again.", true);
+  }
+}
+
 function renderMinerStatus(status) {
   state.miner = status;
   const active = minerIsActive(status);
@@ -281,6 +321,14 @@ function renderMinerStatus(status) {
     workers.dataset.ready = "true";
   }
   byId("miner-workers-value").textContent = `${workers.value} of ${logicalCPUs}`;
+  byId("miner-wallet-check").textContent = status.wallet_ready ? "Ready" : "Create wallet";
+  byId("miner-endpoint-check").textContent = minerEndpointCheck(status);
+  byId("miner-endpoint-check").dataset.state = status.state || "stopped";
+  byId("miner-cpu-check").textContent = `${workers.value} of ${logicalCPUs}`;
+  const freeCPUs = Math.max(0, logicalCPUs - Number(workers.value));
+  byId("miner-cpu-guidance").textContent = freeCPUs > 0
+    ? `${freeCPUs} thread${freeCPUs === 1 ? "" : "s"} left free so this computer stays responsive.`
+    : `Using every thread may slow this computer. Try ${Math.max(1, logicalCPUs - 1)} for everyday use.`;
   const fallbackAddress = state.status?.addresses?.[0] || "";
   byId("miner-address").textContent = status.address || fallbackAddress || "Create a wallet first";
   byId("miner-current-hashrate").textContent = formatHashrate(status.current_hashrate);
@@ -365,8 +413,14 @@ function bindEvents() {
   byId("send-form").addEventListener("submit", previewPayment);
   byId("miner-form").addEventListener("submit", startMiner);
   byId("stop-miner").addEventListener("click", stopMiner);
+  byId("copy-miner-report").addEventListener("click", copyMinerReport);
   byId("miner-workers").addEventListener("input", (event) => {
     byId("miner-workers-value").textContent = `${event.target.value} of ${event.target.max}`;
+    byId("miner-cpu-check").textContent = `${event.target.value} of ${event.target.max}`;
+    const freeCPUs = Math.max(0, Number(event.target.max) - Number(event.target.value));
+    byId("miner-cpu-guidance").textContent = freeCPUs > 0
+      ? `${freeCPUs} thread${freeCPUs === 1 ? "" : "s"} left free so this computer stays responsive.`
+      : `Using every thread may slow this computer. Try ${Math.max(1, Number(event.target.max) - 1)} for everyday use.`;
   });
   byId("confirm-send").addEventListener("click", confirmPayment);
   byId("dismiss-result").addEventListener("click", () => { byId("send-result").hidden = true; });

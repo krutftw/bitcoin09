@@ -48,11 +48,14 @@ class IndexContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)
 
-    def test_v025_makes_the_official_wallet_miner_the_easy_path(self):
+    def test_v026_makes_the_supported_wallet_miner_the_easy_path(self):
         for token in (
-            "Current release: v0.1.25",
+            "Current release: v0.1.26",
             "Desktop wallet and miner",
             "Open the wallet, choose Mine",
+            'id="mining-guide"',
+            "Copy help report",
+            "leaves out your wallet address",
             "https://btc09.org/api/v1/work",
             "No partial-share payouts",
             "third-party closed-source binary miner",
