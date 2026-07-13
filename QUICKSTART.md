@@ -111,7 +111,7 @@ The official client can mine against any independent 09C remote-solo
 coordinator without downloading the chain locally:
 
 ```powershell
-btc09 mine-pool -pool https://mine.example.org -address YOUR_09C_ADDRESS -worker rig-1
+btc09 mine-pool -pool https://mine.btc09.org -address YOUR_09C_ADDRESS -worker rig-1
 ```
 
 HTTPS is required by default. Plain HTTP is available only for an explicitly
@@ -129,6 +129,11 @@ canonical block template and accepts only a nonce for a short-lived job. Remote
 solo mining does not smooth solo-mining variance. PPLNS is not live in the
 official software; it requires a separately reviewed non-custodial payout
 implementation.
+
+The desktop wallet has the same open-source miner under **Mine**. It uses your
+wallet receive address automatically, shows the current and session-average
+hashrate, and reconnects after temporary endpoint errors. See
+`docs/OPEN-MINING-PROTOCOL.md` to build or operate a compatible coordinator.
 
 ## Check Balance
 
