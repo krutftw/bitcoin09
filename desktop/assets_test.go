@@ -169,7 +169,7 @@ func TestEmbeddedMinerSupportDiagnosticsAreUsefulAndPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	javascript := string(javascriptBody)
+	javascript := strings.ReplaceAll(string(javascriptBody), "\r\n", "\n")
 	for _, required := range []string{
 		`function minerSupportReport(status)`, `BTC09 miner help report`, `Version:`, `Wallet mode:`,
 		`Miner state:`, `CPU threads:`, `Jobs:`, `Reconnects:`, `Last error:`,
