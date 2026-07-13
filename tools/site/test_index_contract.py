@@ -36,7 +36,7 @@ class IndexContractTest(unittest.TestCase):
             "estimated_network_hashrate_hps ?? pool",
             self.html,
         )
-        self.assertIn("third-party, not run by 09C", self.html)
+        self.assertNotIn("ntmminer.com", self.html.lower())
 
     def test_open_remote_solo_path_is_explicit_about_limits(self):
         for token in (
@@ -59,7 +59,7 @@ class IndexContractTest(unittest.TestCase):
             "leaves out your wallet address",
             "https://btc09.org/api/v1/work",
             "No partial-share payouts",
-            "third-party closed-source binary miner",
+            "Only download the official BTC09 client from GitHub",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)
@@ -100,10 +100,34 @@ class IndexContractTest(unittest.TestCase):
         for heading in (
             "Remote solo protocol",
             "Full node and command line",
-            "Third-party miner safety",
+            "Unofficial miner warning",
         ):
             with self.subTest(heading=heading):
                 self.assertIn(f"<summary>{heading}</summary>", self.html)
+
+    def test_public_mining_guidance_does_not_promote_retired_binary_links(self):
+        surfaces = {
+            "homepage": self.html,
+            "readme": pathlib.Path("README.md").read_text(encoding="utf-8"),
+            "discord setup": pathlib.Path("tools/discord/setup-server.mjs").read_text(
+                encoding="utf-8"
+            ),
+            "discord stats": pathlib.Path("tools/discord/stats-bot.mjs").read_text(
+                encoding="utf-8"
+            ),
+        }
+        for surface_name, surface in surfaces.items():
+            for forbidden in ("ntmminer", "mediafire", "bitcoin09.tutuit.xyz"):
+                with self.subTest(surface=surface_name, forbidden=forbidden):
+                    self.assertNotIn(forbidden, surface.lower())
+
+        for token in (
+            "Only download the official BTC09 client from GitHub",
+            "There is no official 09C GPU miner",
+            "Pooled payouts are not live in the official software",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.html)
 
     def test_interactions_keep_visible_keyboard_and_reduced_motion_states(self):
         for token in (

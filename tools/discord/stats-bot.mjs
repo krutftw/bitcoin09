@@ -7,8 +7,6 @@ import { redactDiscordPath } from "./discord-api.mjs";
 import { DiscordGatewayWatcher, fetchGatewayWithRetry } from "./gateway-watcher.mjs";
 
 const API_BASE = "https://discord.com/api/v10";
-const POOL_ID = "btc09";
-const POOL_BASE = "https://www.ntmminer.com/api-btc09/pools/" + POOL_ID;
 const EXPLORER_STATUS = "https://explorer.btc09.org/api/status";
 const DISCORD_INVITE = "https://discord.gg/fUuGzwRTzP";
 const MESSAGE_MARKER = "Bitcoin 09 live mining stats";
@@ -245,25 +243,9 @@ async function getMemberRoleIds(guildId, userId, interactionMember) {
 
 export async function getStats(fetchImpl = fetch) {
   const explorer = await json(EXPLORER_STATUS, undefined, fetchImpl);
-  const optional = await Promise.allSettled([
-    json(POOL_BASE, undefined, fetchImpl),
-    json(`${POOL_BASE}/miners?pageSize=20`, undefined, fetchImpl),
-    json(`${POOL_BASE}/blocks?pageSize=50`, undefined, fetchImpl),
-    json(`${POOL_BASE}/payments?pageSize=50`, undefined, fetchImpl),
-  ]);
-  const poolData = settled(optional[0], null);
-  const miners = settled(optional[1], []);
-  const blocks = settled(optional[2], []);
-  const payments = settled(optional[3], []);
-  const pool = poolData?.pool ?? null;
-
   return {
     checkedAt: new Date(),
-    pool,
-    miners: Array.isArray(miners) ? miners : [],
     explorer,
-    uniqueBlockMiners: Array.isArray(blocks) ? unique(blocks.map((block) => block.miner)) : [],
-    uniquePaymentAddresses: Array.isArray(payments) ? unique(payments.map((payment) => payment.address)) : [],
   };
 }
 
@@ -290,32 +272,10 @@ export function formatStatsMessage(stats) {
     );
   }
 
-  if (stats.pool) {
-    const poolStats = stats.pool.poolStats ?? {};
-    const activeMinerCount = Number(poolStats.connectedMiners ?? stats.miners.length);
-    const topMiners = stats.miners
-      .slice(0, 5)
-      .map((miner, index) => `${index + 1}. \`${miner.miner}\` - ${formatHashrate(miner.hashrate)}`)
-      .join("\n");
-    lines.push(
-      "",
-      "Community pool (third-party)",
-      `Active pool payout addresses: **${activeMinerCount.toLocaleString()}**`,
-      `Pool hashrate: **${formatHashrate(poolStats.poolHashrate)}**`,
-      `Pool blocks found: **${Number(stats.pool.totalBlocks ?? stats.pool.blocksFound ?? 0).toLocaleString()}**`,
-      `Pool paid: **${formatNumber(stats.pool.totalPaid, 4)} 09C**`,
-      `Recent block winner addresses: **${stats.uniqueBlockMiners.length.toLocaleString()}**`,
-      `Recent payout addresses: **${stats.uniquePaymentAddresses.length.toLocaleString()}**`,
-      "",
-      "Top active pool addresses:",
-      topMiners || "No active pool miners reported.",
-    );
-  }
-
   lines.push(
     "",
     "Chain figures come from the official 09C node. A payout address is not necessarily one person.",
-    `Explorer: https://explorer.btc09.org${stats.pool ? " | Community pool: https://www.ntmminer.com/btc09" : ""} | Discord: ${DISCORD_INVITE}`,
+    `Explorer: https://explorer.btc09.org | Discord: ${DISCORD_INVITE}`,
     `Updated: <t:${Math.floor(stats.checkedAt.getTime() / 1000)}:R>`,
   );
   return lines.join("\n");
@@ -328,10 +288,6 @@ async function json(url, options, fetchImpl = fetch) {
     throw new Error(`${url} failed with ${response.status}: ${text}`);
   }
   return response.json();
-}
-
-function settled(result, fallback) {
-  return result.status === "fulfilled" ? result.value : fallback;
 }
 
 async function discord(method, path, body, options = {}, attempt = 0) {
@@ -389,10 +345,6 @@ function normalizeRoleName(name) {
   return String(name)
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "");
-}
-
-function unique(values) {
-  return [...new Set(values.filter(Boolean))];
 }
 
 function formatHashrate(value) {
