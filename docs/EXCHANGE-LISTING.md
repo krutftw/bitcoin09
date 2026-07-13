@@ -14,6 +14,47 @@ Other small exchanges should be approached only after confirming that their
 current listing route is active and that BTC09 can meet their technical and
 commercial requirements. Do not spam several exchanges with stale form links.
 
+## Outreach status
+
+Reviewed 13 July 2026. Prices and requirements can change, so obtain written
+terms from the exchange before paying or supplying liquidity.
+
+| Venue | Current status | Decision |
+| --- | --- | --- |
+| SafeTrade | Application `#39826` for an initial `09C/USDT` market was received on 11 July and remains under review. | First priority. Do not describe it as a listing until SafeTrade confirms one. |
+| CoinEx | The official application page and `listing@coinex.com` accept project submissions. No public upfront application fee is shown. | Prepare the honest native-chain package in `COINEX-LISTING-REQUEST.md`, then submit through the official route. |
+| NonKYC | The official listing page quotes native-chain integration from **$3,499**, plus locked liquidity of **$400 in 09C and $400 in the paired asset per market**. | Do not pay now. One market starts at $4,299 before any other costs. |
+| XeggeX | The official listing page displays the integration fee as **`5.000$`** and requires at least **$400 total liquidity per spot market**. | Treat that as a $5,000 quote unless XeggeX confirms otherwise in writing. Do not pay now. |
+| TradeOgre | No current official public application route or written terms were verified. | Do not contact brokers or unofficial accounts claiming they can arrange a listing. |
+
+Official routes checked:
+
+- https://support.safetrade.com/hc/en-us/requests/new
+- https://www.coinex.com/en/apply/create
+- https://www.coinex.com/en/help/sections/articles/900004236303
+- https://nonkyc.io/listing
+- https://xeggex.com/listing
+
+## Funding decision
+
+An exchange listing can improve access and price discovery, but paying a venue
+does not create durable value. Do not buy 09C from yourself, wash trade, or pay
+for fake volume.
+
+Use project funds in this order:
+
+1. keep the node, explorer, seed, wallet downloads, and support path reliable;
+2. maintain reproducible signed releases and native-chain integration tests;
+3. submit free applications and answer technical reviews;
+4. consider a paid listing only after receiving written integration, custody,
+   liquidity, withdrawal, delisting, and refund terms;
+5. disclose who supplies any launch liquidity and where its 09C came from.
+
+Bitcoin 09 has no premine or project treasury. Any 09C used for liquidity must
+therefore be mined or acquired through the same public paths available to other
+participants. A commercial commitment needs a separate, explicit budget; it is
+not part of routine exchange outreach.
+
 ## Coin summary
 
 Bitcoin 09 (`09C`) is a fair-launch, CPU-accessible cryptocurrency with a
