@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,7 @@ func New(chain *core.Chain, peers PeerCounter) (*Server, error) {
 	s.legacy = http.NewServeMux()
 	s.legacy.HandleFunc("/", s.handleHome)
 	s.legacy.HandleFunc("/block/", s.handleBlock)
+	s.legacy.HandleFunc("/tx/", s.handleTransaction)
 	s.legacy.HandleFunc("/address/", s.handleAddress)
 	s.legacy.HandleFunc("/search", s.handleSearch)
 	s.legacy.HandleFunc("/api/status", s.handleStatus)
@@ -1072,17 +1074,38 @@ type blockData struct {
 }
 
 type addressData struct {
-	Address string
-	Balance string
-	Mined   []int64
+	Address      string
+	Balance      string
+	Mined        []int64
+	Transactions []addressTransactionRow
+}
+
+type addressTransactionRow struct {
+	TxID          string
+	Direction     string
+	Net           string
+	BlockHeight   int64
+	Confirmations int64
+	receivedUnits int64
+	sentUnits     int64
+}
+
+type transactionData struct {
+	TxID             string
+	StatusLabel      string
+	BlockHash        string
+	BlockHeight      int64
+	ConfirmationText string
+	HasBlock         bool
 }
 
 type pageData struct {
-	Title   string
-	Kind    string
-	Home    *homeData
-	Block   *blockData
-	Address *addressData
+	Title       string
+	Kind        string
+	Home        *homeData
+	Block       *blockData
+	Transaction *transactionData
+	Address     *addressData
 }
 
 func (s *Server) renderPage(w http.ResponseWriter, data pageData) {
@@ -1152,27 +1175,171 @@ func (s *Server) handleBlock(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, pageData{Title: fmt.Sprintf("Block %d | Bitcoin 09", h), Kind: "block", Block: &d})
 }
 
+func (s *Server) handleTransaction(w http.ResponseWriter, r *http.Request) {
+	text := strings.TrimPrefix(r.URL.Path, "/tx/")
+	canonical := strings.ToLower(text)
+	id, err := parseLowerHash(canonical)
+	if err != nil || strings.Contains(text, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	if text != canonical {
+		http.Redirect(w, r, "/tx/"+canonical, http.StatusMovedPermanently)
+		return
+	}
+	snapshot, err := s.transactionQuery(id)
+	if err != nil || snapshot.Network != s.network || snapshot.TxID != id ||
+		snapshot.Tip.Network != s.network || snapshot.Tip.Height < 0 {
+		http.Error(w, "transaction data unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	d := transactionData{TxID: canonical}
+	switch snapshot.Status {
+	case core.TransactionStatusUnknown:
+		if snapshot.BlockHeight != -1 || snapshot.BlockHash != (core.Hash32{}) || snapshot.Confirmations != 0 {
+			http.Error(w, "transaction data unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		d.StatusLabel = "Not found"
+		d.ConfirmationText = "Not found in the confirmed chain or mempool"
+	case core.TransactionStatusMempool:
+		if snapshot.BlockHeight != -1 || snapshot.BlockHash != (core.Hash32{}) || snapshot.Confirmations != 0 {
+			http.Error(w, "transaction data unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		d.StatusLabel = "In mempool"
+		d.ConfirmationText = "Waiting for confirmation"
+	case core.TransactionStatusConfirmed:
+		if snapshot.BlockHeight < 0 || snapshot.BlockHeight > snapshot.Tip.Height ||
+			snapshot.Confirmations != snapshot.Tip.Height-snapshot.BlockHeight+1 ||
+			(snapshot.BlockHeight == snapshot.Tip.Height) != (snapshot.BlockHash == snapshot.Tip.Hash) {
+			http.Error(w, "transaction data unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		d.StatusLabel = "Confirmed"
+		d.BlockHash = hashText(snapshot.BlockHash)
+		d.BlockHeight = snapshot.BlockHeight
+		if snapshot.Confirmations == 1 {
+			d.ConfirmationText = "1 confirmation"
+		} else {
+			d.ConfirmationText = fmt.Sprintf("%d confirmations", snapshot.Confirmations)
+		}
+		d.HasBlock = true
+	default:
+		http.Error(w, "transaction data unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	s.renderPage(w, pageData{Title: "Transaction | Bitcoin 09", Kind: "transaction", Transaction: &d})
+}
+
 func (s *Server) handleAddress(w http.ResponseWriter, r *http.Request) {
 	addr := strings.TrimPrefix(r.URL.Path, "/address/")
 	pkh, err := core.DecodeAddress(addr)
-	if err != nil {
+	if err != nil || core.EncodeAddress(pkh) != addr {
 		http.Error(w, "bad address", 400)
 		return
 	}
-	var balance int64
-	for _, e := range s.chain.UTXOsForPKH(pkh) {
-		balance += e.Value
+	snapshot, err := s.addressQuery(pkh)
+	if err != nil || snapshot.Network != s.network || snapshot.Tip.Network != s.network || !snapshot.Complete {
+		http.Error(w, "address data unavailable", http.StatusServiceUnavailable)
+		return
 	}
-	_, tip := s.chain.Tip()
-	var mined []int64
-	for h := int64(1); h <= tip; h++ {
-		b := s.chain.BlockAt(h)
-		if b != nil && len(b.Txs) > 0 && len(b.Txs[0].Outs) > 0 && b.Txs[0].Outs[0].PubKeyHash == pkh {
-			mined = append(mined, h)
-		}
+	if _, err := s.v1Tip(snapshot.Tip); err != nil {
+		http.Error(w, "address data unavailable", http.StatusServiceUnavailable)
+		return
 	}
-	d := addressData{Address: addr, Balance: coins(balance), Mined: mined}
+	d, err := s.addressPageData(addr, snapshot)
+	if err != nil {
+		http.Error(w, "address data unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	s.renderPage(w, pageData{Title: "Address | Bitcoin 09", Kind: "address", Address: &d})
+}
+
+func (s *Server) addressPageData(address string, snapshot core.AddressOutputSnapshot) (addressData, error) {
+	outputs, err := s.v1AddressOutputs(snapshot)
+	if err != nil {
+		return addressData{}, err
+	}
+	d := addressData{Address: address}
+	rows := make(map[string]*addressTransactionRow)
+	mined := make(map[int64]struct{})
+	rowFor := func(txID string, block v1BlockAnchor, confirmations int64) (*addressTransactionRow, error) {
+		row := rows[txID]
+		if row == nil {
+			row = &addressTransactionRow{
+				TxID: txID, BlockHeight: block.Height, Confirmations: confirmations,
+			}
+			rows[txID] = row
+			return row, nil
+		}
+		if row.BlockHeight != block.Height || row.Confirmations != confirmations {
+			return nil, errors.New("conflicting address transaction anchor")
+		}
+		return row, nil
+	}
+	var balance int64
+	for _, output := range outputs {
+		created, err := rowFor(output.TxID, output.Block, output.Confirmations)
+		if err != nil {
+			return addressData{}, err
+		}
+		if created.receivedUnits > core.MaxMoneyUnits-output.AmountUnits {
+			return addressData{}, errors.New("address transaction received amount outside money range")
+		}
+		created.receivedUnits += output.AmountUnits
+		if output.Coinbase {
+			mined[output.Block.Height] = struct{}{}
+		}
+		if output.SpentBy == nil {
+			if output.Mature {
+				if balance > core.MaxMoneyUnits-output.AmountUnits {
+					return addressData{}, errors.New("address balance outside money range")
+				}
+				balance += output.AmountUnits
+			}
+			continue
+		}
+		spendConfirmations := snapshot.Tip.Height - output.SpentBy.Block.Height + 1
+		spent, err := rowFor(output.SpentBy.TxID, output.SpentBy.Block, spendConfirmations)
+		if err != nil {
+			return addressData{}, err
+		}
+		if spent.sentUnits > core.MaxMoneyUnits-output.AmountUnits {
+			return addressData{}, errors.New("address transaction sent amount outside money range")
+		}
+		spent.sentUnits += output.AmountUnits
+	}
+	if !core.MoneyRange(balance) {
+		return addressData{}, errors.New("address balance outside money range")
+	}
+	d.Balance = coins(balance)
+	for height := range mined {
+		d.Mined = append(d.Mined, height)
+	}
+	sort.Slice(d.Mined, func(i, j int) bool { return d.Mined[i] > d.Mined[j] })
+	for _, row := range rows {
+		net := row.receivedUnits - row.sentUnits
+		switch {
+		case net > 0:
+			row.Direction = "Received"
+			row.Net = "+" + coins(net)
+		case net < 0:
+			row.Direction = "Sent"
+			row.Net = "-" + coins(-net)
+		default:
+			row.Direction = "Moved"
+			row.Net = coins(0)
+		}
+		d.Transactions = append(d.Transactions, *row)
+	}
+	sort.Slice(d.Transactions, func(i, j int) bool {
+		if d.Transactions[i].BlockHeight != d.Transactions[j].BlockHeight {
+			return d.Transactions[i].BlockHeight > d.Transactions[j].BlockHeight
+		}
+		return d.Transactions[i].TxID < d.Transactions[j].TxID
+	})
+	return d, nil
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -1183,6 +1350,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := core.DecodeAddress(q); err == nil {
 		http.Redirect(w, r, "/address/"+q, http.StatusFound)
+		return
+	}
+	canonicalHash := strings.ToLower(q)
+	if _, err := parseLowerHash(canonicalHash); err == nil {
+		http.Redirect(w, r, "/tx/"+canonicalHash, http.StatusFound)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusFound)
@@ -1303,6 +1475,13 @@ tr:last-child td { border-bottom: 0; }
 .heights a { display: block; padding: 6px 9px; border: 1px solid var(--line); background: var(--surface); }
 .mined-details { margin-top: 18px; }
 .mined-details summary { min-height: 44px; display: flex; align-items: center; color: var(--green); cursor: pointer; font-weight: 700; }
+.history { margin-top: 30px; }
+.history-head { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; margin-bottom: 12px; }
+.history-head h2, .history-head p { margin: 0; }
+.status { display: inline-flex; align-items: center; min-height: 26px; padding: 3px 8px; border: 1px solid var(--line); background: #ede8da; font: 700 10px Consolas, monospace; letter-spacing: .04em; text-transform: uppercase; }
+.amount { white-space: nowrap; font-weight: 700; }
+.amount-in { color: var(--green); }
+.amount-out { color: #8d3b2f; }
 .site-footer { border-top: 1px solid var(--line); }
 .footer-inner { padding: 20px 0 30px; color: var(--muted); font-size: 13px; }
 .footer-inner p { margin: 0; }
@@ -1311,6 +1490,14 @@ tr:last-child td { border-bottom: 0; }
   .page-head { align-items: stretch; flex-direction: column; }
   .search { grid-template-columns: 1fr auto; }
   .detail { grid-template-columns: 120px minmax(0, 1fr); }
+  .history-head { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .history .table-wrap { overflow: visible; border: 0; background: transparent; }
+  .history table, .history tbody, .history tr { display: block; min-width: 0; }
+  .history thead { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); }
+  .history tr { margin-bottom: 10px; border: 1px solid var(--line); background: var(--surface); }
+  .history td { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  .history td::before { content: attr(data-label); color: var(--muted); font: 700 10px Consolas, monospace; letter-spacing: .05em; text-transform: uppercase; }
+  .history td:last-child { border-bottom: 0; }
   main { padding-top: 30px; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1326,7 +1513,7 @@ tr:last-child td { border-bottom: 0; }
 </div></header>
 <main id="content">
 {{with .Home}}
-<div class="page-head"><div><p class="eyebrow">Public chain data</p><h1>09C block explorer</h1><p class="quiet">Live data from the official node. Refreshes every 30 seconds.</p></div><form class="search" action="/search"><label class="visually-hidden" for="chain-search">Block height or address</label><input id="chain-search" name="q" type="search" placeholder="Block height or address"><button type="submit">Search</button></form></div>
+<div class="page-head"><div><p class="eyebrow">Public chain data</p><h1>09C block explorer</h1><p class="quiet">Live data from the official node. Refreshes every 30 seconds.</p></div><form class="search" action="/search"><label class="visually-hidden" for="chain-search">Block height, TXID or address</label><input id="chain-search" name="q" type="search" placeholder="Block height, TXID or address"><button type="submit">Search</button></form></div>
 <div class="stats">
 <div class="stat"><b>{{.Height}}</b><span>height</span></div>
 <div class="stat"><b>{{.Peers}}</b><span>peers</span></div>
@@ -1347,13 +1534,21 @@ tr:last-child td { border-bottom: 0; }
 </tbody></table></div>
 {{end}}
 {{with .Block}}
-<div class="page-head"><div><p class="eyebrow">Block</p><h1>Height {{.Height}}</h1><p class="quiet"><a href="/">Back to latest blocks</a></p></div><form class="search" action="/search"><label class="visually-hidden" for="block-search">Block height or address</label><input id="block-search" name="q" type="search" placeholder="Block height or address"><button type="submit">Search</button></form></div>
+<div class="page-head"><div><p class="eyebrow">Block</p><h1>Height {{.Height}}</h1><p class="quiet"><a href="/">Back to latest blocks</a></p></div><form class="search" action="/search"><label class="visually-hidden" for="block-search">Block height, TXID or address</label><input id="block-search" name="q" type="search" placeholder="Block height, TXID or address"><button type="submit">Search</button></form></div>
 <dl class="detail"><dt>Block ID</dt><dd class="mono">{{.ID}}</dd><dt>Time</dt><dd>{{.Time}} UTC</dd><dt>Miner</dt><dd><a class="mono" href="/address/{{.Miner}}">{{.Miner}}</a></dd><dt>Reward</dt><dd>{{.Reward}} 09C</dd><dt>Transactions</dt><dd>{{.Txs}}</dd><dt>Bits</dt><dd class="mono">{{.Bits}}</dd><dt>Nonce</dt><dd>{{.Nonce}}</dd><dt>Tag</dt><dd>{{if .Tag}}{{.Tag}}{{else}}None{{end}}</dd></dl>
 {{end}}
+{{with .Transaction}}
+<div class="page-head"><div><p class="eyebrow">Transaction</p><h1>Transaction details</h1><p class="quiet"><a href="/">Back to latest blocks</a></p></div><form class="search" action="/search"><label class="visually-hidden" for="transaction-search">Block height, TXID or address</label><input id="transaction-search" name="q" type="search" placeholder="Block height, TXID or address"><button type="submit">Search</button></form></div>
+<dl class="detail"><dt>TXID</dt><dd class="mono">{{.TxID}}</dd><dt>Status</dt><dd><span class="status">{{.StatusLabel}}</span></dd><dt>Confirmations</dt><dd>{{.ConfirmationText}}</dd>{{if .HasBlock}}<dt>Block height</dt><dd><a href="/block/{{.BlockHeight}}">{{.BlockHeight}}</a></dd><dt>Block ID</dt><dd class="mono">{{.BlockHash}}</dd>{{end}}</dl>
+{{end}}
 {{with .Address}}
-<div class="page-head"><div><p class="eyebrow">Address</p><h1>Address details</h1><p class="quiet"><a href="/">Back to latest blocks</a></p></div><form class="search" action="/search"><label class="visually-hidden" for="address-search">Block height or address</label><input id="address-search" name="q" type="search" placeholder="Block height or address"><button type="submit">Search</button></form></div>
+<div class="page-head"><div><p class="eyebrow">Address</p><h1>Address details</h1><p class="quiet"><a href="/">Back to latest blocks</a></p></div><form class="search" action="/search"><label class="visually-hidden" for="address-search">Block height, TXID or address</label><input id="address-search" name="q" type="search" placeholder="Block height, TXID or address"><button type="submit">Search</button></form></div>
 <dl class="detail"><dt>Address</dt><dd class="mono">{{.Address}}</dd><dt>Spendable balance</dt><dd>{{.Balance}} 09C</dd><dt>Blocks mined</dt><dd>{{len .Mined}}</dd></dl>
 {{if .Mined}}<details class="mined-details"><summary>Show {{len .Mined}} mined block heights</summary><ul class="heights">{{range .Mined}}<li><a href="/block/{{.}}">{{.}}</a></li>{{end}}</ul></details>{{end}}
+<section class="history"><div class="history-head"><h2>Transaction history</h2><p class="quiet">Every confirmed transaction involving this address</p></div>
+{{if .Transactions}}<div class="table-wrap"><table><thead><tr><th>Type</th><th>Net amount</th><th>Block</th><th>Confirmations</th><th>TXID</th></tr></thead><tbody>
+{{range .Transactions}}<tr><td data-label="Type"><span class="status">{{.Direction}}</span></td><td data-label="Net amount" class="amount {{if eq .Direction "Received"}}amount-in{{else if eq .Direction "Sent"}}amount-out{{end}}">{{.Net}} 09C</td><td data-label="Block"><a href="/block/{{.BlockHeight}}">{{.BlockHeight}}</a></td><td data-label="Confirmations">{{.Confirmations}}</td><td data-label="TXID" class="mono"><a href="/tx/{{.TxID}}">{{.TxID}}</a></td></tr>{{end}}
+</tbody></table></div>{{else}}<p class="note">No confirmed transactions for this address yet.</p>{{end}}</section>
 {{end}}
 </main>
 <footer class="site-footer"><div class="footer-inner"><p>Bitcoin 09 public chain data · <a href="https://btc09.org/privacy.html">Privacy</a> / <a href="https://btc09.org/terms.html">Terms</a> / <a href="https://github.com/krutftw/bitcoin09">Source</a></p></div></footer>
