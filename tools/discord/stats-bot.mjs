@@ -5,6 +5,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { redactDiscordPath } from "./discord-api.mjs";
 import { DiscordGatewayWatcher, fetchGatewayWithRetry } from "./gateway-watcher.mjs";
+import {
+  XP_RANKS,
+  XpStore,
+  formatLeaderboard,
+  formatRankSummary,
+  rankForLevel,
+} from "./xp-system.mjs";
 
 const API_BASE = "https://discord.com/api/v10";
 const EXPLORER_STATUS = "https://explorer.btc09.org/api/status";
@@ -25,6 +32,7 @@ const selfAssignableRoles = [
   { key: "tester", label: "Tester", roleName: "🧪 Tester" },
 ];
 let roleCache = null;
+let activityXp = null;
 
 loadLocalEnv();
 
@@ -71,13 +79,7 @@ async function main() {
 async function registerCommands() {
   requireDiscordEnv();
 
-  const commands = [
-    {
-      name: "stats",
-      description: "Show live Bitcoin 09 mining and network stats.",
-      type: 1,
-    },
-  ];
+  const commands = getCommandDefinitions();
 
   const registered = [];
   for (const command of commands) {
@@ -86,6 +88,26 @@ async function registerCommands() {
   for (const command of registered) {
     console.log(`Registered /${command.name} (${command.id}) in guild ${process.env.DISCORD_GUILD_ID}.`);
   }
+}
+
+export function getCommandDefinitions() {
+  return [
+    {
+      name: "stats",
+      description: "Show live Bitcoin 09 mining and network stats.",
+      type: 1,
+    },
+    {
+      name: "rank",
+      description: "Show your Bitcoin 09 community activity level.",
+      type: 1,
+    },
+    {
+      name: "leaderboard",
+      description: "Show the Bitcoin 09 community activity leaderboard.",
+      type: 1,
+    },
+  ];
 }
 
 async function postOrUpdateStatsMessage() {
@@ -127,6 +149,11 @@ async function watchGateway() {
     throw terminalStartupError("This Node runtime does not provide WebSocket. Use Node 22+ or install a websocket client.");
   }
 
+  activityXp = new XpStore({ filePath: xpStateFile() });
+  await activityXp.load();
+  await syncXpRankRoles(process.env.DISCORD_GUILD_ID).catch((error) => {
+    console.error("XP rank role setup failed:", error.message || error);
+  });
   startLiveStatsUpdater();
   const gateway = await fetchGatewayWithRetry(
     () => discord("GET", "/gateway/bot"),
@@ -139,10 +166,16 @@ async function watchGateway() {
     WebSocketCtor: WebSocket,
     logger: console,
     onDispatch: async (packet) => {
-      if (packet.t !== "INTERACTION_CREATE") return;
-      await handleInteraction(packet.d).catch((error) => {
-        console.error("Interaction failed:", error.message || error);
-      });
+      if (packet.t === "INTERACTION_CREATE") {
+        await handleInteraction(packet.d).catch((error) => {
+          console.error("Interaction failed:", error.message || error);
+        });
+      }
+      if (packet.t === "MESSAGE_CREATE") {
+        await handleXpMessage(packet.d).catch((error) => {
+          console.error("XP update failed:", error.message || error);
+        });
+      }
     },
     onFatal: (decision) => {
       process.exitCode = decision.exitCode;
@@ -154,11 +187,15 @@ async function watchGateway() {
 async function handleInteraction(interaction) {
 	const action = classifyInteraction(interaction);
 	if (action === "stats") await handleStatsInteraction(interaction);
+	if (action === "rank") await handleRankInteraction(interaction);
+	if (action === "leaderboard") await handleLeaderboardInteraction(interaction);
 	if (action === "role") await handleRoleButtonInteraction(interaction);
 }
 
 export function classifyInteraction(interaction) {
 	if (interaction?.type === 2 && interaction.data?.name === "stats") return "stats";
+	if (interaction?.type === 2 && interaction.data?.name === "rank") return "rank";
+	if (interaction?.type === 2 && interaction.data?.name === "leaderboard") return "leaderboard";
 	if (interaction?.type === 3 && interaction.data?.custom_id?.startsWith("role:toggle:")) return "role";
 	return null;
 }
@@ -181,6 +218,64 @@ async function handleStatsInteraction(interaction) {
     }, { auth: false }).catch(() => {});
     throw error;
   }
+}
+
+async function handleRankInteraction(interaction) {
+  const userId = interaction.member?.user?.id ?? interaction.user?.id;
+  if (!userId || !activityXp) {
+    await respondToInteraction(interaction, "Activity ranks are starting up. Try again in a moment.", true);
+    return;
+  }
+  await respondToInteraction(
+    interaction,
+    formatRankSummary(userId, activityXp.getMember(userId)),
+    true,
+  );
+}
+
+async function handleLeaderboardInteraction(interaction) {
+  if (!activityXp) {
+    await respondToInteraction(interaction, "Activity ranks are starting up. Try again in a moment.", true);
+    return;
+  }
+  await respondToInteraction(
+    interaction,
+    formatLeaderboard(activityXp.leaderboard(10)),
+    false,
+  );
+}
+
+async function respondToInteraction(interaction, content, ephemeral) {
+  await discord("POST", `/interactions/${interaction.id}/${interaction.token}/callback`, {
+    type: 4,
+    data: {
+      content,
+      flags: ephemeral ? 64 : undefined,
+      allowed_mentions: { parse: [] },
+    },
+  }, { auth: false });
+}
+
+async function handleXpMessage(message) {
+  if (!activityXp || message?.guild_id !== process.env.DISCORD_GUILD_ID) return;
+  const result = await activityXp.awardForMessage(message);
+  if (!result.awarded) return;
+
+  const oldRank = rankForLevel(result.oldLevel);
+  const newRank = rankForLevel(result.level);
+  if (oldRank?.name === newRank?.name) return;
+
+  const roles = await syncXpRankRoles(message.guild_id);
+  const memberRoleIds = Array.isArray(message.member?.roles)
+    ? message.member.roles
+    : await getMemberRoleIds(message.guild_id, result.userId);
+  await applyXpRankRoles({
+    guildId: message.guild_id,
+    userId: result.userId,
+    memberRoleIds,
+    level: result.level,
+    roles,
+  });
 }
 
 async function handleRoleButtonInteraction(interaction) {
@@ -245,6 +340,62 @@ async function getMemberRoleIds(guildId, userId, interactionMember) {
 
   const member = await discord("GET", `/guilds/${guildId}/members/${userId}`);
   return member.roles ?? [];
+}
+
+export async function syncXpRankRoles(
+  guildId,
+  { discordImpl = discord } = {},
+) {
+  const guildRoles = await discordImpl("GET", `/guilds/${guildId}/roles`);
+  const rankRoles = [];
+  for (const rank of XP_RANKS) {
+    let role = guildRoles.find(
+      (candidate) => normalizeRoleName(candidate.name) === normalizeRoleName(rank.name),
+    );
+    if (!role) {
+      role = await discordImpl("POST", `/guilds/${guildId}/roles`, {
+        name: rank.name,
+        color: rank.color,
+        hoist: true,
+        mentionable: false,
+        permissions: "0",
+      });
+      guildRoles.push(role);
+      roleCache = null;
+    }
+    rankRoles.push(role);
+  }
+  return rankRoles;
+}
+
+export async function applyXpRankRoles({
+  guildId,
+  userId,
+  memberRoleIds,
+  level,
+  roles,
+  discordImpl = discord,
+}) {
+  const targetName = rankForLevel(level)?.name ?? null;
+  for (const role of roles) {
+    const hasRole = memberRoleIds.includes(role.id);
+    const isTarget = targetName != null &&
+      normalizeRoleName(role.name) === normalizeRoleName(targetName);
+    if (hasRole && !isTarget) {
+      await discordImpl(
+        "DELETE",
+        `/guilds/${guildId}/members/${userId}/roles/${role.id}`,
+        null,
+      );
+    }
+    if (!hasRole && isTarget) {
+      await discordImpl(
+        "PUT",
+        `/guilds/${guildId}/members/${userId}/roles/${role.id}`,
+        null,
+      );
+    }
+  }
 }
 
 export async function getStats(fetchImpl = fetch) {
@@ -395,6 +546,7 @@ export async function syncLiveStatChannels(
         type: CHANNEL_TYPE_VOICE,
         parent_id: category.id,
         position,
+        permission_overwrites: categoryPermissions,
       });
       channels.push(created);
       continue;
@@ -560,6 +712,12 @@ function loadLocalEnv() {
   }
 }
 
+function xpStateFile() {
+  if (process.env.DISCORD_XP_STATE_FILE) return process.env.DISCORD_XP_STATE_FILE;
+  if (process.platform === "win32") return join(scriptDir, ".state", "xp.json");
+  return "/var/lib/btc09-discord/xp.json";
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -575,7 +733,7 @@ Usage:
 
 Modes:
   no args              Print current stats locally.
-  --register-commands  Register the guild /stats command.
+  --register-commands  Register the guild /stats, /rank, and /leaderboard commands.
   --post               Post or update one stats message in Discord.
   --watch              Keep a gateway connection open for role buttons.
 
@@ -583,5 +741,6 @@ Environment:
   DISCORD_CLIENT_ID
   DISCORD_GUILD_ID
   DISCORD_BOT_TOKEN
+  DISCORD_XP_STATE_FILE (optional)
 `);
 }

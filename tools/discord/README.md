@@ -64,8 +64,11 @@ Roles:
 - `🔔 Updates`
 - `🤝 Contributor`
 - `🧪 Tester`
+- `🌱 Active`
+- `⭐ Regular`
+- `🏆 Veteran`
 
-The owner, bot, pool operator, developer, and moderator roles are displayed separately in the Discord member list when members have those roles. The script assigns `👑 Owner` to the guild owner and `🤖 Bot` to the bot user.
+The owner, bot, pool operator, developer, moderator, and earned activity roles are displayed separately in the Discord member list when members have those roles. The script assigns `👑 Owner` to the guild owner and `🤖 Bot` to the bot user.
 
 Self-serve roles:
 
@@ -82,6 +85,12 @@ Manual roles:
 - `🏊 Pool Operator`
 - `🛠 Developer`
 - `🛡 Moderator`
+
+Automatic activity roles:
+
+- Level 3: `🌱 Active`
+- Level 8: `⭐ Regular`
+- Level 15: `🏆 Veteran`
 
 Self-serve roles are chosen with buttons in `#🎭-roles`. `🔔 Updates` is only an opt-in ping role for releases, fork warnings, pool/node incidents, and important network notes. It does not give posting permissions.
 
@@ -119,7 +128,7 @@ Node-only bot by itself, register the guild slash command:
 node tools/discord/stats-bot.mjs --register-commands
 ```
 
-This upserts `/stats` without replacing other guild commands. Self-serve roles
+This upserts `/stats`, `/rank`, and `/leaderboard` without replacing other guild commands. Self-serve roles
 are handled by the clickable buttons in `#🎭-roles`, so the watch process must
 be running for the buttons to respond.
 
@@ -138,7 +147,11 @@ node tools/discord/stats-bot.mjs --watch
 The watcher also keeps a read-only `📊 LIVE STATS` category at the top of the
 server with height, estimated network hashrate, difficulty, and peer count.
 Those channel names refresh every ten minutes from the official explorer. The
-role buttons only respond while the watch process is running. The one-shot
+watcher awards 15-25 activity XP at most once per member per minute, ignores
+bots and webhooks, persists XP across restarts, and keeps only the member's
+highest earned activity role. `/rank` shows personal progress and
+`/leaderboard` shows the current top ten. The role buttons only respond while
+the watch process is running. The one-shot
 `--post` mode is safe to run repeatedly because it edits the existing bot
 message when one is already present.
 
