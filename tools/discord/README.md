@@ -135,7 +135,10 @@ Run the watcher so role buttons answer inside Discord:
 node tools/discord/stats-bot.mjs --watch
 ```
 
-The role buttons only respond while the watch process is running. The one-shot
+The watcher also keeps a read-only `📊 LIVE STATS` category at the top of the
+server with height, estimated network hashrate, difficulty, and peer count.
+Those channel names refresh every ten minutes from the official explorer. The
+role buttons only respond while the watch process is running. The one-shot
 `--post` mode is safe to run repeatedly because it edits the existing bot
 message when one is already present.
 
