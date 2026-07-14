@@ -60,8 +60,8 @@ test("v0.1.28 announcement explains PPLNS without hype", () => {
   }
 });
 
-test("server status post names v0.1.28 as the current release", () => {
-  assert.ok(source.includes('"Current release: v0.1.28"'));
+test("server status post names v0.1.29 as the current release", () => {
+  assert.ok(source.includes('"Current release: v0.1.29"'));
 });
 
 test("mining support update points people to the official client only", () => {

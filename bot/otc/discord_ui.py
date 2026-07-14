@@ -216,9 +216,16 @@ class TradeOrderModal(discord.ui.Modal):
         self.amount = discord.ui.TextInput(label="09C amount", max_length=32)
         self.total_price = discord.ui.TextInput(label="Total settlement price", max_length=37)
         self.asset = discord.ui.TextInput(label="Asset code, for example AUD or USDT", max_length=12)
-        self.method = discord.ui.TextInput(label="Method, for example PayID or Wise", max_length=32)
+        self.method = discord.ui.TextInput(
+            label="Payment method",
+            placeholder="Wise, PayID, bank transfer, wallet transfer",
+            max_length=32,
+        )
         self.network = discord.ui.TextInput(
-            label="Network, if applicable", required=False, max_length=48
+            label="Network (blank for bank/cash)",
+            placeholder="TRC20, ERC20, Solana; blank for Wise/bank",
+            required=False,
+            max_length=48,
         )
         for item in (
             self.amount,
@@ -851,8 +858,11 @@ class DiscordTradeUI:
             )
             return content
         except Exception as exc:
+            rejected = isinstance(exc, (AuthorizationError, OrderConflict, ValueError))
+            level = "INFO" if rejected else "ERROR"
+            outcome = "rejected" if rejected else "failed"
             print(
-                f"[ERROR] OTC interaction failed id={interaction_id} action={key} "
+                f"[{level}] OTC interaction {outcome} id={interaction_id} action={key} "
                 f"phase={phase} error={type(exc).__name__} "
                 f"elapsed={time.monotonic() - started:.3f}s",
                 flush=True,

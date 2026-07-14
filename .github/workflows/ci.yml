@@ -57,6 +57,7 @@ jobs:
       - name: Website and deployment contracts
         run: |
           python -m unittest \
+            tools.release.test_package_macos \
             tools.site.test_index_contract \
             tools.deploy.test_nine_inbox_contract \
             tools.deploy.test_open_miner_contract \

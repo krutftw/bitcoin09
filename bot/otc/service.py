@@ -1488,6 +1488,21 @@ class TradeService:
             raise ValueError("settlement network contains invalid characters")
         canonical = _SETTLEMENT_NETWORKS.get(result.casefold())
         if canonical is None:
+            if result.casefold() in {
+                "usdt",
+                "usdc",
+                "btc",
+                "eth",
+                "sol",
+                "ltc",
+                "doge",
+                "bnb",
+            }:
+                raise ValueError(
+                    f"{result.upper()} is the asset, not its network. Use TRC20, "
+                    "ERC20, Solana, Bitcoin, or another supported network; leave "
+                    "network blank for Wise or bank payments."
+                )
             raise ValueError("settlement network must be a supported network")
         return canonical
 

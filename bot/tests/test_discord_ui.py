@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 import ast
 import inspect
@@ -8,6 +9,7 @@ import tempfile
 import threading
 import unittest
 import warnings
+from contextlib import redirect_stdout
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -296,6 +298,46 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("XAU", asset_choices("xau"))
         self.assertNotIn("BAD CODE", asset_choices("bad code"))
         self.assertTrue(all(re.fullmatch(r"[A-Z0-9._-]{2,12}", item) for item in asset_choices("")))
+
+    async def test_trade_modal_explains_payment_method_and_network_fields(self) -> None:
+        modal = TradeOrderModal(self.ui, side="sell")
+        self.assertIn("Wise", modal.method.placeholder or "")
+        self.assertIn("wallet transfer", (modal.method.placeholder or "").lower())
+        self.assertIn("blank", modal.network.to_component_dict()["label"].lower())
+        self.assertIn("TRC20", modal.network.placeholder or "")
+        self.assertIn("bank", (modal.network.placeholder or "").lower())
+
+    async def test_validation_rejection_is_not_logged_as_a_system_error(self) -> None:
+        class RejectingService(FakeService):
+            def create_sell(self, **kwargs: object) -> OrderResult:
+                raise ValueError(
+                    "USDT is the asset. Use TRC20, ERC20, or another supported "
+                    "network; leave network blank for Wise or bank payments."
+                )
+
+        ui = DiscordTradeUI(
+            RejectingService(),
+            admin_ids={9001},
+            accepting_orders=True,
+            executor=self._run,
+        )
+        interaction = FakeInteraction(299, 20)
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            await ui.create_sell(
+                interaction,
+                "39",
+                "16",
+                "USDT",
+                "Wise",
+                "USDT",
+                None,
+            )
+
+        self.assertIn("[INFO] OTC interaction rejected", output.getvalue())
+        self.assertNotIn("[ERROR] OTC interaction failed", output.getvalue())
+        self.assertIn("USDT is the asset", interaction.followup.sent[-1][0])
 
     def test_custom_ids_contain_only_action_and_numeric_order(self) -> None:
         self.assertEqual(action_custom_id("confirm_sent", 42), "confirm_sent:42")
