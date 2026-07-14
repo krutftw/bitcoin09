@@ -301,6 +301,7 @@ export async function syncLiveStatChannels(
   stats,
   {
     guildId = process.env.DISCORD_GUILD_ID,
+    clientId = process.env.DISCORD_CLIENT_ID,
     discordImpl = discord,
   } = {},
 ) {
@@ -309,6 +310,14 @@ export async function syncLiveStatChannels(
   const categoryPermissions = [
     { id: guildId, type: 0, allow: "0", deny: CONNECT_PERMISSION },
   ];
+  if (clientId) {
+    categoryPermissions.push({
+      id: clientId,
+      type: 1,
+      allow: CONNECT_PERMISSION,
+      deny: "0",
+    });
+  }
   let category = channels.find(
     (channel) => channel.type === CHANNEL_TYPE_CATEGORY && channel.name === LIVE_STATS_CATEGORY,
   );
@@ -326,7 +335,16 @@ export async function syncLiveStatChannels(
     );
     const connectDenied = everybody &&
       (BigInt(everybody.deny ?? "0") & BigInt(CONNECT_PERMISSION)) !== 0n;
-    if (!connectDenied) {
+    const botOverwrite = clientId
+      ? (category.permission_overwrites ?? []).find(
+        (overwrite) => overwrite.id === clientId && overwrite.type === 1,
+      )
+      : null;
+    const botCanConnect = !clientId || (
+      botOverwrite &&
+      (BigInt(botOverwrite.allow ?? "0") & BigInt(CONNECT_PERMISSION)) !== 0n
+    );
+    if (!connectDenied || !botCanConnect) {
       category = await discordImpl("PATCH", `/channels/${category.id}`, {
         permission_overwrites: categoryPermissions,
       });
