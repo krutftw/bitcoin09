@@ -49,9 +49,9 @@ class IndexContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)
 
-    def test_v027_makes_the_supported_wallet_miner_the_easy_path(self):
+    def test_current_release_makes_the_supported_wallet_miner_the_easy_path(self):
         for token in (
-            "Current release: v0.1.28",
+            "Current release: v0.1.29",
             "Desktop wallet and miner",
             "Open the wallet, choose Mine",
             'id="mining-guide"',
@@ -83,17 +83,26 @@ class IndexContractTest(unittest.TestCase):
     def test_current_release_has_direct_platform_downloads_and_checksums(self):
         for asset in (
             "btc09-windows-amd64.exe",
-            "btc09-macos-apple",
-            "btc09-macos-intel",
+            "btc09-macos-apple.zip",
+            "btc09-macos-intel.zip",
             "btc09-linux-amd64",
             "btc09-linux-arm64",
             "SHA256SUMS",
         ):
             with self.subTest(asset=asset):
                 self.assertIn(
-                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.28/{asset}",
+                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.29/{asset}",
                     self.html,
                 )
+
+    def test_macos_downloads_are_clickable_apps_not_raw_binaries(self):
+        for token in (
+            "Download the ZIP",
+            "Bitcoin 09.app",
+            "right-click the app",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.html)
 
     def test_long_operator_material_is_progressively_disclosed(self):
         self.assertGreaterEqual(self.html.count('class="technical-note"'), 4)

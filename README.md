@@ -63,6 +63,12 @@ this computer, and sends only the signed transaction for relay. Passwords,
 recovery words, and private keys are never sent. Run `btc09 app -mode full` to
 verify through a local node.
 
+On macOS, download the Apple silicon or Intel ZIP from the release, unzip it,
+and open `Bitcoin 09.app`. If macOS blocks the first launch, verify the ZIP
+against `SHA256SUMS`, then right-click the app and choose **Open**. Current
+community builds are not Apple-notarized; raw Mac binaries are kept only for
+command-line users.
+
 ### Nine Inbox
 
 [Nine Inbox](https://btc09.org/inbox/) moves notes, links, photos, and files
@@ -331,7 +337,7 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.28 is current. The official CPU miner now uses non-custodial PPLNS by
+v0.1.29 is current. The official CPU miner uses non-custodial PPLNS by
 default, with difficulty-weighted shares, a durable public window, and direct
 coinbase payouts at a 0% pool fee. Wallet V2 keeps 24-word recovery and an
 encrypted local file, while existing V1 wallets stay unchanged and readable.

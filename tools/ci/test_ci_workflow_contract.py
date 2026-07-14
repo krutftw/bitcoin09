@@ -46,6 +46,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "node --test nineinbox/web/*.test.mjs",
             "python -m unittest discover -s bot/tests -p 'test_*.py'",
             "python -m unittest \\",
+            "tools.release.test_package_macos",
             "tools.site.test_index_contract",
             "tools.deploy.test_nine_inbox_contract",
             "tools.deploy.test_open_miner_contract",

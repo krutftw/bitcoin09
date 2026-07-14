@@ -1454,6 +1454,23 @@ class TradeServiceOrderTests(unittest.TestCase):
         self.assertEqual(status.active_order_count, 1)
         self.assertFalse(hasattr(status, "balance_units"))
 
+    def test_asset_code_in_network_field_has_actionable_guidance(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "USDT is the asset.*TRC20.*leave network blank.*Wise",
+        ):
+            self.service.create_buy(
+                buyer_id=92,
+                buyer_name="Buyer",
+                receive_address=address(20_092),
+                net_amount=100,
+                total_price="2",
+                asset="USDT",
+                method="Wise",
+                network="USDT",
+            )
+        self.assertEqual(self.wallet.address_count, 0)
+
     def test_receive_address_update_is_validated_and_used_by_later_order(self):
         configured = address(91_001)
         saved = self.service.set_receive_address(

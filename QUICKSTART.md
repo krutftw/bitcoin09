@@ -30,7 +30,7 @@ with `.\btc09-windows-amd64.exe` unless you renamed or installed the binary.
 Current release:
 
 ```text
-Bitcoin 09 (09C) reference node v0.1.28
+Bitcoin 09 (09C) reference node v0.1.29
 ```
 
 ## Open the Desktop Wallet
@@ -40,6 +40,11 @@ Double-click the downloaded BTC09 program, or run it without a command:
 ```powershell
 .\btc09-windows-amd64.exe
 ```
+
+On macOS, download the ZIP for Apple silicon or Intel, unzip it, and open
+`Bitcoin 09.app`. If macOS blocks the first launch, verify the ZIP against
+`SHA256SUMS`, then right-click the app and choose **Open**. The current
+community build is not Apple-notarized.
 
 BTC09 opens a local wallet interface in your normal browser. Fast mode shows
 your balance without downloading the full chain and still signs payments only
