@@ -158,6 +158,54 @@ test("live stats sync creates a locked category at the top and is idempotent", a
   ]);
 });
 
+test("live stats sync explicitly keeps LIVE STATS above INFO", async () => {
+  const names = statsBot.formatLiveStatChannelNames({ explorer: explorerStatus });
+  const channels = [
+    { id: "info", name: "📌 INFO", type: 4, position: 0 },
+    {
+      id: "live",
+      name: "📊 LIVE STATS",
+      type: 4,
+      position: 0,
+      permission_overwrites: [
+        { id: "guild-1", type: 0, allow: "0", deny: "1048576" },
+      ],
+    },
+    ...names.map((name, position) => ({
+      id: `stat-${position}`,
+      name,
+      type: 2,
+      parent_id: "live",
+      position,
+    })),
+  ];
+  const calls = [];
+  const discordImpl = async (method, path, body) => {
+    calls.push({ method, path, body });
+    if (method === "GET" && path === "/guilds/guild-1/channels") {
+      return channels.map((channel) => ({ ...channel }));
+    }
+    if (method === "PATCH" && path === "/guilds/guild-1/channels") {
+      return body;
+    }
+    throw new Error(`unexpected Discord call ${method} ${path}`);
+  };
+
+  await statsBot.syncLiveStatChannels(
+    { explorer: explorerStatus },
+    { guildId: "guild-1", discordImpl },
+  );
+
+  assert.deepEqual(calls.at(-1), {
+    method: "PATCH",
+    path: "/guilds/guild-1/channels",
+    body: [
+      { id: "live", position: 0 },
+      { id: "info", position: 1 },
+    ],
+  });
+});
+
 test("watch updater refreshes immediately and every ten minutes", async () => {
   assert.equal(typeof statsBot.startLiveStatsUpdater, "function");
   const intervals = [];

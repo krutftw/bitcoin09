@@ -326,12 +326,38 @@ export async function syncLiveStatChannels(
     );
     const connectDenied = everybody &&
       (BigInt(everybody.deny ?? "0") & BigInt(CONNECT_PERMISSION)) !== 0n;
-    if (Number(category.position) !== 0 || !connectDenied) {
+    if (!connectDenied) {
       category = await discordImpl("PATCH", `/channels/${category.id}`, {
-        position: 0,
         permission_overwrites: categoryPermissions,
       });
     }
+  }
+
+  const categories = channels
+    .map((channel, index) => ({
+      channel: channel.id === category.id ? category : channel,
+      index,
+    }))
+    .filter(({ channel }) => channel.type === CHANNEL_TYPE_CATEGORY)
+    .sort(
+      (left, right) =>
+        Number(left.channel.position) - Number(right.channel.position) ||
+        left.index - right.index,
+    )
+    .map(({ channel }) => channel);
+  if (Number(category.position) !== 0 || categories[0]?.id !== category.id) {
+    const orderedCategories = [
+      category,
+      ...categories.filter((existing) => existing.id !== category.id),
+    ];
+    await discordImpl(
+      "PATCH",
+      `/guilds/${guildId}/channels`,
+      orderedCategories.map((existing, position) => ({
+        id: existing.id,
+        position,
+      })),
+    );
   }
 
   const names = formatLiveStatChannelNames(stats);
