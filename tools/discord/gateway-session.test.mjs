@@ -160,7 +160,7 @@ test("a fresh session identifies with the existing watcher intents", () => {
     op: 2,
     d: {
       token: "token-value",
-      intents: 1,
+      intents: 513,
       properties: {
         os: "linux",
         browser: "bitcoin09-stats-bot",

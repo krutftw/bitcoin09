@@ -3,6 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { XP_RANKS } from "./xp-system.mjs";
 
 const API_BASE = "https://discord.com/api/v10";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -73,6 +74,12 @@ const desiredRoles = [
   { name: "🔔 Updates", aliases: ["📣 Announcements", "Announcements", "Updates"], color: 0xf2994a, hoist: false, mentionable: true },
   { name: "🤝 Contributor", color: 0x00b894, hoist: false, mentionable: true },
   { name: "🧪 Tester", color: 0x56ccf2, hoist: false, mentionable: true },
+  ...XP_RANKS.map((rank) => ({
+    name: rank.name,
+    color: rank.color,
+    hoist: true,
+    mentionable: false,
+  })),
 ];
 
 const desiredCategories = [

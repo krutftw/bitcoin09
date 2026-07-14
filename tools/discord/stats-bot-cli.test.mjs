@@ -89,8 +89,79 @@ test("stats implementation contains no retired pool dependency", async () => {
 
 test("registered stats commands and role buttons are routed", () => {
   assert.equal(classifyInteraction({ type: 2, data: { name: "stats" } }), "stats");
+  assert.equal(classifyInteraction({ type: 2, data: { name: "rank" } }), "rank");
+  assert.equal(classifyInteraction({ type: 2, data: { name: "leaderboard" } }), "leaderboard");
   assert.equal(classifyInteraction({ type: 3, data: { custom_id: "role:toggle:miner" } }), "role");
   assert.equal(classifyInteraction({ type: 2, data: { name: "unknown" } }), null);
+  assert.deepEqual(statsBot.getCommandDefinitions().map(({ name }) => name), [
+    "stats",
+    "rank",
+    "leaderboard",
+  ]);
+});
+
+test("XP rank roles are created once and displayed separately", async () => {
+  assert.equal(typeof statsBot.syncXpRankRoles, "function");
+  const roles = [{ id: "everyone", name: "@everyone" }];
+  const calls = [];
+  let nextId = 1;
+  const discordImpl = async (method, path, body) => {
+    calls.push({ method, path, body });
+    if (method === "GET" && path === "/guilds/guild-1/roles") {
+      return roles.map((role) => ({ ...role }));
+    }
+    if (method === "POST" && path === "/guilds/guild-1/roles") {
+      const role = { id: `rank-${nextId++}`, ...body };
+      roles.push(role);
+      return { ...role };
+    }
+    throw new Error(`unexpected Discord call ${method} ${path}`);
+  };
+
+  const created = await statsBot.syncXpRankRoles("guild-1", { discordImpl });
+  assert.deepEqual(created.map(({ name }) => name), ["🌱 Active", "⭐ Regular", "🏆 Veteran"]);
+  assert.ok(created.every((role) => role.hoist === true));
+  assert.ok(created.every((role) => role.permissions === "0"));
+
+  calls.length = 0;
+  await statsBot.syncXpRankRoles("guild-1", { discordImpl });
+  assert.equal(calls.filter((call) => call.method === "POST").length, 0);
+});
+
+test("XP promotion keeps only the highest earned rank role", async () => {
+  assert.equal(typeof statsBot.applyXpRankRoles, "function");
+  const calls = [];
+  const discordImpl = async (method, path, body) => {
+    calls.push({ method, path, body });
+    return null;
+  };
+  const roles = [
+    { id: "active", name: "🌱 Active" },
+    { id: "regular", name: "⭐ Regular" },
+    { id: "veteran", name: "🏆 Veteran" },
+  ];
+
+  await statsBot.applyXpRankRoles({
+    guildId: "guild-1",
+    userId: "user-1",
+    memberRoleIds: ["active"],
+    level: 8,
+    roles,
+    discordImpl,
+  });
+
+  assert.deepEqual(calls, [
+    {
+      method: "DELETE",
+      path: "/guilds/guild-1/members/user-1/roles/active",
+      body: null,
+    },
+    {
+      method: "PUT",
+      path: "/guilds/guild-1/members/user-1/roles/regular",
+      body: null,
+    },
+  ]);
 });
 
 test("live stats channel names are compact and come from official explorer data", () => {
@@ -128,7 +199,7 @@ test("live stats sync creates a locked category at the top and is idempotent", a
 
   await statsBot.syncLiveStatChannels(
     { explorer: explorerStatus },
-    { guildId: "guild-1", clientId: null, discordImpl },
+    { guildId: "guild-1", clientId: "bot-1", discordImpl },
   );
 
   const creates = calls.filter((call) => call.method === "POST");
@@ -139,6 +210,7 @@ test("live stats sync creates a locked category at the top and is idempotent", a
     position: 0,
     permission_overwrites: [
       { id: "guild-1", type: 0, allow: "0", deny: "1048576" },
+      { id: "bot-1", type: 1, allow: "1048576", deny: "0" },
     ],
   });
   assert.deepEqual(
@@ -147,11 +219,16 @@ test("live stats sync creates a locked category at the top and is idempotent", a
   );
   assert.ok(creates.slice(1).every((call) => call.body.type === 2));
   assert.ok(creates.slice(1).every((call) => call.body.parent_id === "channel-1"));
+  assert.ok(creates.slice(1).every((call) =>
+    call.body.permission_overwrites.some((overwrite) =>
+      overwrite.id === "bot-1" && overwrite.allow === "1048576"
+    )
+  ));
 
   calls.length = 0;
   await statsBot.syncLiveStatChannels(
     { explorer: explorerStatus },
-    { guildId: "guild-1", clientId: null, discordImpl },
+    { guildId: "guild-1", clientId: "bot-1", discordImpl },
   );
   assert.deepEqual(calls, [
     { method: "GET", path: "/guilds/guild-1/channels", body: undefined },

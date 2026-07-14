@@ -69,7 +69,7 @@ export class GatewaySessionPolicy {
       op: 2,
       d: {
         token,
-        intents: 1,
+        intents: 513,
         properties: {
           os: platform,
           browser: "bitcoin09-stats-bot",
