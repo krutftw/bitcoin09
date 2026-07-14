@@ -51,7 +51,7 @@ class IndexContractTest(unittest.TestCase):
 
     def test_current_release_makes_the_supported_wallet_miner_the_easy_path(self):
         for token in (
-            "Current release: v0.1.29",
+            "Current release: v0.1.30",
             "Desktop wallet and miner",
             "Open the wallet, choose Mine",
             'id="mining-guide"',
@@ -91,7 +91,7 @@ class IndexContractTest(unittest.TestCase):
         ):
             with self.subTest(asset=asset):
                 self.assertIn(
-                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.29/{asset}",
+                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.30/{asset}",
                     self.html,
                 )
 

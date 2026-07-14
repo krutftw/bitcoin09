@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -177,6 +178,125 @@ func TestLegacyExplorerPagesUseBrandedAccessibleHTML(t *testing.T) {
 				t.Errorf("GET %s missing %q", path, token)
 			}
 		}
+	}
+}
+
+func TestExplorerSearchFindsTransactionIDsAndRendersStatus(t *testing.T) {
+	server, _ := newRegTestServer(t)
+	txID := core.SHA256d([]byte("human transaction search"))
+	blockHash := core.SHA256d([]byte("human transaction block"))
+	tipHash := core.SHA256d([]byte("human transaction tip"))
+	server.transactionQuery = func(got core.Hash32) (core.TransactionLookupSnapshot, error) {
+		if got != txID {
+			return core.TransactionLookupSnapshot{}, errors.New("wrong transaction identity")
+		}
+		return core.TransactionLookupSnapshot{
+			Network: core.RegTestMachineID,
+			Tip: core.ChainTipSnapshot{
+				Network: core.RegTestMachineID,
+				Hash:    tipHash,
+				Height:  10,
+			},
+			TxID:          txID,
+			Status:        core.TransactionStatusConfirmed,
+			BlockHash:     blockHash,
+			BlockHeight:   9,
+			Confirmations: 2,
+		}, nil
+	}
+
+	txText := hex.EncodeToString(txID[:])
+	search := httptest.NewRequest(http.MethodGet, "/search?q="+strings.ToUpper(txText), nil)
+	searchRecorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(searchRecorder, search)
+	if searchRecorder.Code != http.StatusFound || searchRecorder.Header().Get("Location") != "/tx/"+txText {
+		t.Fatalf("TXID search = %d %q, want redirect to canonical transaction page",
+			searchRecorder.Code, searchRecorder.Header().Get("Location"))
+	}
+
+	transaction := httptest.NewRequest(http.MethodGet, "/tx/"+txText, nil)
+	transactionRecorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(transactionRecorder, transaction)
+	if transactionRecorder.Code != http.StatusOK {
+		t.Fatalf("transaction page status = %d, body %s", transactionRecorder.Code, transactionRecorder.Body.String())
+	}
+	body := transactionRecorder.Body.String()
+	for _, want := range []string{
+		txText,
+		"Confirmed",
+		"2 confirmations",
+		`href="/block/9"`,
+		hex.EncodeToString(blockHash[:]),
+		"Block height, TXID or address",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("transaction page omitted %q: %s", want, body)
+		}
+	}
+}
+
+func TestAddressPageListsCompleteConfirmedTransactionHistory(t *testing.T) {
+	server, _ := newRegTestServer(t)
+	pkh := [20]byte{7, 8, 9}
+	address := core.EncodeAddress(pkh)
+	depositID := core.SHA256d([]byte("address history deposit"))
+	spendID := core.SHA256d([]byte("address history spend"))
+	depositBlock := core.SHA256d([]byte("address history deposit block"))
+	spendBlock := core.SHA256d([]byte("address history spend block"))
+	tipHash := core.SHA256d([]byte("address history tip"))
+	server.addressQuery = func(got [20]byte) (core.AddressOutputSnapshot, error) {
+		if got != pkh {
+			return core.AddressOutputSnapshot{}, errors.New("wrong address identity")
+		}
+		return core.AddressOutputSnapshot{
+			Network:  core.RegTestMachineID,
+			Complete: true,
+			Tip: core.ChainTipSnapshot{
+				Network: core.RegTestMachineID,
+				Hash:    tipHash,
+				Height:  10,
+			},
+			Outputs: []core.ConfirmedAddressOutput{
+				{
+					TxID: depositID, TransactionIndex: 1, Vout: 0,
+					AmountUnits: 2 * core.UnitsPerCoin,
+					BlockHash:   depositBlock, BlockHeight: 5, Confirmations: 6, Mature: true,
+					SpentBy: &core.ConfirmedSpend{
+						TxID: spendID, InputIndex: 0, BlockHash: spendBlock, BlockHeight: 9,
+					},
+				},
+				{
+					TxID: spendID, TransactionIndex: 2, Vout: 1,
+					AmountUnits: core.UnitsPerCoin / 2,
+					BlockHash:   spendBlock, BlockHeight: 9, Confirmations: 2, Mature: true,
+				},
+			},
+		}, nil
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/address/"+address, nil)
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("address page status = %d, body %s", recorder.Code, recorder.Body.String())
+	}
+	body := html.UnescapeString(recorder.Body.String())
+	for _, want := range []string{
+		"Transaction history",
+		`href="/tx/` + hex.EncodeToString(depositID[:]) + `"`,
+		`href="/tx/` + hex.EncodeToString(spendID[:]) + `"`,
+		"+2.00000000 09C",
+		"-1.50000000 09C",
+		"0.50000000 09C",
+		"Received",
+		"Sent",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("address page omitted %q: %s", want, body)
+		}
+	}
+	if strings.Index(body, hex.EncodeToString(spendID[:])) > strings.Index(body, hex.EncodeToString(depositID[:])) {
+		t.Fatalf("address history is not newest first: %s", body)
 	}
 }
 
