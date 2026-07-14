@@ -11,6 +11,11 @@ const EXPLORER_STATUS = "https://explorer.btc09.org/api/status";
 const DISCORD_INVITE = "https://discord.gg/fUuGzwRTzP";
 const MESSAGE_MARKER = "Bitcoin 09 live mining stats";
 const DEFAULT_STATS_CHANNEL = "pools-and-nodes";
+const LIVE_STATS_CATEGORY = "📊 LIVE STATS";
+const LIVE_STATS_REFRESH_MS = 600_000;
+const CHANNEL_TYPE_VOICE = 2;
+const CHANNEL_TYPE_CATEGORY = 4;
+const CONNECT_PERMISSION = "1048576";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const selfAssignableRoles = [
   { key: "miner", label: "Miner", roleName: "⛏ Miner" },
@@ -122,6 +127,7 @@ async function watchGateway() {
     throw terminalStartupError("This Node runtime does not provide WebSocket. Use Node 22+ or install a websocket client.");
   }
 
+  startLiveStatsUpdater();
   const gateway = await fetchGatewayWithRetry(
     () => discord("GET", "/gateway/bot"),
     { logger: console },
@@ -281,6 +287,106 @@ export function formatStatsMessage(stats) {
   return lines.join("\n");
 }
 
+export function formatLiveStatChannelNames(stats) {
+  const explorer = stats.explorer;
+  return [
+    `🧱 Height: ${formatInteger(explorer.height)}`,
+    `⚡ Hashrate: ${formatHashrate(explorer.estimated_network_hashrate_hps)}`,
+    `⛏ Difficulty: ${formatNumber(explorer.difficulty, 2)}`,
+    `🌐 Peers: ${formatInteger(explorer.peers)}`,
+  ];
+}
+
+export async function syncLiveStatChannels(
+  stats,
+  {
+    guildId = process.env.DISCORD_GUILD_ID,
+    discordImpl = discord,
+  } = {},
+) {
+  if (!guildId) throw new Error("Missing required environment variable: DISCORD_GUILD_ID");
+  const channels = await discordImpl("GET", `/guilds/${guildId}/channels`);
+  const categoryPermissions = [
+    { id: guildId, type: 0, allow: "0", deny: CONNECT_PERMISSION },
+  ];
+  let category = channels.find(
+    (channel) => channel.type === CHANNEL_TYPE_CATEGORY && channel.name === LIVE_STATS_CATEGORY,
+  );
+  if (!category) {
+    category = await discordImpl("POST", `/guilds/${guildId}/channels`, {
+      name: LIVE_STATS_CATEGORY,
+      type: CHANNEL_TYPE_CATEGORY,
+      position: 0,
+      permission_overwrites: categoryPermissions,
+    });
+    channels.push(category);
+  } else {
+    const everybody = (category.permission_overwrites ?? []).find(
+      (overwrite) => overwrite.id === guildId && overwrite.type === 0,
+    );
+    const connectDenied = everybody &&
+      (BigInt(everybody.deny ?? "0") & BigInt(CONNECT_PERMISSION)) !== 0n;
+    if (Number(category.position) !== 0 || !connectDenied) {
+      category = await discordImpl("PATCH", `/channels/${category.id}`, {
+        position: 0,
+        permission_overwrites: categoryPermissions,
+      });
+    }
+  }
+
+  const names = formatLiveStatChannelNames(stats);
+  const definitions = [
+    { marker: "Height:", name: names[0] },
+    { marker: "Hashrate:", name: names[1] },
+    { marker: "Difficulty:", name: names[2] },
+    { marker: "Peers:", name: names[3] },
+  ];
+  for (const [position, definition] of definitions.entries()) {
+    const existing = channels.find(
+      (channel) => channel.type === CHANNEL_TYPE_VOICE && channel.name.includes(definition.marker),
+    );
+    if (!existing) {
+      const created = await discordImpl("POST", `/guilds/${guildId}/channels`, {
+        name: definition.name,
+        type: CHANNEL_TYPE_VOICE,
+        parent_id: category.id,
+        position,
+      });
+      channels.push(created);
+      continue;
+    }
+    if (existing.name !== definition.name || existing.parent_id !== category.id) {
+      await discordImpl("PATCH", `/channels/${existing.id}`, {
+        name: definition.name,
+        parent_id: category.id,
+        position,
+      });
+    }
+  }
+}
+
+async function refreshLiveStatChannels() {
+  const stats = await getStats();
+  await syncLiveStatChannels(stats);
+  console.log(`Updated ${LIVE_STATS_CATEGORY} channels.`);
+}
+
+export function startLiveStatsUpdater({
+  refreshImpl = refreshLiveStatChannels,
+  setIntervalImpl = setInterval,
+  logger = console,
+} = {}) {
+  const run = async () => {
+    try {
+      await refreshImpl();
+    } catch (error) {
+      logger.error("Live stats channel update failed:", error.message || error);
+    }
+  };
+  void run();
+  return setIntervalImpl(run, LIVE_STATS_REFRESH_MS);
+}
+
 async function json(url, options, fetchImpl = fetch) {
   const response = await fetchImpl(url, options);
   if (!response.ok) {
@@ -353,6 +459,12 @@ function formatHashrate(value) {
   if (n >= 1_000_000) return `${formatNumber(n / 1_000_000, 2)} MH/s`;
   if (n >= 1_000) return `${formatNumber(n / 1_000, 2)} KH/s`;
   return `${formatNumber(n, 2)} H/s`;
+}
+
+function formatInteger(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "-";
+  return Math.trunc(n).toLocaleString();
 }
 
 function formatDuration(value) {

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { classifyInteraction, formatStatsMessage, getStats } from "./stats-bot.mjs";
+import * as statsBot from "./stats-bot.mjs";
 
 const scriptPath = fileURLToPath(new URL("./stats-bot.mjs", import.meta.url));
 const missingDiscordEnv = {
@@ -90,4 +91,97 @@ test("registered stats commands and role buttons are routed", () => {
   assert.equal(classifyInteraction({ type: 2, data: { name: "stats" } }), "stats");
   assert.equal(classifyInteraction({ type: 3, data: { custom_id: "role:toggle:miner" } }), "role");
   assert.equal(classifyInteraction({ type: 2, data: { name: "unknown" } }), null);
+});
+
+test("live stats channel names are compact and come from official explorer data", () => {
+  assert.equal(typeof statsBot.formatLiveStatChannelNames, "function");
+  assert.deepEqual(statsBot.formatLiveStatChannelNames({ explorer: explorerStatus }), [
+    "🧱 Height: 7,386",
+    "⚡ Hashrate: 16.30 KH/s",
+    "⛏ Difficulty: 64.00",
+    "🌐 Peers: 6",
+  ]);
+});
+
+test("live stats sync creates a locked category at the top and is idempotent", async () => {
+  assert.equal(typeof statsBot.syncLiveStatChannels, "function");
+  const calls = [];
+  const channels = [];
+  let nextId = 1;
+  const discordImpl = async (method, path, body) => {
+    calls.push({ method, path, body });
+    if (method === "GET" && path === "/guilds/guild-1/channels") {
+      return channels.map((channel) => ({ ...channel }));
+    }
+    if (method === "POST" && path === "/guilds/guild-1/channels") {
+      const channel = { id: `channel-${nextId++}`, ...body };
+      channels.push(channel);
+      return { ...channel };
+    }
+    if (method === "PATCH" && path.startsWith("/channels/")) {
+      const channel = channels.find((item) => item.id === path.split("/").at(-1));
+      Object.assign(channel, body);
+      return { ...channel };
+    }
+    throw new Error(`unexpected Discord call ${method} ${path}`);
+  };
+
+  await statsBot.syncLiveStatChannels(
+    { explorer: explorerStatus },
+    { guildId: "guild-1", discordImpl },
+  );
+
+  const creates = calls.filter((call) => call.method === "POST");
+  assert.equal(creates.length, 5);
+  assert.deepEqual(creates[0].body, {
+    name: "📊 LIVE STATS",
+    type: 4,
+    position: 0,
+    permission_overwrites: [
+      { id: "guild-1", type: 0, allow: "0", deny: "1048576" },
+    ],
+  });
+  assert.deepEqual(
+    creates.slice(1).map((call) => call.body.name),
+    statsBot.formatLiveStatChannelNames({ explorer: explorerStatus }),
+  );
+  assert.ok(creates.slice(1).every((call) => call.body.type === 2));
+  assert.ok(creates.slice(1).every((call) => call.body.parent_id === "channel-1"));
+
+  calls.length = 0;
+  await statsBot.syncLiveStatChannels(
+    { explorer: explorerStatus },
+    { guildId: "guild-1", discordImpl },
+  );
+  assert.deepEqual(calls, [
+    { method: "GET", path: "/guilds/guild-1/channels", body: undefined },
+  ]);
+});
+
+test("watch updater refreshes immediately and every ten minutes", async () => {
+  assert.equal(typeof statsBot.startLiveStatsUpdater, "function");
+  const intervals = [];
+  let refreshes = 0;
+  const refreshImpl = async () => {
+    refreshes += 1;
+  };
+  const setIntervalImpl = (callback, milliseconds) => {
+    intervals.push({ callback, milliseconds });
+    return 99;
+  };
+
+  const timer = statsBot.startLiveStatsUpdater({
+    refreshImpl,
+    setIntervalImpl,
+    logger: { error() {} },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(timer, 99);
+  assert.equal(refreshes, 1);
+  assert.equal(intervals.length, 1);
+  assert.equal(intervals[0].milliseconds, 600_000);
+
+  await intervals[0].callback();
+  assert.equal(refreshes, 2);
 });
