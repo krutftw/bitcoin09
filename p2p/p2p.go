@@ -84,14 +84,15 @@ type handshakeReservation struct {
 }
 
 type peer struct {
-	conn        net.Conn
-	enc         *bufio.Writer
-	mu          sync.Mutex // serializes writes
-	addr        string
-	tieKey      string
-	remoteIP    string
-	outbound    bool
-	connectedAt time.Time
+	conn             net.Conn
+	enc              *bufio.Writer
+	mu               sync.Mutex // serializes writes
+	addr             string
+	tieKey           string
+	remoteIP         string
+	outbound         bool
+	connectedAt      time.Time
+	advertisedHeight int64
 }
 
 func NewNode(chain *core.Chain, listen string, logger *log.Logger) *Node {
@@ -463,6 +464,9 @@ func (n *Node) handleConn(ctx context.Context, conn net.Conn, reservation handsh
 	if err != nil || hello.Type != "hello" || hello.Magic != n.chain.Params().NetMagic {
 		return // wrong network or protocol
 	}
+	if hello.Height > 0 {
+		p.advertisedHeight = hello.Height
+	}
 	dialable, _ := dialablePeerEndpoint(p.addr, hello.Listen)
 	if remoteID, ok := normalizeHandshakeID(hello.NodeID); ok && remoteID == n.nodeID {
 		n.suppressSelfTargets(reservation.target, dialable)
@@ -589,6 +593,7 @@ func (n *Node) handleMsg(p *peer, m *Msg) error {
 		}
 		return nil
 	case "block":
+		n.notePeerHeight(p, m.Height)
 		blk, err := core.DecodeBlock(m.Raw)
 		if err != nil {
 			return fmt.Errorf("bad block: %w", err)
@@ -619,6 +624,7 @@ func (n *Node) handleMsg(p *peer, m *Msg) error {
 		}
 		return nil
 	case "inv":
+		n.notePeerHeight(p, m.Height)
 		// simple protocol: inv of a new tip triggers getblocks if ahead
 		if _, h := n.chain.Tip(); m.Height > h {
 			return p.send(&Msg{Type: "getblocks", From: h + 1})
@@ -839,6 +845,31 @@ func (n *Node) PeerCount() int {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return len(n.peers)
+}
+
+func (n *Node) notePeerHeight(p *peer, height int64) {
+	if p == nil || height < 0 {
+		return
+	}
+	n.mu.Lock()
+	if height > p.advertisedHeight {
+		p.advertisedHeight = height
+	}
+	n.mu.Unlock()
+}
+
+// HighestAdvertisedHeight returns the largest untrusted tip height reported by
+// a currently connected peer. It is health telemetry, not consensus input.
+func (n *Node) HighestAdvertisedHeight() int64 {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	var highest int64
+	for _, peer := range n.peers {
+		if peer.advertisedHeight > highest {
+			highest = peer.advertisedHeight
+		}
+	}
+	return highest
 }
 
 // WaitForPeers waits until at least minimum peers are connected or ctx is

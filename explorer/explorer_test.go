@@ -18,9 +18,11 @@ import (
 	"github.com/krutftw/bitcoin09/core"
 )
 
-type testPeers struct{}
+type testPeers struct{ highestAdvertisedHeight int64 }
 
 func (testPeers) PeerCount() int { return 0 }
+
+func (p testPeers) HighestAdvertisedHeight() int64 { return p.highestAdvertisedHeight }
 
 func newRegTestServer(t *testing.T) (*Server, *core.Chain) {
 	t.Helper()
@@ -55,6 +57,36 @@ func minePayoutRun(t *testing.T, chain *core.Chain, payout [20]byte, blocks int,
 	return blockTime
 }
 
+func mineDistributedPayoutRun(t *testing.T, chain *core.Chain, first, second [20]byte, blocks int, firstTime int64) int64 {
+	t.Helper()
+	blockTime := firstTime
+	for range blocks {
+		template, err := core.BuildBlockTemplateWithCoinbase(chain, func(height, reward int64) *core.Tx {
+			coinbase := core.NewCoinbase(height, reward, first, "pplns-stats-test")
+			coinbase.Outs = []core.TxOut{
+				{Value: reward / 2, PubKeyHash: first},
+				{Value: reward - reward/2, PubKeyHash: second},
+			}
+			return coinbase
+		})
+		if err != nil {
+			t.Fatalf("BuildBlockTemplateWithCoinbase: %v", err)
+		}
+		template.Header.Time = blockTime
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		result := core.Mine(ctx, chain, template, 2)
+		cancel()
+		if result.Block == nil {
+			t.Fatal("distributed mining stats fixture timed out")
+		}
+		if err := chain.AcceptBlock(result.Block); err != nil {
+			t.Fatalf("AcceptBlock distributed stats fixture: %v", err)
+		}
+		blockTime += 5
+	}
+	return blockTime
+}
+
 func TestMiningStatsEstimateAndConcentration(t *testing.T) {
 	server, chain := newRegTestServer(t)
 	payoutA := [20]byte{1}
@@ -80,6 +112,34 @@ func TestMiningStatsEstimateAndConcentration(t *testing.T) {
 	}
 	if got := stats.Windows[1]; got.RequestedBlocks != 500 || got.ObservedBlocks != 120 || got.TopPayoutBlocks != 90 || got.TopSharePercent != 75 || got.DistinctPayoutAddresses != 2 {
 		t.Fatalf("unexpected 500-block concentration: %#v", got)
+	}
+}
+
+func TestMiningStatsSeparatesSoloAndDistributedBlockSources(t *testing.T) {
+	server, chain := newRegTestServer(t)
+	payoutA := [20]byte{1}
+	payoutB := [20]byte{2}
+	blockTime := time.Now().Unix() - 1000
+	blockTime = minePayoutRun(t, chain, payoutA, 60, blockTime)
+	blockTime = minePayoutRun(t, chain, payoutB, 30, blockTime)
+	mineDistributedPayoutRun(t, chain, payoutA, payoutB, 30, blockTime)
+
+	stats := server.miningStatsAt(120, retargetData{
+		EpochElapsedBlocks:  120,
+		EpochElapsedSeconds: 600,
+	})
+	if len(stats.SourceWindows) != 2 {
+		t.Fatalf("source windows = %#v", stats.SourceWindows)
+	}
+	wantAddress := core.EncodeAddress(payoutA)
+	if got := stats.SourceWindows[0]; got.ObservedBlocks != 100 || got.SoloBlocks != 70 || got.DistributedBlocks != 30 ||
+		got.DistinctSoloPayoutAddresses != 2 || got.TopSoloPayoutAddress != wantAddress ||
+		got.TopSoloPayoutBlocks != 40 || got.TopSoloSharePercent != 40 {
+		t.Fatalf("unexpected 100-block source concentration: %#v", got)
+	}
+	if got := stats.SourceWindows[1]; got.ObservedBlocks != 120 || got.SoloBlocks != 90 || got.DistributedBlocks != 30 ||
+		got.TopSoloPayoutBlocks != 60 || got.TopSoloSharePercent != 50 {
+		t.Fatalf("unexpected 500-block source concentration: %#v", got)
 	}
 }
 
@@ -136,10 +196,36 @@ func TestStatusAndHomeExposeMiningStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read home: %v", err)
 	}
-	for _, want := range []string{"estimated network", "top payout address", "last 12 blocks"} {
+	for _, want := range []string{"estimated network", "top solo payout address", "distributed/multi-output", "last 12 blocks"} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("home omitted %q: %s", want, body)
 		}
+	}
+}
+
+func TestStatusExposesUntrustedAdvertisedPeerHeightLag(t *testing.T) {
+	chain, err := core.NewChain(&core.RegTest)
+	if err != nil {
+		t.Fatalf("NewChain: %v", err)
+	}
+	minePayoutRun(t, chain, [20]byte{7}, 3, time.Now().Unix()-20)
+	server, err := New(chain, testPeers{highestAdvertisedHeight: 9})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	var status struct {
+		Height                      int64 `json:"height"`
+		HighestAdvertisedPeerHeight int64 `json:"highest_advertised_peer_height"`
+		AdvertisedPeerHeightLag     int64 `json:"advertised_peer_height_lag"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.Height != 3 || status.HighestAdvertisedPeerHeight != 9 || status.AdvertisedPeerHeightLag != 6 {
+		t.Fatalf("unexpected peer height health: %#v", status)
 	}
 }
 

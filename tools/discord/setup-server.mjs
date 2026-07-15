@@ -265,6 +265,21 @@ const marketBoardComponents = [
 const seedPosts = [
   {
     channelKey: "announcements",
+    marker: "Bitcoin 09 v0.1.31 is out.",
+    content: [
+      "Bitcoin 09 v0.1.31 is out.",
+      "",
+      "The public node was falling behind during the recent burst of fast blocks. The problem was in chain replay: it kept rebuilding the full ancestor map while saving and loading the chain. That is fixed, and existing chain data now loads much faster.",
+      "",
+      "The explorer and live stats now separate solo blocks from distributed/PPLNS payouts. They also show when the public node is behind a tip advertised by a connected peer. Peer heights are a health check; they do not decide which chain is valid.",
+      "",
+      "This does not change mining or consensus, and nobody is being blocked for finding lots of valid blocks.",
+      "",
+      "Release and checksums: https://github.com/krutftw/bitcoin09/releases/tag/v0.1.31",
+    ].join("\n"),
+  },
+  {
+    channelKey: "announcements",
     marker: "Mining support update",
     content: [
       "Mining support update",
@@ -346,7 +361,7 @@ const seedPosts = [
     content: [
       "Bitcoin 09 Discord is live.",
       "",
-      "Current release: v0.1.30",
+      "Current release: v0.1.31",
       "Source/releases: https://github.com/krutftw/bitcoin09",
       "Explorer: https://explorer.btc09.org",
       "Discord invite: https://discord.gg/fUuGzwRTzP",

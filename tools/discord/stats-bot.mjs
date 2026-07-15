@@ -412,6 +412,8 @@ export function formatStatsMessage(stats) {
   const nextRetargetHeight = explorer.next_retarget_height ?? null;
   const payoutWindows = Array.isArray(explorer.payout_address_windows) ? explorer.payout_address_windows : [];
   const window100 = payoutWindows.find((window) => Number(window.requested_blocks) === 100);
+  const sourceWindows = Array.isArray(explorer.block_source_windows) ? explorer.block_source_windows : [];
+  const sourceWindow100 = sourceWindows.find((window) => Number(window.requested_blocks) === 100);
   const lines = [
     MESSAGE_MARKER,
     "",
@@ -423,15 +425,27 @@ export function formatStatsMessage(stats) {
     `Est. next difficulty: **${formatNumber(explorer.estimated_next_difficulty, 2)}**`,
   ];
 
-  if (window100) {
+  if (sourceWindow100) {
+    lines.push(
+      `Top solo payout address, last 100 blocks: **${formatNumber(sourceWindow100.top_solo_share_percent, 1)}%** (${Number(sourceWindow100.top_solo_payout_blocks).toLocaleString()} of ${Number(sourceWindow100.observed_blocks).toLocaleString()})`,
+      `Distributed/multi-output blocks, last 100: **${Number(sourceWindow100.distributed_blocks).toLocaleString()}**`,
+    );
+  } else if (window100) {
     lines.push(
       `Top payout address, last 100 blocks: **${formatNumber(window100.top_share_percent, 1)}%** (${Number(window100.top_payout_blocks).toLocaleString()} of ${Number(window100.observed_blocks).toLocaleString()}; ${Number(window100.distinct_payout_addresses).toLocaleString()} payout address${Number(window100.distinct_payout_addresses) === 1 ? "" : "es"})`,
     );
   }
 
+  const advertisedLag = Number(explorer.advertised_peer_height_lag);
+  if (Number.isFinite(advertisedLag) && advertisedLag > 0) {
+    lines.push(
+      `Highest advertised peer tip: **${formatInteger(explorer.highest_advertised_peer_height)}** (local node ${formatInteger(advertisedLag)} block${advertisedLag === 1 ? "" : "s"} behind)`,
+    );
+  }
+
   lines.push(
     "",
-    "Chain figures come from the official 09C node. A payout address is not necessarily one person.",
+    "Solo concentration counts single-output blocks; distributed blocks are separate. Peer tips are untrusted health signals.",
     `Explorer: https://explorer.btc09.org | Discord: ${DISCORD_INVITE}`,
     `Updated: <t:${Math.floor(stats.checkedAt.getTime() / 1000)}:R>`,
   );

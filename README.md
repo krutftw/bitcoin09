@@ -337,7 +337,7 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.30 is current. The official CPU miner uses non-custodial PPLNS by
+v0.1.31 is current. The official CPU miner uses non-custodial PPLNS by
 default, with difficulty-weighted shares, a durable public window, and direct
 coinbase payouts at a 0% pool fee. Wallet V2 keeps 24-word recovery and an
 encrypted local file, while existing V1 wallets stay unchanged and readable.
