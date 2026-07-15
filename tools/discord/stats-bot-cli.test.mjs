@@ -44,6 +44,8 @@ const explorerStatus = {
   blocks_to_retarget: 678,
   next_retarget_height: 8064,
   estimated_next_difficulty: 149.26,
+  highest_advertised_peer_height: 7390,
+  advertised_peer_height_lag: 4,
   payout_address_windows: [
     {
       requested_blocks: 100,
@@ -52,6 +54,18 @@ const explorerStatus = {
       top_payout_address: "4k26VjMfx4sNQ1pdr7N4DJCY126xezv4Rb",
       top_payout_blocks: 100,
       top_share_percent: 100,
+    },
+  ],
+  block_source_windows: [
+    {
+      requested_blocks: 100,
+      observed_blocks: 100,
+      solo_blocks: 80,
+      distributed_blocks: 20,
+      distinct_solo_payout_addresses: 4,
+      top_solo_payout_address: "4k26VjMfx4sNQ1pdr7N4DJCY126xezv4Rb",
+      top_solo_payout_blocks: 72,
+      top_solo_share_percent: 72,
     },
   ],
 };
@@ -74,7 +88,9 @@ test("chain stats use the official explorer without calling miner download or po
   assert.deepEqual(calls, ["https://explorer.btc09.org/api/status"]);
   assert.match(message, /Network height \/ peers: \*\*7,386 \/ 6\*\*/);
   assert.match(message, /Estimated network hashrate: \*\*16\.30 KH\/s\*\*/);
-  assert.match(message, /Top payout address, last 100 blocks: \*\*100\.0%/);
+  assert.match(message, /Top solo payout address, last 100 blocks: \*\*72\.0%/);
+  assert.match(message, /Distributed\/multi-output blocks, last 100: \*\*20\*\*/);
+  assert.match(message, /Highest advertised peer tip: \*\*7,390\*\* \(local node 4 blocks behind\)/);
   assert.doesNotMatch(message, /Community pool/);
   assert.doesNotMatch(message, /ntmminer/i);
 });

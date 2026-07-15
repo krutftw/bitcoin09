@@ -13,8 +13,13 @@ class IndexContractTest(unittest.TestCase):
             "stat-network-hashrate",
             "stat-top-share-100",
             "stat-distinct-100",
+            "stat-distributed-100",
             "estimated_network_hashrate_hps",
             "payout_address_windows",
+            "block_source_windows",
+            "top solo payout address, last 100 blocks",
+            "advertised_peer_height_lag",
+            "A connected peer advertises",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)
@@ -51,7 +56,7 @@ class IndexContractTest(unittest.TestCase):
 
     def test_current_release_makes_the_supported_wallet_miner_the_easy_path(self):
         for token in (
-            "Current release: v0.1.30",
+            "Current release: v0.1.31",
             "Desktop wallet and miner",
             "Open the wallet, choose Mine",
             'id="mining-guide"',
@@ -91,7 +96,7 @@ class IndexContractTest(unittest.TestCase):
         ):
             with self.subTest(asset=asset):
                 self.assertIn(
-                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.30/{asset}",
+                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.31/{asset}",
                     self.html,
                 )
 

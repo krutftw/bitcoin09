@@ -858,9 +858,18 @@ func checkBlockSanity(b *Block) error {
 // bitsOnBranch computes required bits for a block at `height` whose parent
 // is `parent` (which may be off the main chain).
 func (c *Chain) bitsOnBranch(parent *blockIndex, height int64) uint32 {
-	branch := c.branchTo(parent)
-	bitsAt := func(h int64) uint32 { return branch[h].block.Header.Bits }
-	timeAt := func(h int64) int64 { return branch[h].block.Header.Time }
+	ancestorAt := func(target int64) *blockIndex {
+		current := parent
+		for current != nil && current.height > target {
+			current = c.index[current.block.Header.PrevBlock]
+		}
+		if current == nil || current.height != target {
+			return nil
+		}
+		return current
+	}
+	bitsAt := func(h int64) uint32 { return ancestorAt(h).block.Header.Bits }
+	timeAt := func(h int64) int64 { return ancestorAt(h).block.Header.Time }
 	return NextBits(c.params, height, bitsAt, timeAt)
 }
 

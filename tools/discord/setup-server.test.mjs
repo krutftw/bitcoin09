@@ -60,8 +60,20 @@ test("v0.1.28 announcement explains PPLNS without hype", () => {
   }
 });
 
-test("server status post names v0.1.30 as the current release", () => {
-  assert.ok(source.includes('"Current release: v0.1.30"'));
+test("server status post names v0.1.31 as the current release", () => {
+  assert.ok(source.includes('"Current release: v0.1.31"'));
+});
+
+test("v0.1.31 announcement explains the sync fix without blaming miners", () => {
+  for (const text of [
+    "Bitcoin 09 v0.1.31 is out.",
+    "The public node was falling behind during the recent burst of fast blocks.",
+    "solo blocks from distributed/PPLNS payouts",
+    "nobody is being blocked for finding lots of valid blocks",
+    "https://github.com/krutftw/bitcoin09/releases/tag/v0.1.31",
+  ]) {
+    assert.ok(source.includes(text), `missing release wording: ${text}`);
+  }
 });
 
 test("mining support update points people to the official client only", () => {

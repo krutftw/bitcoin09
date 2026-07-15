@@ -23,6 +23,8 @@ import (
 // PeerCounter reports how many peers the node currently has.
 type PeerCounter interface{ PeerCount() int }
 
+type peerHeightReporter interface{ HighestAdvertisedHeight() int64 }
+
 const (
 	v1SchemaVersion       = 1
 	v1MaxResponseBytes    = 4 << 20
@@ -44,6 +46,21 @@ type Server struct {
 	blockQuery         func(core.Hash32) (core.BlockLookupSnapshot, error)
 	transactionQuery   func(core.Hash32) (core.TransactionLookupSnapshot, error)
 	addressQuery       func([20]byte) (core.AddressOutputSnapshot, error)
+}
+
+func (s *Server) advertisedPeerHeightHealth(localHeight int64) (highest, lag int64) {
+	reporter, ok := s.peers.(peerHeightReporter)
+	if !ok {
+		return 0, 0
+	}
+	highest = reporter.HighestAdvertisedHeight()
+	if highest < 0 {
+		highest = 0
+	}
+	if highest > localHeight {
+		lag = highest - localHeight
+	}
+	return highest, lag
 }
 
 func New(chain *core.Chain, peers PeerCounter) (*Server, error) {
@@ -802,11 +819,23 @@ type miningWindow struct {
 	TopSharePercent         float64 `json:"top_share_percent"`
 }
 
+type blockSourceWindow struct {
+	RequestedBlocks             int64   `json:"requested_blocks"`
+	ObservedBlocks              int64   `json:"observed_blocks"`
+	SoloBlocks                  int64   `json:"solo_blocks"`
+	DistributedBlocks           int64   `json:"distributed_blocks"`
+	DistinctSoloPayoutAddresses int     `json:"distinct_solo_payout_addresses"`
+	TopSoloPayoutAddress        string  `json:"top_solo_payout_address"`
+	TopSoloPayoutBlocks         int64   `json:"top_solo_payout_blocks"`
+	TopSoloSharePercent         float64 `json:"top_solo_share_percent"`
+}
+
 type miningStats struct {
-	EstimatedNetworkHashrateHPS float64        `json:"estimated_network_hashrate_hps"`
-	HashrateObservationBlocks   int64          `json:"hashrate_observation_blocks"`
-	HashrateObservationSeconds  int64          `json:"hashrate_observation_seconds"`
-	Windows                     []miningWindow `json:"payout_address_windows"`
+	EstimatedNetworkHashrateHPS float64             `json:"estimated_network_hashrate_hps"`
+	HashrateObservationBlocks   int64               `json:"hashrate_observation_blocks"`
+	HashrateObservationSeconds  int64               `json:"hashrate_observation_seconds"`
+	Windows                     []miningWindow      `json:"payout_address_windows"`
+	SourceWindows               []blockSourceWindow `json:"block_source_windows"`
 }
 
 func expectedHashes(bits uint32) float64 {
@@ -855,10 +884,28 @@ func (s *Server) miningStatsAt(tip int64, retarget retargetData) miningStats {
 			observed = tip
 		}
 		counts := make(map[string]int64)
+		soloCounts := make(map[string]int64)
+		var soloBlocks, distributedBlocks int64
 		for height := tip - observed + 1; height <= tip; height++ {
 			row, ok := s.row(height)
 			if ok && row.Miner != "unspendable" {
 				counts[row.Miner]++
+			}
+			block := s.chain.BlockAt(height)
+			if block == nil || len(block.Txs) == 0 || block.Txs[0] == nil {
+				continue
+			}
+			coinbase := block.Txs[0]
+			switch len(coinbase.Outs) {
+			case 1:
+				if coinbase.Outs[0].PubKeyHash != ([20]byte{}) {
+					soloBlocks++
+					soloCounts[core.EncodeAddress(coinbase.Outs[0].PubKeyHash)]++
+				}
+			default:
+				if len(coinbase.Outs) > 1 {
+					distributedBlocks++
+				}
 			}
 		}
 		if observed == 0 || len(counts) == 0 {
@@ -878,6 +925,24 @@ func (s *Server) miningStatsAt(tip int64, retarget retargetData) miningStats {
 		}
 		window.TopSharePercent = float64(window.TopPayoutBlocks) * 100 / float64(observed)
 		stats.Windows = append(stats.Windows, window)
+
+		sourceWindow := blockSourceWindow{
+			RequestedBlocks:             requested,
+			ObservedBlocks:              observed,
+			SoloBlocks:                  soloBlocks,
+			DistributedBlocks:           distributedBlocks,
+			DistinctSoloPayoutAddresses: len(soloCounts),
+		}
+		for address, blocks := range soloCounts {
+			if blocks > sourceWindow.TopSoloPayoutBlocks ||
+				(blocks == sourceWindow.TopSoloPayoutBlocks &&
+					(sourceWindow.TopSoloPayoutAddress == "" || address < sourceWindow.TopSoloPayoutAddress)) {
+				sourceWindow.TopSoloPayoutAddress = address
+				sourceWindow.TopSoloPayoutBlocks = blocks
+			}
+		}
+		sourceWindow.TopSoloSharePercent = float64(sourceWindow.TopSoloPayoutBlocks) * 100 / float64(observed)
+		stats.SourceWindows = append(stats.SourceWindows, sourceWindow)
 	}
 	return stats
 }
@@ -1063,7 +1128,7 @@ type homeData struct {
 	BlocksToHalving         int64
 	NetworkHashrate         string
 	HashrateObservation     string
-	TopPayoutConcentration  string
+	TopSoloConcentration    string
 	Blocks                  []blockRow
 }
 
@@ -1144,10 +1209,10 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		if mining.HashrateObservationBlocks > 0 {
 			d.HashrateObservation = fmt.Sprintf("%d blocks / %s", mining.HashrateObservationBlocks, secondsText(float64(mining.HashrateObservationSeconds)))
 		}
-		if len(mining.Windows) > 0 {
-			window := mining.Windows[0]
-			d.TopPayoutConcentration = fmt.Sprintf("%.1f%% (%d of last %d blocks; %d payout addresses)",
-				window.TopSharePercent, window.TopPayoutBlocks, window.ObservedBlocks, window.DistinctPayoutAddresses)
+		if len(mining.SourceWindows) > 0 {
+			window := mining.SourceWindows[0]
+			d.TopSoloConcentration = fmt.Sprintf("%.1f%% (%d of last %d blocks; %d distributed/multi-output)",
+				window.TopSoloSharePercent, window.TopSoloPayoutBlocks, window.ObservedBlocks, window.DistributedBlocks)
 		}
 	}
 	for h := tip; h > tip-25 && h >= 0; h-- {
@@ -1369,11 +1434,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	supply := supplyAt(s.chain.Params(), tip)
 	retarget := s.retargetAt(tip, diff)
 	mining := s.miningStatsAt(tip, retarget)
+	highestAdvertisedPeerHeight, advertisedPeerHeightLag := s.advertisedPeerHeightHealth(tip)
 	writeJSON(w, map[string]any{
 		"coin":                               core.CoinName,
 		"ticker":                             core.Ticker,
 		"height":                             tip,
 		"peers":                              s.peers.PeerCount(),
+		"highest_advertised_peer_height":     highestAdvertisedPeerHeight,
+		"advertised_peer_height_lag":         advertisedPeerHeightLag,
 		"difficulty":                         diff,
 		"target_block_seconds":               retarget.TargetBlockSeconds,
 		"retarget_interval":                  retarget.RetargetInterval,
@@ -1397,6 +1465,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"hashrate_observation_blocks":        mining.HashrateObservationBlocks,
 		"hashrate_observation_seconds":       mining.HashrateObservationSeconds,
 		"payout_address_windows":             mining.Windows,
+		"block_source_windows":               mining.SourceWindows,
 	})
 }
 
@@ -1526,7 +1595,7 @@ tr:last-child td { border-bottom: 0; }
 <div class="stat"><b>{{.BlockReward}} 09C</b><span>block reward</span></div>
 <div class="stat"><b>{{.BlocksToHalving}}</b><span>blocks to halving</span></div>
 </div>
-<p class="note">Difficulty retargets every {{.RetargetInterval}} blocks. Next retarget: height {{.NextRetargetHeight}}. Estimated next difficulty: {{.EstimatedNextDifficulty}} if this window keeps the same average.{{if .HashrateObservation}} Hashrate estimate uses {{.HashrateObservation}}; top payout address {{.TopPayoutConcentration}}.{{end}}</p>
+<p class="note">Difficulty retargets every {{.RetargetInterval}} blocks. Next retarget: height {{.NextRetargetHeight}}. Estimated next difficulty: {{.EstimatedNextDifficulty}} if this window keeps the same average.{{if .HashrateObservation}} Hashrate estimate uses {{.HashrateObservation}}; top solo payout address {{.TopSoloConcentration}}.{{end}}</p>
 <h2>Latest blocks</h2>
 <div class="table-wrap"><table>
 <thead><tr><th>Height</th><th>Time (UTC)</th><th>Miner</th><th>Txs</th><th>Reward</th><th>Block ID</th></tr></thead><tbody>

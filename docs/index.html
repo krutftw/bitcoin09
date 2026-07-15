@@ -1513,7 +1513,7 @@ h1 {
 <p class="tag">A fair-launch, CPU-mined network.</p>
 <p class="hero-description">21 million cap. 10 minute blocks. No premine. Argon2id proof of work.</p>
 <div class="hero-actions">
-<a class="button" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.30/btc09-windows-amd64.exe">Download for Windows</a>
+<a class="button" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.31/btc09-windows-amd64.exe">Download for Windows</a>
 <a class="text-link" href="#download">macOS and Linux downloads</a>
 </div>
 <ol class="compact-steps" aria-label="Start with Bitcoin 09">
@@ -1539,7 +1539,7 @@ h1 {
 
 <section class="section" id="download">
 <div class="section-heading">
-<h2>Download v0.1.30</h2>
+<h2>Download v0.1.31</h2>
 <p>One executable contains the wallet, send and receive tools, node, and official CPU miner.</p>
 </div>
 <div class="download-list">
@@ -1548,7 +1548,7 @@ h1 {
 <h3>Windows</h3>
 <p>Download and open the app.</p>
 <div class="download-actions">
-<a class="button" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.30/btc09-windows-amd64.exe">Download for Windows</a>
+<a class="button" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.31/btc09-windows-amd64.exe">Download for Windows</a>
 </div>
 </article>
 <article class="download-row">
@@ -1556,8 +1556,8 @@ h1 {
 <h3>Mac</h3>
 <p>Download the ZIP, unzip it, and open <code>Bitcoin 09.app</code>. If macOS blocks the first launch, verify the checksum, then right-click the app and choose <strong>Open</strong>.</p>
 <div class="download-actions">
-<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.30/btc09-macos-apple.zip">Apple silicon</a>
-<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.30/btc09-macos-intel.zip">Intel</a>
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.31/btc09-macos-apple.zip">Apple silicon</a>
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.31/btc09-macos-intel.zip">Intel</a>
 </div>
 </article>
 <article class="download-row">
@@ -1565,14 +1565,14 @@ h1 {
 <h3>Linux</h3>
 <p>amd64 and arm64.</p>
 <div class="download-actions">
-<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.30/btc09-linux-amd64">amd64</a>
-<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.30/btc09-linux-arm64">arm64</a>
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.31/btc09-linux-amd64">amd64</a>
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.31/btc09-linux-arm64">arm64</a>
 </div>
 </article>
 </div>
 <div class="release-note">
-<span>Current release: v0.1.30. Official files are published on GitHub. Verify a download before running it.</span>
-<a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.30/SHA256SUMS">SHA256SUMS</a>
+<span>Current release: v0.1.31. Official files are published on GitHub. Verify a download before running it.</span>
+<a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.31/SHA256SUMS">SHA256SUMS</a>
 </div>
 </section>
 
@@ -1678,11 +1678,12 @@ h1 {
 <div class="stat"><b id="stat-retarget">-</b><span>blocks to retarget</span></div>
 <div class="stat"><b id="stat-next-diff">-</b><span>est. next difficulty</span></div>
 <div class="stat"><b id="stat-supply">-</b><span>circulating 09C</span></div>
-<div class="stat"><b id="stat-top-share-100">-</b><span>top payout address, last 100 blocks</span></div>
-<div class="stat"><b id="stat-distinct-100">-</b><span>payout addresses, last 100 blocks</span></div>
+<div class="stat"><b id="stat-top-share-100">-</b><span>top solo payout address, last 100 blocks</span></div>
+<div class="stat"><b id="stat-distinct-100">-</b><span>solo payout addresses, last 100 blocks</span></div>
+<div class="stat"><b id="stat-distributed-100">-</b><span>distributed blocks, last 100</span></div>
 </div>
 <p>09C follows the old Bitcoin rhythm: difficulty changes every 2,016 blocks and can only move by up to 4x per adjustment. If a lot of miners arrive early, blocks can run faster than the 10 minute target until the next retarget catches up.</p>
-<p class="muted">The target is the rule. The observed average is what miners are seeing right now.</p>
+<p class="muted">Solo concentration counts single-output blocks. Distributed PPLNS and other multi-output blocks are shown separately.</p>
 </div>
 </details>
 </div>
@@ -1965,12 +1966,25 @@ async function refreshStats() {
     text('stat-next-diff', fixed(status?.estimated_next_difficulty, 2));
     text('stat-supply', fixed(status.circulating_supply, 2));
     const payoutWindows = Array.isArray(status?.payout_address_windows) ? status.payout_address_windows : [];
-    const window100 = payoutWindows.find((window) => Number(window.requested_blocks) === 100);
+    const payoutWindow100 = payoutWindows.find((window) => Number(window.requested_blocks) === 100);
+    const sourceWindows = Array.isArray(status?.block_source_windows) ? status.block_source_windows : [];
+    const sourceWindow100 = sourceWindows.find((window) => Number(window.requested_blocks) === 100);
     text('stat-network-hashrate', hashRate(status.estimated_network_hashrate_hps));
-    text('stat-top-share-100', window100 ? fixed(window100.top_share_percent, 1) + '%' : '-');
-    text('stat-distinct-100', window100 ? Number(window100.distinct_payout_addresses).toLocaleString() : '-');
+    text('stat-top-share-100', sourceWindow100
+      ? fixed(sourceWindow100.top_solo_share_percent, 1) + '%'
+      : (payoutWindow100 ? fixed(payoutWindow100.top_share_percent, 1) + '%' : '-'));
+    text('stat-distinct-100', sourceWindow100
+      ? Number(sourceWindow100.distinct_solo_payout_addresses).toLocaleString()
+      : (payoutWindow100 ? Number(payoutWindow100.distinct_payout_addresses).toLocaleString() : '-'));
+    text('stat-distributed-100', sourceWindow100
+      ? Number(sourceWindow100.distributed_blocks).toLocaleString()
+      : '-');
+    const advertisedLag = Number(status?.advertised_peer_height_lag);
     note.className = 'muted';
-    note.textContent = 'Official node data. Updated ' + updated.toLocaleTimeString() + '.';
+    note.textContent = 'Official node data. Updated ' + updated.toLocaleTimeString() + '.' +
+      (Number.isFinite(advertisedLag) && advertisedLag > 0
+        ? ' A connected peer advertises ' + advertisedLag.toLocaleString() + ' more block' + (advertisedLag === 1 ? '.' : 's.')
+        : '');
     currentNetworkStatus = status;
     renderSoloEstimate();
     setLiveSummary(status);
