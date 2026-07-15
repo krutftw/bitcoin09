@@ -448,6 +448,20 @@ export function formatLiveStatChannelNames(stats) {
   ];
 }
 
+function permissionOverwritesMatch(actual, expected) {
+  const normalize = (overwrites) => overwrites
+    .map((overwrite) => ({
+      id: String(overwrite.id),
+      type: Number(overwrite.type),
+      allow: String(overwrite.allow ?? "0"),
+      deny: String(overwrite.deny ?? "0"),
+    }))
+    .sort((left, right) =>
+      left.id.localeCompare(right.id) || left.type - right.type,
+    );
+  return JSON.stringify(normalize(actual)) === JSON.stringify(normalize(expected));
+}
+
 export async function syncLiveStatChannels(
   stats,
   {
@@ -551,11 +565,18 @@ export async function syncLiveStatChannels(
       channels.push(created);
       continue;
     }
-    if (existing.name !== definition.name || existing.parent_id !== category.id) {
+    const permissionsMatch = !Array.isArray(existing.permission_overwrites) ||
+      permissionOverwritesMatch(existing.permission_overwrites, categoryPermissions);
+    if (
+      existing.name !== definition.name ||
+      existing.parent_id !== category.id ||
+      !permissionsMatch
+    ) {
       await discordImpl("PATCH", `/channels/${existing.id}`, {
         name: definition.name,
         parent_id: category.id,
         position,
+        permission_overwrites: categoryPermissions,
       });
     }
   }
@@ -567,8 +588,26 @@ async function refreshLiveStatChannels() {
   console.log(`Updated ${LIVE_STATS_CATEGORY} channels.`);
 }
 
+export async function refreshAllLiveStats({
+  channelRefreshImpl = refreshLiveStatChannels,
+  messageRefreshImpl = postOrUpdateStatsMessage,
+  logger = console,
+} = {}) {
+  try {
+    await channelRefreshImpl();
+  } catch (error) {
+    logger.error("Live stats channel update failed:", error.message || error);
+  }
+
+  try {
+    await messageRefreshImpl();
+  } catch (error) {
+    logger.error("Live stats message update failed:", error.message || error);
+  }
+}
+
 export function startLiveStatsUpdater({
-  refreshImpl = refreshLiveStatChannels,
+  refreshImpl = refreshAllLiveStats,
   setIntervalImpl = setInterval,
   logger = console,
 } = {}) {

@@ -333,6 +333,79 @@ test("live stats category lets the bot update locked voice rows", async () => {
   });
 });
 
+test("live stats sync keeps child permission overwrites aligned", async () => {
+  const names = statsBot.formatLiveStatChannelNames({ explorer: explorerStatus });
+  const categoryPermissions = [
+    { id: "guild-1", type: 0, allow: "0", deny: "1048576" },
+    { id: "bot-1", type: 1, allow: "1048576", deny: "0" },
+  ];
+  const channels = [
+    {
+      id: "live",
+      name: "📊 LIVE STATS",
+      type: 4,
+      position: 0,
+      permission_overwrites: categoryPermissions,
+    },
+    ...names.map((name, position) => ({
+      id: `stat-${position}`,
+      name,
+      type: 2,
+      parent_id: "live",
+      position,
+      permission_overwrites: [categoryPermissions[0]],
+    })),
+  ];
+  const calls = [];
+  const discordImpl = async (method, path, body) => {
+    calls.push({ method, path, body });
+    if (method === "GET" && path === "/guilds/guild-1/channels") {
+      return channels.map((channel) => ({ ...channel }));
+    }
+    if (method === "PATCH" && path.startsWith("/channels/stat-")) {
+      return body;
+    }
+    throw new Error(`unexpected Discord call ${method} ${path}`);
+  };
+
+  await statsBot.syncLiveStatChannels(
+    { explorer: explorerStatus },
+    { guildId: "guild-1", clientId: "bot-1", discordImpl },
+  );
+
+  assert.deepEqual(calls.slice(1), [
+    ...names.map((name, position) => ({
+      method: "PATCH",
+      path: `/channels/stat-${position}`,
+      body: {
+        name,
+        parent_id: "live",
+        position,
+        permission_overwrites: categoryPermissions,
+      },
+    })),
+  ]);
+});
+
+test("combined live stats refresh still updates the message when channel renames fail", async () => {
+  const calls = [];
+  const errors = [];
+
+  await statsBot.refreshAllLiveStats({
+    channelRefreshImpl: async () => {
+      calls.push("channels");
+      throw new Error("Missing Access");
+    },
+    messageRefreshImpl: async () => {
+      calls.push("message");
+    },
+    logger: { error: (...args) => errors.push(args.join(" ")) },
+  });
+
+  assert.deepEqual(calls, ["channels", "message"]);
+  assert.deepEqual(errors, ["Live stats channel update failed: Missing Access"]);
+});
+
 test("watch updater refreshes immediately and every ten minutes", async () => {
   assert.equal(typeof statsBot.startLiveStatsUpdater, "function");
   const intervals = [];
