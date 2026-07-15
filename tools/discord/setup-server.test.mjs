@@ -82,3 +82,19 @@ test("mining support update points people to the official client only", () => {
     assert.ok(!source.toLowerCase().includes(forbidden), `setup contains ${forbidden}`);
   }
 });
+
+test("mining help describes the current PPLNS default", () => {
+  const start = source.indexOf('marker: "Official BTC09 wallet miner"');
+  assert.ok(start >= 0, "missing wallet miner help post");
+  const helpPost = source.slice(start, start + 1600);
+  for (const required of [
+    "non-custodial PPLNS",
+    "0% pool fee",
+    "directly from the block coinbase",
+    "100 confirmations",
+    "Remote solo",
+  ]) {
+    assert.ok(helpPost.includes(required), `missing ${required}`);
+  }
+  assert.ok(!helpPost.includes("It is open solo mining"));
+});
