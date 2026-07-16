@@ -46,6 +46,47 @@ function jarCommand() {
   return "jar";
 }
 
+function apksignerCommand() {
+  const executable = process.platform === "win32" ? "apksigner.bat" : "apksigner";
+  const sdkRoot = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  if (!sdkRoot) return executable;
+  const buildToolsRoot = path.join(sdkRoot, "build-tools");
+  if (!existsSync(buildToolsRoot)) return executable;
+  const versions = readdirSync(buildToolsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+  for (const version of versions) {
+    const candidate = path.join(buildToolsRoot, version, executable);
+    if (existsSync(candidate)) return candidate;
+  }
+  return executable;
+}
+
+export function assertAndroidApkSignature({ status, stdout, stderr }) {
+  const output = `${stdout || ""}\n${stderr || ""}`;
+  if (status !== 0 || !/Signer #1 certificate SHA-256 digest:/i.test(output)) {
+    throw new Error("The Android APK is not signed by a valid release certificate.");
+  }
+  return output.match(/Signer #1 certificate SHA-256 digest:\s*([^\r\n]+)/i)?.[1]?.trim();
+}
+
+export function verifyAndroidApkSignature(artifactPath) {
+  const resolved = path.resolve(artifactPath);
+  if (path.extname(resolved).toLowerCase() !== ".apk") {
+    throw new Error("Android signature verification requires an APK file.");
+  }
+  const result = spawnSync(apksignerCommand(), ["verify", "--verbose", "--print-certs", resolved], {
+    encoding: "utf8",
+    windowsHide: true,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.error) {
+    throw new Error(`Android signature verification could not start: ${result.error.message}`);
+  }
+  return assertAndroidApkSignature(result);
+}
+
 export function assertMobileArtifactEntries(entries) {
   if (!Array.isArray(entries) || entries.length === 0 || entries.length > 50_000) {
     throw new Error("The mobile artifact has an invalid file count.");
@@ -124,5 +165,9 @@ if (import.meta.url === invokedPath) {
   }
   for (const artifact of process.argv.slice(2)) {
     process.stdout.write(`Verified mobile wallet artifact: ${verifyMobileArtifact(artifact)}\n`);
+    if (process.env.BTC09_REQUIRE_ANDROID_SIGNATURE === "1" && path.extname(artifact).toLowerCase() === ".apk") {
+      const fingerprint = verifyAndroidApkSignature(artifact);
+      process.stdout.write(`Verified Android release signer: ${fingerprint}\n`);
+    }
   }
 }
