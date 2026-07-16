@@ -1,0 +1,23 @@
+version: 0.1.33.{build}
+
+image: Visual Studio 2022
+
+skip_branch_with_pr: true
+
+environment:
+  BTC09_GO_VERSION: 1.25.12
+  BTC09_RUST_VERSION: 1.95.0
+
+install:
+  - ps: Install-Product node 24.16.0 x64
+  - ps: ./tools/release/install_appveyor_toolchain.ps1
+
+build_script:
+  - ps: ./tools/release/build_windows_appveyor.ps1
+
+test: off
+
+artifacts:
+  - path: walletapp/src-tauri/target/direct/btc09-wallet-windows-x64-setup.exe
+    name: btc09-wallet-windows-x64-setup.exe
+    type: File
