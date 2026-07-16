@@ -14,8 +14,9 @@ Body:
 I made Bitcoin 09 because I wanted to bring back the part of Bitcoin most of
 us missed: mining on a normal computer when the coins were worth nothing.
 
-09C is Bitcoin with one change: proof of work is Argon2id instead of
-SHA-256. The goal is to keep mining on ordinary CPUs instead of ASICs.
+09C keeps Bitcoin's supply and reward shape but uses Argon2id proof of work
+instead of SHA-256. The goal is to keep mining on ordinary CPUs instead of
+ASICs. Difficulty moves with per-block ASERT from height 12,096.
 
 Kept from Bitcoin:
 - 21 million cap
@@ -61,8 +62,8 @@ fair-launch proof-of-work chain from the start.
 ## Short post
 
 ```text
-I launched Bitcoin 09 (09C): Bitcoin economics, one change: Argon2id CPU
-proof of work so people can mine on normal computers again.
+I launched Bitcoin 09 (09C): Bitcoin-shaped economics with Argon2id CPU proof
+of work so people can mine on normal computers again.
 
 21M cap, halvings, 10 min blocks, no premine, burned genesis.
 
@@ -84,7 +85,7 @@ Consensus:
 - 21M cap
 - 50 coin subsidy, halving every 210,000 blocks
 - 10 minute target
-- difficulty retarget every 2016 blocks, 4x clamp
+- per-block ASERT from height 12,096, two-hour half-life
 - Ed25519 signatures
 - 1 MB blocks
 - heaviest cumulative work wins

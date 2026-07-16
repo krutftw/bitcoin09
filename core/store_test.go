@@ -1099,6 +1099,41 @@ func cloneSnapshotWork(snapshot canonicalMainSnapshot) *big.Int {
 	return new(big.Int).Set(snapshot.cumWork)
 }
 
+func TestCanonicalSnapshotReplaysAcrossASERTActivation(t *testing.T) {
+	params := RegTest
+	params.ASERTActivationHeight = 4
+	params.ASERTHalfLife = 2
+	params.ASERTFutureDrift = 3600
+	params.ASERTMedianTimeBlocks = 3
+	chain, err := NewChain(&params)
+	if err != nil {
+		t.Fatalf("NewChain: %v", err)
+	}
+	_, pkh := keyAndPKH(t)
+	base := time.Now().Unix() - 100
+	for height := int64(1); height <= 6; height++ {
+		mineAtTimestamp(t, chain, pkh, base+height*10)
+	}
+
+	snapshot, err := chain.canonicalMainSnapshot()
+	if err != nil {
+		t.Fatalf("canonicalMainSnapshot: %v", err)
+	}
+	encoded, err := encodeCanonicalSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("encodeCanonicalSnapshot: %v", err)
+	}
+	replayed, validated, canonical, err := decodeCanonicalSnapshot(&params, encoded)
+	if err != nil {
+		t.Fatalf("decodeCanonicalSnapshot across ASERT: %v", err)
+	}
+	if !bytes.Equal(canonical, encoded) || validated.tipID != snapshot.tipID ||
+		validated.tipHeight != snapshot.tipHeight || replayed.NextBitsForTip() != chain.NextBitsForTip() {
+		t.Fatalf("ASERT replay mismatch: tip %d/%d bits %08x/%08x",
+			validated.tipHeight, snapshot.tipHeight, replayed.NextBitsForTip(), chain.NextBitsForTip())
+	}
+}
+
 func mineAtTimestamp(t *testing.T, c *Chain, pkh [20]byte, timestamp int64) {
 	t.Helper()
 	template := BuildBlockTemplate(c, pkh, "timed-work")

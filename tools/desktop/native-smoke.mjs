@@ -70,7 +70,7 @@ try {
   });
   const launch = JSON.parse(await firstLine(backend.stdout, 15000));
   assert.equal(launch.schema_version, 1);
-  assert.equal(launch.version, "v0.1.33");
+  assert.equal(launch.version, "v0.1.34");
   assert.match(launch.launch_url, /^http:\/\/127\.0\.0\.1:\d+\?token=[a-f0-9]{64}$/);
 
   browser = await chromium.launch({ headless: true });

@@ -19,7 +19,7 @@ class DirectDistributionContractTest(unittest.TestCase):
             "iPhone",
             "SHA256SUMS",
             "Available beta files",
-            "releases/tag/v0.1.33-beta.1",
+            "releases/tag/v0.1.34",
             "btc09-wallet-android-arm64.apk",
             "btc09-wallet-linux-x64.AppImage",
         ):
@@ -75,9 +75,9 @@ class DirectDistributionContractTest(unittest.TestCase):
             "Android signed APK",
             "Linux AppImage",
             "Not in this beta",
-            "releases/download/v0.1.33-beta.1/btc09-wallet-android-arm64.apk",
-            "releases/download/v0.1.33-beta.1/btc09-wallet-linux-x64.AppImage",
-            "releases/download/v0.1.33-beta.1/SHA256SUMS",
+            "releases/download/v0.1.34/btc09-wallet-android-arm64.apk",
+            "releases/download/v0.1.34/btc09-wallet-linux-x64.AppImage",
+            "releases/download/v0.1.34/SHA256SUMS",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, homepage)
@@ -98,6 +98,61 @@ class DirectDistributionContractTest(unittest.TestCase):
             for token in required:
                 with self.subTest(token=token):
                     self.assertIn(token, surface)
+
+    def test_mandatory_asert_upgrade_is_current_and_plain(self):
+        surfaces = {
+            "node": pathlib.Path("cmd/btc09/main.go").read_text(encoding="utf-8"),
+            "wallet node": pathlib.Path("cmd/btc09/main_wallet.go").read_text(encoding="utf-8"),
+            "tauri": pathlib.Path("walletapp/src-tauri/tauri.conf.json").read_text(encoding="utf-8"),
+            "wallet package": pathlib.Path("walletapp/package.json").read_text(encoding="utf-8"),
+            "appveyor": pathlib.Path("appveyor.yml").read_text(encoding="utf-8"),
+            "exchange integration": pathlib.Path("docs/EXCHANGE-INTEGRATION.md").read_text(encoding="utf-8"),
+        }
+        for name, surface in surfaces.items():
+            with self.subTest(surface=name):
+                self.assertIn("0.1.34", surface)
+
+        homepage = pathlib.Path("docs/index.html").read_text(encoding="utf-8")
+        whitepaper = pathlib.Path("WHITEPAPER.md").read_text(encoding="utf-8")
+        listing = pathlib.Path("docs/EXCHANGE-LISTING.md").read_text(encoding="utf-8")
+        for surface in (homepage, whitepaper, listing):
+            for token in ("12,096", "per-block ASERT"):
+                with self.subTest(token=token):
+                    self.assertIn(token, surface)
+        self.assertIn("Mandatory update", homepage)
+        self.assertNotIn(
+            "Difficulty retargets every 2016 blocks, same as Bitcoin",
+            whitepaper,
+        )
+
+    def test_v0134_release_notes_cover_the_consensus_upgrade_and_files(self):
+        notes_path = pathlib.Path("docs/RELEASE-v0.1.34.md")
+        self.assertTrue(notes_path.exists(), "v0.1.34 release notes are missing")
+        notes = notes_path.read_text(encoding="utf-8") if notes_path.exists() else ""
+        for token in (
+            "Mandatory network update",
+            "height 12,096",
+            "per-block ASERT",
+            "two-hour half-life",
+            "Node and solo-miner operators",
+            "Pool miners",
+            "Wallet files and addresses do not change",
+            "btc09-windows-amd64.exe",
+            "btc09-linux-amd64",
+            "btc09-linux-arm64",
+            "btc09-macos-apple.zip",
+            "btc09-macos-intel.zip",
+            "btc09-wallet-android-arm64.apk",
+            "btc09-wallet-linux-x64.AppImage",
+            "SHA256SUMS",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, notes)
+
+    def test_current_social_copy_does_not_repeat_the_retired_difficulty_rule(self):
+        posts = pathlib.Path("POSTS.md").read_text(encoding="utf-8")
+        self.assertIn("per-block ASERT from height 12,096", posts)
+        self.assertNotIn("difficulty retarget every 2016 blocks", posts)
 
     def test_appveyor_builds_the_unsigned_windows_artifact_for_signpath(self):
         pipeline_path = pathlib.Path("appveyor.yml")

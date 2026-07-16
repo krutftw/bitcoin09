@@ -203,6 +203,63 @@ func TestStatusAndHomeExposeMiningStats(t *testing.T) {
 	}
 }
 
+func TestStatusExposesMainNetASERTActivation(t *testing.T) {
+	chain, err := core.NewChain(&core.MainNet)
+	if err != nil {
+		t.Fatalf("NewChain: %v", err)
+	}
+	server, err := New(chain, testPeers{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	server.Handler().ServeHTTP(recorder, request)
+	var status struct {
+		DifficultyAlgorithm   string `json:"difficulty_algorithm"`
+		ASERTActivationHeight int64  `json:"asert_activation_height"`
+		BlocksToASERT         int64  `json:"blocks_to_asert"`
+		ASERTHalfLifeSeconds  int64  `json:"asert_half_life_seconds"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.DifficultyAlgorithm != "legacy-2016" || status.ASERTActivationHeight != 12096 ||
+		status.BlocksToASERT != 12096 || status.ASERTHalfLifeSeconds != 7200 {
+		t.Fatalf("pre-activation ASERT status = %+v", status)
+	}
+}
+
+func TestRetargetDataSwitchesToASERTAfterActivation(t *testing.T) {
+	params := core.RegTest
+	params.ASERTActivationHeight = 4
+	params.ASERTHalfLife = 2
+	params.ASERTFutureDrift = 3600
+	params.ASERTMedianTimeBlocks = 3
+	chain, err := core.NewChain(&params)
+	if err != nil {
+		t.Fatalf("NewChain: %v", err)
+	}
+	minePayoutRun(t, chain, [20]byte{9}, 6, time.Now().Unix()-100)
+	server := &Server{chain: chain}
+	tipBlock := chain.BlockAt(6)
+	data := server.retargetAt(6, server.difficulty(tipBlock.Header.Bits))
+	if data.DifficultyAlgorithm != "asert" || data.ASERTActivationHeight != 4 ||
+		data.BlocksToASERT != 0 || data.ASERTHalfLifeSeconds != 2 {
+		t.Fatalf("post-activation ASERT status = %+v", data)
+	}
+	if data.RetargetInterval != 0 || data.NextRetargetHeight != 0 || data.BlocksToRetarget != 0 {
+		t.Fatalf("post-activation status retained a legacy retarget: %+v", data)
+	}
+	wantNext := server.difficulty(chain.NextBitsForTip())
+	if data.EstimatedNextDifficulty != wantNext {
+		t.Fatalf("estimated next difficulty = %f, want %f", data.EstimatedNextDifficulty, wantNext)
+	}
+	if data.EpochElapsedBlocks <= 0 || data.EpochElapsedSeconds <= 0 || data.EpochAverageBlockSeconds <= 0 {
+		t.Fatalf("ASERT status omitted trailing cadence: %+v", data)
+	}
+}
+
 func TestStatusExposesUntrustedAdvertisedPeerHeightLag(t *testing.T) {
 	chain, err := core.NewChain(&core.RegTest)
 	if err != nil {

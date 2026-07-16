@@ -61,6 +61,12 @@ type Params struct {
 	// Argon2id proof-of-work cost parameters (per hash attempt).
 	ArgonMemKiB uint32
 	ArgonTime   uint32
+	// ASERT is disabled when ASERTActivationHeight is zero. When enabled,
+	// all four values below are consensus rules rather than runtime tuning.
+	ASERTActivationHeight int64
+	ASERTHalfLife         int64
+	ASERTFutureDrift      int64
+	ASERTMedianTimeBlocks int
 	// Genesis
 	GenesisTime     int64
 	GenesisNonce    uint64
@@ -70,18 +76,22 @@ type Params struct {
 
 func canonicalMainNetParams() Params {
 	return Params{
-		Name:             "mainnet",
-		NetMagic:         0xB7C09001,
-		TargetBlockTime:  600,  // 10 minutes, Bitcoin-classic
-		RetargetInterval: 2016, // Bitcoin-classic, ~2 weeks at target rate
-		CoinbaseMaturity: 100,  // Bitcoin-classic
-		MaxTargetBits:    0x1f00ffff,
-		ArgonMemKiB:      64 * 1024, // 64 MiB per hash attempt
-		ArgonTime:        1,
-		GenesisTime:      1783274400, // 2026-07-05 18:00:00 UTC, launch day
-		GenesisNonce:     20214,      // mined 2026-07-06; genesis id ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f
-		GenesisHeadline:  "the coin that you can mine like it's 2009",
-		FutureDrift:      2 * 3600,
+		Name:                  "mainnet",
+		NetMagic:              0xB7C09001,
+		TargetBlockTime:       600,  // 10 minutes, Bitcoin-classic
+		RetargetInterval:      2016, // Bitcoin-classic, ~2 weeks at target rate
+		CoinbaseMaturity:      100,  // Bitcoin-classic
+		MaxTargetBits:         0x1f00ffff,
+		ArgonMemKiB:           64 * 1024, // 64 MiB per hash attempt
+		ArgonTime:             1,
+		ASERTActivationHeight: 12096,
+		ASERTHalfLife:         2 * 3600,
+		ASERTFutureDrift:      30 * 60,
+		ASERTMedianTimeBlocks: 11,
+		GenesisTime:           1783274400, // 2026-07-05 18:00:00 UTC, launch day
+		GenesisNonce:          20214,      // mined 2026-07-06; genesis id ba685f741a04ddad03d37500ff354ce3887e64dd9cb6154ae236952792e90c3f
+		GenesisHeadline:       "the coin that you can mine like it's 2009",
+		FutureDrift:           2 * 3600,
 	}
 }
 
@@ -100,6 +110,28 @@ func canonicalRegTestParams() Params {
 		GenesisHeadline:  "regtest genesis",
 		FutureDrift:      2 * 3600,
 	}
+}
+
+func validateConsensusParams(p *Params) error {
+	if p.ASERTActivationHeight == 0 {
+		if p.ASERTHalfLife != 0 || p.ASERTFutureDrift != 0 || p.ASERTMedianTimeBlocks != 0 {
+			return errors.New("ASERT parameters set without an activation height")
+		}
+		return nil
+	}
+	if p.ASERTActivationHeight < 2 {
+		return errors.New("ASERT activation height must leave an anchor parent")
+	}
+	if p.ASERTHalfLife <= 0 {
+		return errors.New("ASERT half-life must be positive")
+	}
+	if p.ASERTFutureDrift <= 0 {
+		return errors.New("ASERT future drift must be positive")
+	}
+	if p.ASERTMedianTimeBlocks < 3 || p.ASERTMedianTimeBlocks%2 == 0 {
+		return errors.New("ASERT median-time window must be an odd number of at least three blocks")
+	}
+	return nil
 }
 
 var MainNet = canonicalMainNetParams()

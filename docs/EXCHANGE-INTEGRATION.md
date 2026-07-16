@@ -5,7 +5,10 @@ This is the operator contract for Bitcoin 09 (`09C`) deposits and withdrawals.
 `btc09` binary and its versioned, read-only chain API plus strict JSON wallet
 commands.
 
-The current supported release is [v0.1.32](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.32).
+The current supported release is [v0.1.34](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34).
+It is a mandatory node update before height 12,096, where per-block ASERT
+replaces the legacy 2,016-block difficulty window. Exchange wallet addresses
+and balances are unchanged.
 Open a GitHub issue for integration questions that do not contain account data,
 wallet files, signed transactions, or credentials. Private exchange contact can
 continue through the exchange's listing ticket.
@@ -29,7 +32,7 @@ locally under the exchange service account.
 Download the Linux binary and checksum file from the same release:
 
 ```bash
-VERSION=v0.1.32
+VERSION=v0.1.34
 curl -fLO "https://github.com/krutftw/bitcoin09/releases/download/$VERSION/btc09-linux-amd64"
 curl -fLO "https://github.com/krutftw/bitcoin09/releases/download/$VERSION/SHA256SUMS"
 sha256sum --check --ignore-missing SHA256SUMS
@@ -37,7 +40,7 @@ install -m 0755 btc09-linux-amd64 /usr/local/bin/btc09
 btc09 version
 ```
 
-The expected version output includes `reference node v0.1.32`. Pin an exact
+The expected version output includes `reference node v0.1.34`. Pin an exact
 release in production. Do not run an unreviewed binary directly from `latest`.
 
 ## Node and wallet layout

@@ -58,7 +58,7 @@ Build the preflight MSIX with:
   -PublisherDisplayName '<verified company name>'
 ```
 
-The script builds the wallet-only edition, maps version `0.1.33` to `1.33.0.0`, packages only the wallet shell, local wallet core and artwork, and unpacks the result again for validation. It deliberately does not sign. The Microsoft Store signs an accepted MSIX submission. A self-signed package is only for local testing and does not solve SmartScreen for public downloads.
+The script builds the wallet-only edition, maps version `0.1.34` to `1.34.0.0`, packages only the wallet shell, local wallet core and artwork, and unpacks the result again for validation. It deliberately does not sign. The Microsoft Store signs an accepted MSIX submission. A self-signed package is only for local testing and does not solve SmartScreen for public downloads.
 
 After certification, install the app from its Store listing and confirm the publisher, launch, wallet creation, restore, backup, receive, payment review, activity, cleanup and uninstall flow.
 

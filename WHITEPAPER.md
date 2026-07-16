@@ -60,12 +60,16 @@ validation, which a Raspberry Pi handles easily.
 
 ## 4. Difficulty and emission
 
-Difficulty retargets every 2016 blocks, same as Bitcoin, by the
-ratio of actual to expected time, clamped to 4x per step. The launch
-difficulty is set so a single desktop CPU finds a block in roughly ten
-minutes, the same position a 2009 CPU had. As miners join, difficulty rises
-and the raffle spreads out; the emission curve is Bitcoin's, so roughly half
-the supply exists after four years and 99% after about 26 years.
+Through height 12,095, difficulty uses Bitcoin's 2,016-block window with a
+4x adjustment limit. At height 12,096 the network switches to per-block ASERT
+with a two-hour half-life. ASERT moves difficulty smoothly when hashpower joins
+or leaves instead of creating a cliff at the end of a window. Its consensus
+calculation uses fixed-point integer arithmetic, and post-upgrade block times
+must pass an 11-block median-time rule.
+
+The block target remains ten minutes. As miners join, difficulty rises and the
+raffle spreads out; the emission curve is Bitcoin's, so roughly half the supply
+exists after four years and 99% after about 26 years.
 
 ## 5. Launch
 

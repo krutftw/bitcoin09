@@ -41,7 +41,7 @@ Source and support: https://github.com/krutftw/bitcoin09
 
 BTC09, Bitcoin 09, 09C, self-custody wallet
 
-## What is new in 0.1.33
+## What is new in 0.1.34
 
 The first native mobile wallet adds protected on-device storage, wallet restore, send and receive, activity, payment review, and recipient QR scanning. The Windows Store edition removes on-device mining and uses the same simpler wallet flow.
 

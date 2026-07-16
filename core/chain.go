@@ -135,6 +135,9 @@ func NewChain(p *Params) (*Chain, error) {
 	if p == nil {
 		return nil, errors.New("nil chain params")
 	}
+	if err := validateConsensusParams(p); err != nil {
+		return nil, err
+	}
 	params := *p
 	c := &Chain{
 		params:  &params,
@@ -682,14 +685,10 @@ func (c *Chain) acceptBlockLocked(b *Block, checkPow bool) (*blockIndex, error) 
 	if len(b.Bytes()) > MaxBlockBytes {
 		return nil, errors.New("block too large")
 	}
-	if err := b.Header.CheckTimestamp(c.params, time.Now()); err != nil {
+	height := parent.height + 1
+	if err := c.checkBlockTimestamp(parent, height, b.Header.Time, time.Now()); err != nil {
 		return nil, err
 	}
-	// median-time-past style monotonicity (simplified): must be after parent - drift
-	if b.Header.Time < parent.block.Header.Time-c.params.FutureDrift {
-		return nil, errors.New("block timestamp before parent")
-	}
-	height := parent.height + 1
 	// required difficulty on the parent's chain
 	requiredBits := c.bitsOnBranch(parent, height)
 	if b.Header.Bits != requiredBits {
@@ -732,6 +731,47 @@ func (c *Chain) acceptBlockLocked(b *Block, checkPow bool) (*blockIndex, error) 
 	}
 	c.index[id] = bi
 	return bi, nil
+}
+
+func (c *Chain) checkBlockTimestamp(
+	parent *blockIndex,
+	height, candidateTime int64,
+	now time.Time,
+) error {
+	if !asertActive(c.params, height) {
+		header := Header{Time: candidateTime}
+		if err := header.CheckTimestamp(c.params, now); err != nil {
+			return err
+		}
+		if candidateTime < parent.block.Header.Time-c.params.FutureDrift {
+			return errors.New("block timestamp before parent")
+		}
+		return nil
+	}
+
+	if candidateTime > now.Unix()+c.params.ASERTFutureDrift {
+		return errors.New("block timestamp too far in the future")
+	}
+	timestamps := make([]int64, 0, c.params.ASERTMedianTimeBlocks)
+	current := parent
+	for current != nil && len(timestamps) < c.params.ASERTMedianTimeBlocks {
+		if current.block == nil {
+			return errors.New("block timestamp ancestry is incomplete")
+		}
+		timestamps = append(timestamps, current.block.Header.Time)
+		if current.height == 0 {
+			break
+		}
+		current = c.index[current.block.Header.PrevBlock]
+	}
+	if len(timestamps) == 0 {
+		return errors.New("block timestamp ancestry is unavailable")
+	}
+	sort.Slice(timestamps, func(i, j int) bool { return timestamps[i] < timestamps[j] })
+	if candidateTime <= timestamps[len(timestamps)/2] {
+		return errors.New("block timestamp is not after median time past")
+	}
+	return nil
 }
 
 // checkBlockSanity rejects context-free transaction and money corruption
@@ -791,6 +831,9 @@ func checkBlockSanity(b *Block) error {
 // bitsOnBranch computes required bits for a block at `height` whose parent
 // is `parent` (which may be off the main chain).
 func (c *Chain) bitsOnBranch(parent *blockIndex, height int64) uint32 {
+	if parent == c.tip && height == parent.height+1 {
+		return c.nextBitsAtLocked(height)
+	}
 	ancestorAt := func(target int64) *blockIndex {
 		current := parent
 		for current != nil && current.height > target {
