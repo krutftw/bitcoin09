@@ -248,7 +248,8 @@ Any node can serve its own explorer with `-explorer :8009`.
 There is no official 09C price. Early trading is community OTC only.
 
 Discord has `#💱-otc-trading` for English WTB/WTS negotiation, and the bot
-escrow is live. Use `/trade sell` to create a WTS offer.
+escrow is live. Start with `/trade help` or `/help`; `/trade` by itself is only
+the Discord subcommand menu. Use `/trade sell` to create a WTS offer.
 Use `/trade buy` to create a WTB offer. Use `/trade accept <order_id>` to accept
 an open offer. The bot holds 09C in escrow at a 1% fee. Only send 09C to the
 deposit address the bot

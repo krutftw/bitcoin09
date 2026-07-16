@@ -6,7 +6,9 @@ seller; the bot never takes custody of those funds.
 
 ## Discord interface
 
-Use `/trade` for order creation, browsing, matching, deposit checks,
+Use `/trade help` or `/help` for a short guide. `/trade` is a Discord command
+group, so choose a subcommand rather than sending `/trade` by itself. Use the
+group for order creation, browsing, matching, deposit checks,
 confirmations, cancellation, disputes, account status, fee administration, and
 optional English translation. Legacy top-level commands remain compatibility
 wrappers. Public replies contain only the sanitized order projection. Deposit
