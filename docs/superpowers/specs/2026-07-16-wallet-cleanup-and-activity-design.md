@@ -139,11 +139,12 @@ When the wallet has immature mining rewards, a secondary line reads:
 An optional explanation says that mined rewards become ready after 100 blocks.
 The UI does not call those funds missing, frozen, pending approval, or locked.
 
-The gateway snapshot adds validated additive fields for immature units and the
-count of mature spendable outputs. Existing response fields and schema version
-remain compatible. Full mode derives the same values from the local canonical
-chain. Overflow, maturity, ownership, tip identity, ordering, and response-size
-checks remain mandatory.
+The existing `/api/wallet/v1/snapshot` response stays unchanged because older
+clients decode it strictly and would reject new fields. A separate versioned
+wallet-view endpoint returns the spendable outputs, immature rewards, output
+count, and optional recent activity needed by v0.1.32. Full mode derives the
+same view from the local canonical chain. Overflow, maturity, ownership, tip
+identity, ordering, and response-size checks remain mandatory.
 
 ### 4. Max send
 
@@ -244,10 +245,13 @@ Desktop-local routes:
 - `POST /api/v1/maintenance/cleanup/preview`
 - `POST /api/v1/maintenance/cleanup/confirm`
 
-The remote wallet gateway gains one bounded activity endpoint. Exact request
-and response structs will be fixed in the implementation plan. All amounts use
-integer base units on service boundaries; decimal parsing remains confined to
-user-input adapters.
+The remote wallet gateway gains one bounded `/api/wallet/v1/view` endpoint. Its
+request contains the canonical wallet address set and an activity limit from 0
+to 50. A zero limit returns summary and spendable-output data without activity;
+the Activity tab requests up to 50 rows. The legacy snapshot and broadcast
+contracts remain unchanged. Exact request and response structs will be fixed in
+the implementation plan. All amounts use integer base units on service
+boundaries; decimal parsing remains confined to user-input adapters.
 
 Cleanup and Max use the same wallet snapshot validation in Fast mode and the
 same canonical-tip snapshot in Full mode as normal send. The transaction is
