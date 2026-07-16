@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "node ../tools/mobile/prepare-core.mjs ios",
+    "beforeDevCommand": "node ../tools/mobile/prepare-core.mjs ios",
+    "frontendDist": "../src"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "BTC09 Wallet",
+        "url": "mobile.html",
+        "fullscreen": false,
+        "visible": true,
+        "backgroundColor": "#f5f1e8"
+      }
+    ]
+  },
+  "bundle": {
+    "externalBin": [],
+    "longDescription": "A private, self-custody wallet for sending and receiving Bitcoin 09."
+  }
+}

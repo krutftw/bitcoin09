@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "mobile-wallet",
+  "description": "Wallet access for the BTC09 Android and iPhone app",
+  "windows": ["main"],
+  "platforms": ["android", "iOS"],
+  "permissions": [
+    "core:default",
+    "wallet-core:default"
+  ]
+}

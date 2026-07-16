@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.btc09_wallet" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="android:statusBarColor">#f5f1e8</item>
+        <item name="android:navigationBarColor">#f5f1e8</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

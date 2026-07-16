@@ -67,6 +67,101 @@ jobs:
             tools.exchange.test_btc09_exchange_smoke \
             tools.ci.test_ci_workflow_contract
 
+  mobile-wallet:
+    name: Mobile wallet contracts
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: walletapp/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: walletapp/plugins/tauri-plugin-wallet-core -> target
+      - name: Install mobile wallet dependencies
+        working-directory: walletapp
+        run: npm ci
+      - name: Mobile product and security contracts
+        run: node --test tools/mobile/*.test.mjs
+      - name: Generate-check Android and iPhone bindings
+        run: npm --prefix walletapp run mobile:check
+      - name: Check mobile plugin
+        run: |
+          cargo fmt --manifest-path walletapp/plugins/tauri-plugin-wallet-core/Cargo.toml -- --check
+          cargo check --manifest-path walletapp/plugins/tauri-plugin-wallet-core/Cargo.toml
+      - name: Install browser for the phone-sized visual flow
+        working-directory: walletapp
+        run: npx playwright install --with-deps chromium
+      - name: Run phone-sized visual and interaction flow
+        run: npm --prefix walletapp run mobile:ui-smoke
+      - name: Install the pinned Android build toolchain
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865"
+          rustup target add aarch64-linux-android
+          chmod +x walletapp/src-tauri/gen/android/gradlew
+      - name: Build release-shaped Android APK
+        working-directory: walletapp
+        run: npm run mobile:android:build
+      - name: Inspect Android package protections
+        run: |
+          apk="walletapp/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
+          manifest="walletapp/src-tauri/gen/android/app/build/intermediates/merged_manifests/universalRelease/processUniversalReleaseManifest/AndroidManifest.xml"
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$apk"
+          test -s "$apk"
+          grep -q 'android:allowBackup="false"' "$manifest"
+          grep -q 'android:usesCleartextTraffic="false"' "$manifest"
+          grep -q 'android:dataExtractionRules="@xml/data_extraction_rules"' "$manifest"
+          ! grep -q 'android:debuggable="true"' "$manifest"
+
+  ios-wallet:
+    name: iPhone wallet simulator
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: walletapp/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: walletapp/src-tauri -> target
+      - name: Install iPhone wallet dependencies
+        working-directory: walletapp
+        run: npm ci
+      - name: Build shared iPhone wallet core
+        run: npm --prefix walletapp run mobile:core:ios
+      - name: Initialize disposable iPhone host
+        working-directory: walletapp
+        run: npm run tauri -- ios init --ci --skip-targets-install
+      - name: Compile iPhone wallet and Swift bridge
+        working-directory: walletapp
+        run: npm run mobile:ios:simulator
+
   native-wallet:
     name: Native wallet (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

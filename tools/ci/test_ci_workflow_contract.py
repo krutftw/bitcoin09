@@ -75,6 +75,47 @@ class CIWorkflowContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.workflow)
 
+    def test_mobile_wallet_contracts_and_visual_flow_are_gated(self):
+        for token in (
+            "name: Mobile wallet contracts",
+            "node --test tools/mobile/*.test.mjs",
+            "gradle/actions/wrapper-validation@v6",
+            "npm --prefix walletapp run mobile:check",
+            "playwright install --with-deps chromium",
+            "npm --prefix walletapp run mobile:ui-smoke",
+            "cargo check --manifest-path walletapp/plugins/tauri-plugin-wallet-core/Cargo.toml",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.workflow)
+
+    def test_android_wallet_build_and_package_security_are_gated(self):
+        for token in (
+            "actions/setup-java@v4",
+            'java-version: "17"',
+            '"platforms;android-36"',
+            '"build-tools;36.0.0"',
+            '"ndk;29.0.14206865"',
+            "rustup target add aarch64-linux-android",
+            "npm run mobile:android:build",
+            "zipalign\" -c -P 16",
+            'android:allowBackup="false"',
+            'android:usesCleartextTraffic="false"',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.workflow)
+
+    def test_iphone_wallet_is_compiled_for_the_simulator(self):
+        for token in (
+            "name: iPhone wallet simulator",
+            "runs-on: macos-14",
+            "aarch64-apple-ios-sim",
+            "npm --prefix walletapp run mobile:core:ios",
+            "tauri -- ios init --ci --skip-targets-install",
+            "npm run mobile:ios:simulator",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

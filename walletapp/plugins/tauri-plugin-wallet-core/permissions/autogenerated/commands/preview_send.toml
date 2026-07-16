@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-preview-send"
+description = "Enables the preview_send command without any pre-configured scope."
+commands.allow = ["preview_send"]
+
+[[permission]]
+identifier = "deny-preview-send"
+description = "Denies the preview_send command without any pre-configured scope."
+commands.deny = ["preview_send"]
