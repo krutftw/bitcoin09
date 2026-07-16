@@ -198,6 +198,16 @@ class DirectDistributionContractTest(unittest.TestCase):
             "the pinned toolchain must be installed before the Windows build starts",
         )
 
+    def test_appveyor_normalizes_tauri_ci_environment(self):
+        wrapper = pathlib.Path(
+            "tools/release/run_windows_appveyor.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertLess(
+            wrapper.index("$env:CI = 'true'"),
+            wrapper.index("build_windows_appveyor.ps1"),
+            "Tauri must receive a lowercase boolean before its build starts",
+        )
+
     def test_appveyor_binds_goroot_to_the_pinned_go_toolchain(self):
         script = pathlib.Path(
             "tools/release/install_appveyor_toolchain.ps1"
