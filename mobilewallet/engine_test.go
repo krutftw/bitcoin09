@@ -25,6 +25,23 @@ type fakeGateway struct {
 	viewCalls      int
 }
 
+type blockingGateway struct {
+	*fakeGateway
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (gateway *blockingGateway) View(ctx context.Context, addresses []string, activityLimit int) (lightwallet.ViewResponse, error) {
+	gateway.once.Do(func() { close(gateway.started) })
+	select {
+	case <-gateway.release:
+		return gateway.fakeGateway.View(ctx, addresses, activityLimit)
+	case <-ctx.Done():
+		return lightwallet.ViewResponse{}, ctx.Err()
+	}
+}
+
 func (gateway *fakeGateway) View(_ context.Context, addresses []string, activityLimit int) (lightwallet.ViewResponse, error) {
 	gateway.mu.Lock()
 	defer gateway.mu.Unlock()
@@ -359,6 +376,70 @@ func TestPendingPaymentExpiresAndLockDropsSignedTransactions(t *testing.T) {
 	engine.Lock()
 	if _, err := engine.ConfirmSend(preview.PendingID); err == nil {
 		t.Fatal("locked wallet retained a signed pending transaction")
+	}
+}
+
+func TestBackgroundLockDoesNotWaitForWalletGatewayRequests(t *testing.T) {
+	for _, operation := range []string{"status", "activity", "preview"} {
+		t.Run(operation, func(t *testing.T) {
+			gateway := &blockingGateway{
+				fakeGateway: &fakeGateway{},
+				started:     make(chan struct{}),
+				release:     make(chan struct{}),
+			}
+			engine, err := newEngine(t.TempDir(), core.RegTestMachineID, gateway)
+			if err != nil {
+				t.Fatal(err)
+			}
+			createdJSON, err := engine.CreateWallet([]byte("0123456789abcdef0123456789abcdef"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var created createResult
+			if err := json.Unmarshal([]byte(createdJSON), &created); err != nil {
+				t.Fatal(err)
+			}
+			if operation == "preview" {
+				gateway.spendableUnits = 2 * core.UnitsPerCoin
+				gateway.outputs = []lightwallet.SnapshotOutput{{
+					TxID: strings.Repeat("5", 64), AmountUnits: 2 * core.UnitsPerCoin, Address: created.Address,
+				}}
+			}
+
+			requestDone := make(chan error, 1)
+			go func() {
+				switch operation {
+				case "status":
+					_, err = engine.Status()
+				case "activity":
+					_, err = engine.Activity(50)
+				case "preview":
+					_, err = engine.PreviewSend(testAddress(t), "1", "0.0001")
+				}
+				requestDone <- err
+			}()
+
+			select {
+			case <-gateway.started:
+			case <-time.After(time.Second):
+				t.Fatal("wallet request did not reach the blocking gateway")
+			}
+			lockDone := make(chan struct{})
+			go func() {
+				engine.Lock()
+				close(lockDone)
+			}()
+			select {
+			case <-lockDone:
+				close(gateway.release)
+				<-requestDone
+			case <-time.After(time.Second):
+				close(gateway.release)
+				<-requestDone
+				<-lockDone
+				t.Fatal("background Lock waited for a wallet gateway request")
+			}
+		})
 	}
 }
 

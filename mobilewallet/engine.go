@@ -52,8 +52,9 @@ type Engine struct {
 	network    string
 	gateway    gatewayClient
 
-	walletMu sync.Mutex
-	unlocked *wallet.Wallet
+	walletMu         sync.Mutex
+	unlocked         *wallet.Wallet
+	walletGeneration uint64
 
 	pendingMu sync.Mutex
 	pending   map[string]*pendingPayment
@@ -152,13 +153,14 @@ func (engine *Engine) RestoreWallet(deviceKey []byte, recoveryPhrase string) (st
 	defer clear(key)
 
 	engine.walletMu.Lock()
-	defer engine.walletMu.Unlock()
 	unlocked, err := wallet.RestoreV2(engine.walletPath, engine.network, key, recoveryPhrase, 1)
 	if err != nil {
+		engine.walletMu.Unlock()
 		return "", errors.New("Check all 24 recovery words. A wallet may already exist on this device.")
 	}
 	engine.replaceUnlocked(unlocked)
-	return engine.statusLocked()
+	engine.walletMu.Unlock()
+	return engine.Status()
 }
 
 // Unlock opens the local wallet with a device key released by the native
@@ -171,13 +173,14 @@ func (engine *Engine) Unlock(deviceKey []byte) (string, error) {
 	defer clear(key)
 
 	engine.walletMu.Lock()
-	defer engine.walletMu.Unlock()
 	unlocked, err := wallet.OpenV2(engine.walletPath, engine.network, key)
 	if err != nil {
+		engine.walletMu.Unlock()
 		return "", errors.New("The device could not unlock this wallet.")
 	}
 	engine.replaceUnlocked(unlocked)
-	return engine.statusLocked()
+	engine.walletMu.Unlock()
+	return engine.Status()
 }
 
 // RecoveryPhrase re-authenticates against the encrypted wallet before
@@ -208,51 +211,32 @@ func (engine *Engine) RecoveryPhrase(deviceKey []byte) (string, error) {
 // network error.
 func (engine *Engine) Status() (string, error) {
 	engine.walletMu.Lock()
-	defer engine.walletMu.Unlock()
-	return engine.statusLocked()
-}
-
-func (engine *Engine) statusLocked() (string, error) {
-	base := statusResult{
-		SchemaVersion: mobileSchemaVersion,
-		Network:       engine.network,
-		WalletState:   walletStateMissing,
-		SyncState:     syncStateOffline,
-	}
-	if engine.unlocked == nil {
-		_, err := os.Stat(engine.walletPath)
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-			return encodeJSON(base)
-		case err != nil:
-			return "", errors.New("The wallet file could not be checked safely.")
-		default:
-			base.WalletState = walletStateLocked
-			base.NeedsUnlock = true
-			base.SyncState = syncStateLocked
-			return encodeJSON(base)
-		}
-	}
-
-	addresses, err := engine.unlocked.AddressesE()
-	if err != nil || len(addresses) == 0 {
-		return "", errors.New("The wallet could not read its receive address.")
-	}
-	base.WalletState = walletStateReady
-	base.Address = addresses[0]
-	view, err := engine.gateway.View(context.Background(), addresses, 0)
+	base, addresses, generation, err := engine.localStatusLocked()
+	engine.walletMu.Unlock()
 	if err != nil {
-		base.SyncState = syncStateUnavailable
+		return "", err
+	}
+	if len(addresses) == 0 {
 		return encodeJSON(base)
 	}
-	snapshot, err := remoteSnapshot(view)
-	if err != nil {
-		base.SyncState = syncStateUnavailable
+
+	view, viewErr := engine.gateway.View(context.Background(), addresses, 0)
+	snapshot, snapshotErr := remoteSnapshot(view)
+
+	engine.walletMu.Lock()
+	defer engine.walletMu.Unlock()
+	if engine.unlocked == nil || engine.walletGeneration != generation {
+		current, _, _, err := engine.localStatusLocked()
+		if err != nil {
+			return "", err
+		}
+		return encodeJSON(current)
+	}
+	if viewErr != nil || snapshotErr != nil {
 		return encodeJSON(base)
 	}
 	validated, err := engine.unlocked.ValidateRemoteSnapshot(snapshot)
 	if err != nil {
-		base.SyncState = syncStateUnavailable
 		return encodeJSON(base)
 	}
 	base.BalanceUnits = validated.SpendableUnits
@@ -266,20 +250,55 @@ func (engine *Engine) statusLocked() (string, error) {
 	return encodeJSON(base)
 }
 
+func (engine *Engine) localStatusLocked() (statusResult, []string, uint64, error) {
+	base := statusResult{
+		SchemaVersion: mobileSchemaVersion,
+		Network:       engine.network,
+		WalletState:   walletStateMissing,
+		SyncState:     syncStateOffline,
+	}
+	if engine.unlocked == nil {
+		_, err := os.Stat(engine.walletPath)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			return base, nil, engine.walletGeneration, nil
+		case err != nil:
+			return statusResult{}, nil, 0, errors.New("The wallet file could not be checked safely.")
+		default:
+			base.WalletState = walletStateLocked
+			base.NeedsUnlock = true
+			base.SyncState = syncStateLocked
+			return base, nil, engine.walletGeneration, nil
+		}
+	}
+
+	addresses, err := engine.unlocked.AddressesE()
+	if err != nil || len(addresses) == 0 {
+		return statusResult{}, nil, 0, errors.New("The wallet could not read its receive address.")
+	}
+	base.WalletState = walletStateReady
+	base.Address = addresses[0]
+	base.SyncState = syncStateUnavailable
+	return base, append([]string(nil), addresses...), engine.walletGeneration, nil
+}
+
 // Activity returns a bounded, gateway-validated transaction list.
 func (engine *Engine) Activity(limit int) (string, error) {
 	if limit < 1 || limit > lightwallet.MaxWalletActivityLimit {
 		return "", fmt.Errorf("Choose between 1 and %d recent transactions.", lightwallet.MaxWalletActivityLimit)
 	}
 	engine.walletMu.Lock()
-	defer engine.walletMu.Unlock()
 	if engine.unlocked == nil {
+		engine.walletMu.Unlock()
 		return "", errors.New("Unlock your wallet to see its activity.")
 	}
 	addresses, err := engine.unlocked.AddressesE()
 	if err != nil || len(addresses) == 0 {
+		engine.walletMu.Unlock()
 		return "", errors.New("The wallet could not read its activity safely.")
 	}
+	generation := engine.walletGeneration
+	engine.walletMu.Unlock()
 	view, err := engine.gateway.View(context.Background(), addresses, limit)
 	if err != nil {
 		return "", walletServiceError()
@@ -288,9 +307,16 @@ func (engine *Engine) Activity(limit int) (string, error) {
 	if err != nil {
 		return "", walletServiceError()
 	}
+	engine.walletMu.Lock()
+	if engine.unlocked == nil || engine.walletGeneration != generation {
+		engine.walletMu.Unlock()
+		return "", errors.New("Unlock your wallet to see its activity.")
+	}
 	if _, err := engine.unlocked.ValidateRemoteSnapshot(snapshot); err != nil {
+		engine.walletMu.Unlock()
 		return "", walletServiceError()
 	}
+	engine.walletMu.Unlock()
 	items := make([]activityItem, len(view.Activity))
 	for index, item := range view.Activity {
 		items[index] = activityItem{
@@ -346,18 +372,17 @@ func (engine *Engine) PreviewSend(destination, amountText, feeText string) (stri
 	}
 
 	engine.walletMu.Lock()
-	defer engine.walletMu.Unlock()
 	if engine.unlocked == nil {
+		engine.walletMu.Unlock()
 		return "", errors.New("Unlock your wallet before sending 09C.")
-	}
-	restricted, err := engine.pendingRestrictions()
-	if err != nil {
-		return "", err
 	}
 	addresses, err := engine.unlocked.AddressesE()
 	if err != nil || len(addresses) == 0 {
+		engine.walletMu.Unlock()
 		return "", errors.New("The wallet could not prepare this payment safely.")
 	}
+	generation := engine.walletGeneration
+	engine.walletMu.Unlock()
 	view, err := engine.gateway.View(context.Background(), addresses, 0)
 	if err != nil {
 		return "", walletServiceError()
@@ -365,6 +390,15 @@ func (engine *Engine) PreviewSend(destination, amountText, feeText string) (stri
 	remote, err := remoteSnapshot(view)
 	if err != nil {
 		return "", walletServiceError()
+	}
+	engine.walletMu.Lock()
+	defer engine.walletMu.Unlock()
+	if engine.unlocked == nil || engine.walletGeneration != generation {
+		return "", errors.New("Unlock your wallet before sending 09C.")
+	}
+	restricted, err := engine.pendingRestrictions()
+	if err != nil {
+		return "", err
 	}
 	validated, prepared, err := engine.unlocked.PrepareFromRemoteSnapshot(remote, destination, amount, fee, restricted)
 	if err != nil || prepared == nil || prepared.Tx == nil {
@@ -464,6 +498,7 @@ func (engine *Engine) Lock() {
 		return
 	}
 	engine.walletMu.Lock()
+	engine.walletGeneration++
 	if engine.unlocked != nil {
 		engine.unlocked.Close()
 		engine.unlocked = nil
@@ -480,6 +515,7 @@ func (engine *Engine) Close() { engine.Lock() }
 func (engine *Engine) replaceUnlocked(next *wallet.Wallet) {
 	previous := engine.unlocked
 	engine.unlocked = next
+	engine.walletGeneration++
 	if previous != nil && previous != next {
 		previous.Close()
 	}
