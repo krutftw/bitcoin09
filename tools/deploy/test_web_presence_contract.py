@@ -11,6 +11,12 @@ class WebPresenceContractTest(unittest.TestCase):
         cls.nine_inbox = pathlib.Path(
             "deploy/nginx/bitcoin09-nine-inbox-server.conf"
         ).read_text(encoding="utf-8")
+        cls.wallet_http = pathlib.Path(
+            "deploy/nginx/bitcoin09-wallet-gateway-http.conf"
+        ).read_text(encoding="utf-8")
+        cls.wallet_server = pathlib.Path(
+            "deploy/nginx/bitcoin09-wallet-gateway-server.conf"
+        ).read_text(encoding="utf-8")
 
     def test_www_redirects_to_one_canonical_https_origin(self):
         self.assertIn("server_name www.btc09.org;", self.config)
@@ -57,6 +63,21 @@ class WebPresenceContractTest(unittest.TestCase):
                     6,
                     "each browser-facing Nine Inbox route should normalize this header",
                 )
+
+    def test_wallet_view_has_a_bounded_public_proxy_route(self):
+        self.assertIn(
+            "zone=btc09_wallet_view:10m rate=30r/m", self.wallet_http
+        )
+        for token in (
+            "location = /api/wallet/v1/view {",
+            "limit_except POST { deny all; }",
+            "limit_req zone=btc09_wallet_view burst=10 nodelay;",
+            "limit_conn btc09_wallet_connections 4;",
+            "client_max_body_size 64k;",
+            "proxy_pass http://127.0.0.1:8010;",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.wallet_server)
 
 
 if __name__ == "__main__":
