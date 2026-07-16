@@ -51,9 +51,13 @@ command starts the local desktop wallet in your browser:
 You can also start it explicitly with `btc09 app`. New wallets use a 24-word
 recovery phrase and an Argon2id-encrypted local file. The app asks for the
 password again after restart, can restore the same stable receive address from
-the words, shows balance and sync status, and reviews each payment before
-broadcasting it. It runs only on a random `127.0.0.1` port and does not use a
-cloud account or external web assets.
+the words, shows the balance ready to send, and reviews each payment before
+broadcasting it. Activity shows recent sends, received payments, mining
+rewards, and confirmation status. Max calculates what can be sent after the
+fee. Combine small payments is an optional wallet tool for wallets with many
+small outputs; it sends them back to the same wallet and does not increase the
+balance or mining rewards. The app runs only on a random `127.0.0.1` port and
+does not use a cloud account or external web assets.
 
 Existing V1 wallets remain readable and are never rewritten as recovery
 wallets. Their random keys cannot truthfully be covered by a new phrase, so
@@ -338,7 +342,8 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.31 is current. The official CPU miner uses non-custodial PPLNS by
+v0.1.32 is current. The wallet adds Activity, Max send, and optional
+small-payment cleanup. The official CPU miner uses non-custodial PPLNS by
 default, with difficulty-weighted shares, a durable public window, and direct
 coinbase payouts at a 0% pool fee. Wallet V2 keeps 24-word recovery and an
 encrypted local file, while existing V1 wallets stay unchanged and readable.
