@@ -18,6 +18,8 @@ privacy:  https://btc09.org/privacy.html
 terms:    https://btc09.org/terms.html
 ```
 
+[Code signing policy](CODE_SIGNING.md) / [Direct-download status](docs/DIRECT-DOWNLOADS.md)
+
 | | Bitcoin | Bitcoin 09 |
 |---|---|---|
 | Supply cap | 21,000,000 | 21,000,000 |

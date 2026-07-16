@@ -86,9 +86,21 @@ class CIWorkflowContractTest(unittest.TestCase):
 
         self.assertNotIn("Jobs/Dependency-Scanning.v2.gitlab-ci.yml", self.gitlab)
 
-        for forbidden in ("PRIVATE_KEY", "KEYSTORE_PASSWORD", "codesign", "signtool"):
+        for forbidden in ("BEGIN PRIVATE KEY", "codesign --sign", "signtool sign"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, self.gitlab)
+
+        for secret_name in (
+            "BTC09_ANDROID_KEYSTORE_B64",
+            "BTC09_ANDROID_KEYSTORE_PASSWORD",
+            "BTC09_ANDROID_KEY_PASSWORD",
+        ):
+            with self.subTest(secret_name=secret_name):
+                self.assertNotRegex(
+                    self.gitlab,
+                    rf"(?m)^\s*{secret_name}\s*:\s*\S+",
+                    "release secrets must be injected by GitLab, never defined in YAML",
+                )
 
     def test_native_wallet_is_checked_on_each_desktop_platform(self):
         for token in (

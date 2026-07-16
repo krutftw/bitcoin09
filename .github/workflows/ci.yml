@@ -68,6 +68,7 @@ jobs:
       - name: Website and deployment contracts
         run: |
           python -m unittest \
+            tools.release.test_direct_distribution \
             tools.release.test_package_macos \
             tools.release.test_package_windows_store \
             tools.site.test_index_contract \
