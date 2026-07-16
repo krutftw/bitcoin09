@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,14 +27,16 @@ import (
 const defaultMainnetWalletGateway = "https://btc09.org"
 
 type appOptions struct {
-	network    string
-	dataDir    string
-	walletFile string
-	seeds      []string
-	noBrowser  bool
-	mode       string
-	gatewayURL string
-	miningURL  string
+	network     string
+	dataDir     string
+	walletFile  string
+	seeds       []string
+	noBrowser   bool
+	mode        string
+	gatewayURL  string
+	miningURL   string
+	desktopHost bool
+	walletOnly  bool
 }
 
 type appRuntimeInfo struct {
@@ -53,6 +56,8 @@ func parseAppOptions(args []string) (appOptions, error) {
 	fs.StringVar(&options.gatewayURL, "gateway", "", "Fast mode HTTPS wallet gateway")
 	fs.StringVar(&options.miningURL, "miner", "", "Open solo mining coordinator URL")
 	fs.BoolVar(&options.noBrowser, "no-browser", false, "do not open the system browser")
+	fs.BoolVar(&options.desktopHost, "desktop-host", false, "run inside the BTC09 desktop host")
+	fs.BoolVar(&options.walletOnly, "wallet-only", false, "disable on-device mining")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
 		return appOptions{}, errors.New("invalid app arguments")
 	}
@@ -62,6 +67,9 @@ func parseAppOptions(args []string) (appOptions, error) {
 	}
 	if options.dataDir == "" {
 		return appOptions{}, errors.New("app data directory is required")
+	}
+	if options.desktopHost {
+		options.noBrowser = true
 	}
 	options.walletFile = resolveHumanWalletPath(options.walletFile, os.Getenv("BTC09_WALLET_PATH"), options.dataDir, params.Name)
 	if options.mode == "" {
@@ -185,6 +193,68 @@ func desktopLaunchMessage(noBrowser bool, info appRuntimeInfo) string {
 	return "Open BTC09 Wallet in your browser: " + info.LaunchURL
 }
 
+func runDesktopHost(ctx context.Context, options appOptions, input io.Reader, output io.Writer) error {
+	if ctx == nil || input == nil || output == nil {
+		return errors.New("incomplete desktop host configuration")
+	}
+	options.noBrowser = true
+	hostContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ready := make(chan appRuntimeInfo, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- runDesktopApp(hostContext, options, ready)
+	}()
+
+	var info appRuntimeInfo
+	select {
+	case info = <-ready:
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		cancel()
+		<-done
+		return ctx.Err()
+	}
+	launch := struct {
+		SchemaVersion int    `json:"schema_version"`
+		Version       string `json:"version"`
+		LaunchURL     string `json:"launch_url"`
+	}{SchemaVersion: 1, Version: nodeVersion, LaunchURL: info.LaunchURL}
+	if err := json.NewEncoder(output).Encode(launch); err != nil {
+		cancel()
+		<-done
+		return fmt.Errorf("write desktop host launch information: %w", err)
+	}
+
+	inputDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, input)
+		inputDone <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case inputErr := <-inputDone:
+		cancel()
+		runtimeErr := <-done
+		if runtimeErr != nil && !errors.Is(runtimeErr, context.Canceled) {
+			return runtimeErr
+		}
+		if inputErr != nil {
+			return fmt.Errorf("desktop host connection: %w", inputErr)
+		}
+		return nil
+	case <-ctx.Done():
+		cancel()
+		runtimeErr := <-done
+		if runtimeErr != nil && !errors.Is(runtimeErr, context.Canceled) {
+			return runtimeErr
+		}
+		return ctx.Err()
+	}
+}
+
 func appDecodeToken(token string) ([]byte, error) {
 	decoded := make([]byte, len(token)/2)
 	for index := 0; index < len(token); index += 2 {
@@ -290,8 +360,12 @@ func runDesktopApp(ctx context.Context, options appOptions, ready chan<- appRunt
 	if err != nil {
 		return err
 	}
+	var serverService desktop.Service = service
+	if options.walletOnly {
+		serverService = newWalletOnlyAppService(service)
+	}
 	handler, err := desktop.NewServer(desktop.Config{
-		LaunchToken: launchToken, Origin: origin, Version: nodeVersion, Service: service,
+		LaunchToken: launchToken, Origin: origin, Version: nodeVersion, Service: serverService,
 	})
 	if err != nil {
 		return err
@@ -351,7 +425,12 @@ func cmdApp(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	log.Printf("BTC09 Wallet starting on this computer")
-	if err := runDesktopApp(ctx, options, nil); err != nil && !errors.Is(err, context.Canceled) {
+	if options.desktopHost {
+		err = runDesktopHost(ctx, options, os.Stdin, os.Stdout)
+	} else {
+		err = runDesktopApp(ctx, options, nil)
+	}
+	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatal(err)
 	}
 }

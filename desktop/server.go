@@ -104,7 +104,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.exchangeLaunchToken(w, r)
 		return
 	}
-	if r.URL.Path == "/" || r.URL.Path == "/assets/app.css" || r.URL.Path == "/assets/app.js" || r.URL.Path == "/assets/icon.svg" {
+	if r.URL.Path == "/" || r.URL.Path == "/assets/app.css" || r.URL.Path == "/assets/network.js" || r.URL.Path == "/assets/app.js" || r.URL.Path == "/assets/icon.svg" {
 		s.handleAsset(w, r)
 		return
 	}
@@ -197,6 +197,8 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	case "/":
 	case "/assets/app.css":
 		name, contentType = "assets/app.css", "text/css; charset=utf-8"
+	case "/assets/network.js":
+		name, contentType = "assets/network.js", "text/javascript; charset=utf-8"
 	case "/assets/app.js":
 		name, contentType = "assets/app.js", "text/javascript; charset=utf-8"
 	case "/assets/icon.svg":

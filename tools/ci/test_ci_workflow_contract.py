@@ -44,6 +44,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             'python-version: "3.13"',
             "node --test tools/discord/*.test.mjs",
             "node --test nineinbox/web/*.test.mjs",
+            "node --test tools/desktop/*.test.mjs tools/desktop/*.test.cjs",
             "python -m unittest discover -s bot/tests -p 'test_*.py'",
             "python -m unittest \\",
             "tools.release.test_package_macos",
@@ -53,6 +54,23 @@ class CIWorkflowContractTest(unittest.TestCase):
             "tools.deploy.test_web_presence_contract",
             "tools.exchange.test_btc09_exchange_smoke",
             "tools.ci.test_ci_workflow_contract",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.workflow)
+
+    def test_native_wallet_is_checked_on_each_desktop_platform(self):
+        for token in (
+            "name: Native wallet",
+            "windows-latest",
+            "macos-14",
+            "ubuntu-22.04",
+            "libwebkit2gtk-4.1-dev",
+            "libayatana-appindicator3-dev",
+            "dtolnay/rust-toolchain@stable",
+            "cargo fmt --manifest-path walletapp/src-tauri/Cargo.toml -- --check",
+            "cargo test --manifest-path walletapp/src-tauri/Cargo.toml",
+            "npm run desktop:build -- --no-bundle",
+            "npm run store:build -- --no-bundle",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.workflow)

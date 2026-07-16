@@ -167,12 +167,27 @@ func newAppService(config appServiceConfig) (*appService, error) {
 		now: time.Now,
 	}
 	service.miningHTTP = strings.HasPrefix(miningURL, "http://127.0.0.1:") || strings.HasPrefix(miningURL, "http://[::1]:")
-	service.minerStatus = desktop.MinerStatus{Available: true, State: "stopped", LogicalCPUs: runtime.NumCPU(), MiningMode: "pplns", PoolFeeBPS: 0}
+	logicalCPUs := runtime.NumCPU()
+	service.minerStatus = desktop.MinerStatus{
+		Available: true, State: "stopped", Workers: defaultAppMinerWorkers(logicalCPUs),
+		LogicalCPUs: logicalCPUs, MiningMode: "pplns", PoolFeeBPS: 0,
+	}
 	service.newMiner = func(config pool.RemoteClientConfig) (appMinerClient, error) {
 		return pool.NewPPLNSRemoteClient(config)
 	}
 	service.submit = service.submitPayment
 	return service, nil
+}
+
+func defaultAppMinerWorkers(logicalCPUs int) int {
+	workers := logicalCPUs / 4
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > 4 {
+		workers = 4
+	}
+	return workers
 }
 
 func (s *appService) MinerStatus(ctx context.Context) (desktop.MinerStatus, error) {
@@ -201,10 +216,7 @@ func (s *appService) StartMiner(ctx context.Context, request desktop.MinerStartR
 	logicalCPUs := runtime.NumCPU()
 	workers := request.Workers
 	if workers == 0 {
-		workers = logicalCPUs - 1
-		if workers < 1 {
-			workers = 1
-		}
+		workers = defaultAppMinerWorkers(logicalCPUs)
 	}
 	if workers < 1 || workers > logicalCPUs {
 		return desktop.MinerStatus{}, publicAppError(http.StatusBadRequest, "miner_workers_invalid", "Choose between 1 and the available logical CPU count.", nil)
@@ -390,7 +402,7 @@ func (s *appService) Status(ctx context.Context) (desktop.Status, error) {
 	}
 	status := desktop.Status{
 		Version: s.version, Network: s.network, Mode: s.mode, WalletPath: s.walletFile,
-		SyncState: "offline",
+		SyncState: "offline", MiningAvailable: true,
 	}
 	if _, err := os.Stat(s.walletFile); errors.Is(err, os.ErrNotExist) {
 		status.Addresses = []string{}

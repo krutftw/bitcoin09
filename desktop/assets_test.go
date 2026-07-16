@@ -9,7 +9,7 @@ import (
 )
 
 func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
-	files := []string{"assets/index.html", "assets/app.css", "assets/app.js", "assets/icon.svg"}
+	files := []string{"assets/index.html", "assets/app.css", "assets/network.js", "assets/app.js", "assets/icon.svg"}
 	contents := make(map[string]string, len(files))
 	for _, name := range files {
 		body, err := fs.ReadFile(assetsFS, name)
@@ -25,6 +25,9 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 		if name == "assets/app.js" {
 			// Explorer links are user actions, not resources loaded by the interface.
 			lower = strings.Replace(lower, `https://explorer.btc09.org/tx/`, "", 1)
+		}
+		if name == "assets/icon.svg" {
+			lower = strings.Replace(lower, `xmlns="http://www.w3.org/2000/svg"`, "", 1)
 		}
 		if strings.Contains(lower, "https://") || strings.Contains(lower, "http://") || strings.Contains(lower, "//cdn") {
 			t.Fatalf("%s contains an external resource", name)
@@ -55,10 +58,16 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 	for _, required := range []string{
 		`/api/v1/status`, `/api/v1/wallet/v2/create`, `/api/v1/wallet/address`,
 		`/api/v1/wallet/backup`, `/api/v1/send/preview`, `/api/v1/send/confirm`,
-		`X-BTC09-CSRF`, `navigator.clipboard`, `pending_id`, `formatCoins`, `address-chip-text`,
+		`BTC09Network.request`, `navigator.clipboard`, `pending_id`, `formatCoins`, `address-chip-text`,
 	} {
 		if !strings.Contains(javascript, required) {
 			t.Errorf("app script is missing %q", required)
+		}
+	}
+	network := contents["assets/network.js"]
+	for _, required := range []string{`X-BTC09-CSRF`, `credentials: "same-origin"`, `BTC09 Wallet lost contact with the app`} {
+		if !strings.Contains(network, required) {
+			t.Errorf("network helper is missing %q", required)
 		}
 	}
 
@@ -75,6 +84,44 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 	for _, generic := range []string{"Arial", "Inter", "Roboto", "purple"} {
 		if strings.Contains(css, generic) {
 			t.Errorf("app stylesheet contains generic design token %q", generic)
+		}
+	}
+}
+
+func TestFirstRunKeepsThePrimaryActionInACommonLaptopViewport(t *testing.T) {
+	htmlBody, err := fs.ReadFile(assetsFS, "assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(htmlBody)
+	for _, required := range []string{
+		`<details class="file-location">`,
+		`<summary>Stored on this device</summary>`,
+		`<code id="first-run-path">`,
+	} {
+		if !strings.Contains(html, required) {
+			t.Errorf("friendly wallet location is missing %q", required)
+		}
+	}
+
+	cssBody, err := fs.ReadFile(assetsFS, "assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(cssBody)
+	for _, required := range []string{
+		`main { min-width: 0; padding: 18px 28px 28px;`,
+		`.first-run { width: min(540px, 100%); margin: 6px auto 12px; padding: 24px 32px;`,
+		`width: 48px; height: 48px; margin-bottom: 14px;`,
+		`.file-location { margin: 14px 0 12px; padding: 12px;`,
+		`.setup-switch { margin: 12px 0;`,
+		`.full-action { width: 100%; margin-top: 16px;`,
+		`.file-location summary::after { content: "Show location";`,
+		`.file-location[open] summary::after { content: "Hide location";`,
+		`.setup-mark { display: none; }`,
+	} {
+		if !strings.Contains(css, required) {
+			t.Errorf("compact first-run layout is missing %q", required)
 		}
 	}
 }
@@ -343,6 +390,24 @@ func TestEmbeddedInterfaceIncludesClearWalletActivityMaxAndCleanup(t *testing.T)
 	}
 }
 
+func TestWalletOnlyBuildRemovesMiningFromNavigation(t *testing.T) {
+	javascriptBody, err := fs.ReadFile(assetsFS, "assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(javascriptBody)
+	for _, required := range []string{
+		`function setMinerAvailable(available)`,
+		`minerTab.hidden = !available`,
+		`status.mining_available !== false`,
+		`error.code === "miner_unavailable"`,
+	} {
+		if !strings.Contains(javascript, required) {
+			t.Errorf("wallet-only navigation is missing %q", required)
+		}
+	}
+}
+
 func TestAuthenticatedRootServesInterfaceAndAssets(t *testing.T) {
 	server := testServer(t)
 	cookie, _ := launchSession(t, server)
@@ -353,6 +418,7 @@ func TestAuthenticatedRootServesInterfaceAndAssets(t *testing.T) {
 	}{
 		{path: "/", contentType: "text/html", contains: "BTC09 Wallet"},
 		{path: "/assets/app.css", contentType: "text/css", contains: "--copper"},
+		{path: "/assets/network.js", contentType: "text/javascript", contains: "BTC09Network"},
 		{path: "/assets/app.js", contentType: "text/javascript", contains: "/api/v1/status"},
 		{path: "/assets/icon.svg", contentType: "image/svg+xml", contains: "<svg"},
 	} {

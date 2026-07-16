@@ -52,6 +52,8 @@ jobs:
         run: node --test tools/discord/*.test.mjs
       - name: Nine Inbox contracts
         run: node --test nineinbox/web/*.test.mjs
+      - name: Native wallet contracts
+        run: node --test tools/desktop/*.test.mjs tools/desktop/*.test.cjs
       - name: Discord bot tests
         run: python -m unittest discover -s bot/tests -p 'test_*.py'
       - name: Website and deployment contracts
@@ -64,3 +66,48 @@ jobs:
             tools.deploy.test_web_presence_contract \
             tools.exchange.test_btc09_exchange_smoke \
             tools.ci.test_ci_workflow_contract
+
+  native-wallet:
+    name: Native wallet (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-14
+          - ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: walletapp/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: walletapp/src-tauri -> target
+      - name: Install native wallet dependencies
+        working-directory: walletapp
+        run: npm ci
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path walletapp/src-tauri/Cargo.toml -- --check
+      - name: Test native shell
+        run: cargo test --manifest-path walletapp/src-tauri/Cargo.toml
+      - name: Compile native wallet
+        working-directory: walletapp
+        run: npm run desktop:build -- --no-bundle
+      - name: Compile wallet-only edition
+        working-directory: walletapp
+        run: npm run store:build -- --no-bundle

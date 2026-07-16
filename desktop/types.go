@@ -22,6 +22,7 @@ type Status struct {
 	PeerCount            int      `json:"peer_count"`
 	SyncState            string   `json:"sync_state"`
 	SendAvailable        bool     `json:"send_available"`
+	MiningAvailable      bool     `json:"mining_available"`
 }
 
 type RecoveryWalletCreateRequest struct {

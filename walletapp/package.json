@@ -1,0 +1,16 @@
+{
+  "name": "btc09-wallet",
+  "private": true,
+  "version": "0.1.33",
+  "description": "Native BTC09 wallet",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "store:build": "tauri build --features wallet-only --config src-tauri/tauri.store.conf.json"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
+  }
+}

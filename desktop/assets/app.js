@@ -17,22 +17,7 @@ const state = {
 const byId = (id) => document.getElementById(id);
 
 async function api(path, options = {}) {
-  const init = { credentials: "same-origin", ...options };
-  if (init.method === "POST") {
-    init.headers = {
-      "Content-Type": "application/json",
-      "X-BTC09-CSRF": state.csrf,
-      ...(init.headers || {}),
-    };
-  }
-  const response = await fetch(path, init);
-  const payload = await response.json();
-  if (!response.ok || !payload.ok) {
-    const error = new Error(payload?.error?.message || "BTC09 Wallet could not complete that action.");
-    error.code = payload?.error?.code || "request_failed";
-    throw error;
-  }
-  return payload.data;
+  return BTC09Network.request(path, options, { csrf: () => state.csrf });
 }
 
 function formatCoins(units) {
@@ -141,7 +126,9 @@ function renderStatus(status) {
   byId("cleanup-summary").textContent = cleanupRecommended
     ? `${Number(status.spendable_output_count || 0).toLocaleString()} small payments are making sends heavier. Combining them now will help.`
     : "Combine small payments now to make a future send simpler.";
-  refreshMinerStatus({ quiet: true });
+  const miningAvailable = status.mining_available !== false;
+  setMinerAvailable(miningAvailable);
+  if (miningAvailable) refreshMinerStatus({ quiet: true });
 }
 
 async function refreshStatus({ quiet = false } = {}) {
@@ -645,6 +632,17 @@ function minerIsActive(status) {
   return ["connecting", "mining", "retrying", "stopping"].includes(status?.state);
 }
 
+function setMinerAvailable(available) {
+  const minerTab = document.querySelector('[data-panel="miner-panel"]');
+  if (!minerTab) return;
+  minerTab.hidden = !available;
+  minerTab.parentElement?.classList.toggle("wallet-only", !available);
+  if (!available && minerTab.classList.contains("is-active")) {
+    const receiveTab = document.querySelector('[data-panel="receive-panel"]');
+    if (receiveTab) selectPanel(receiveTab);
+  }
+}
+
 function minerStateCopy(status) {
   if (!status?.available) return "The official miner is not available in this build.";
   if (!status.wallet_ready) return "Create your wallet before starting the miner.";
@@ -746,10 +744,13 @@ function renderMinerStatus(status) {
 
 async function refreshMinerStatus({ quiet = true } = {}) {
   try {
-    renderMinerStatus(await api("/api/v1/miner/status"));
+    const status = await api("/api/v1/miner/status");
+    setMinerAvailable(true);
+    renderMinerStatus(status);
   } catch (error) {
     clearTimeout(state.minerPollTimer);
     state.minerPollTimer = null;
+    if (error.code === "miner_unavailable") setMinerAvailable(false);
     if (!quiet) showToast(error.message, true);
   }
 }
