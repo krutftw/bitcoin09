@@ -1,4 +1,5 @@
 const invoke = window.__TAURI__?.core?.invoke;
+const barcodeScanner = window.__TAURI__?.barcodeScanner;
 const requestedDemo = new URLSearchParams(window.location.search).get("demo");
 const demoScreen = navigator.webdriver ? requestedDemo : null;
 const pluginPrefix = "plugin:wallet-core|";
@@ -10,6 +11,7 @@ const state = {
   recoveryPhrase: null,
   screen: null,
   locked: false,
+  resumeAfterUnlock: null,
   toastTimer: null,
 };
 
@@ -126,6 +128,58 @@ function shorten(value, start = 8, end = 6) {
 
 function normalizePhrase(value) {
   return value.trim().toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+}
+
+function scannedAddress(value) {
+  if (typeof value !== "string") return "";
+  const address = value.trim();
+  return address.length >= 26 && address.length <= 64 &&
+    /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/.test(address)
+    ? address : "";
+}
+
+async function syncLockAfterNativeView() {
+  const status = await call("status").catch(() => null);
+  if (!status || (status.wallet_state !== "locked" && !status.needs_unlock)) return false;
+  state.locked = true;
+  showRoute("unlock", "replace");
+  return true;
+}
+
+async function scanRecipient() {
+  if (!barcodeScanner?.scan || !barcodeScanner?.Format?.QRCode) {
+    toast("QR scanning isn't available on this phone.", true);
+    return;
+  }
+  state.resumeAfterUnlock = "send";
+  try {
+    let permission = await barcodeScanner.checkPermissions();
+    if (permission === "prompt" || permission === "prompt-with-rationale") {
+      permission = await barcodeScanner.requestPermissions();
+    }
+    if (permission !== "granted") {
+      toast("Camera access is off. Enable it in your phone settings to scan a QR code.", true);
+      return;
+    }
+    const result = await barcodeScanner.scan({
+      cameraDirection: "back",
+      formats: [barcodeScanner.Format.QRCode],
+    });
+    const address = scannedAddress(result?.content);
+    if (!address) {
+      toast("That QR code does not contain a BTC09 address.", true);
+      return;
+    }
+    byId("send-address").value = address;
+    toast("Address scanned");
+  } catch (error) {
+    if (!/cancel|dismiss/i.test(String(error?.message || error))) {
+      toast("The QR code could not be read. Try again.", true);
+    }
+  } finally {
+    const locked = await syncLockAfterNativeView();
+    if (!locked) state.resumeAfterUnlock = null;
+  }
 }
 
 function setNetwork(syncState) {
@@ -339,8 +393,13 @@ function bindEvents() {
     }
   });
   byId("unlock-wallet").addEventListener("click", async () => {
+    const returnTo = state.resumeAfterUnlock;
     const result = await run("Opening wallet…", () => call("unlock"));
-    if (result) await refreshWallet();
+    if (result) {
+      await refreshWallet();
+      if (returnTo && !state.locked) showRoute(returnTo, "replace");
+      state.resumeAfterUnlock = null;
+    }
   });
 
   byId("backup-confirmed").addEventListener("change", (event) => { byId("finish-backup").disabled = !event.target.checked; });
@@ -370,6 +429,7 @@ function bindEvents() {
     try { byId("send-address").value = (await navigator.clipboard.readText()).trim(); }
     catch { toast("Press and hold the address field to paste.", true); }
   });
+  byId("scan-address").addEventListener("click", scanRecipient);
 
   byId("send-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -398,6 +458,7 @@ function bindEvents() {
   byId("lock-wallet").addEventListener("click", async () => {
     await cancelPending();
     await call("lock").catch(() => null);
+    state.resumeAfterUnlock = null;
     state.locked = true;
     showRoute("unlock", "replace");
   });

@@ -18,6 +18,7 @@ test("mobile wallet has ordinary app screens without terminal language", async (
   for (const text of ["Receive", "Send", "Recent activity", "Recovery words", "No account. No terminal."]) {
     assert.match(html, new RegExp(text.replace(".", "\\.")));
   }
+  assert.match(html, /id=["']scan-address["'][^>]*>Scan QR</);
   assert.doesNotMatch(html, /command line|CLI|localhost|127\.0\.0\.1|datadir|RPC/i);
 });
 
@@ -31,7 +32,13 @@ test("mobile adapter uses only the wallet plugin and locks on background", async
   assert.match(script, /call\("lock"\)/);
   assert.match(script, /BigInt/);
   assert.match(script, /navigator\.share/);
+  assert.match(script, /__TAURI__\?\.barcodeScanner/);
+  assert.match(script, /checkPermissions\(\)/);
+  assert.match(script, /requestPermissions\(\)/);
+  assert.match(script, /formats:\s*\[barcodeScanner\.Format\.QRCode\]/);
+  assert.match(script, /cameraDirection:\s*["']back["']/);
   assert.doesNotMatch(script, /fetch\(|XMLHttpRequest|WebSocket|localStorage|sessionStorage/);
+  assert.doesNotMatch(script, /setInterval|enumerateDevices|getUserMedia/);
   assert.doesNotMatch(script, /console\.(log|error)|recovery_phrase.*JSON\.stringify/i);
   assert.doesNotMatch(script, /innerHTML/);
 });

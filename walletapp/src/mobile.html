@@ -141,9 +141,12 @@
           <h1>Make a payment</h1>
           <form id="send-form" class="send-form">
             <label for="send-address">Recipient address</label>
-            <div class="input-with-button">
+            <div>
               <input id="send-address" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Paste BTC09 address" required />
-              <button class="input-action" id="paste-address" type="button">Paste</button>
+              <div class="recipient-actions">
+                <button class="secondary" id="scan-address" type="button">Scan QR</button>
+                <button class="secondary" id="paste-address" type="button">Paste</button>
+              </div>
             </div>
             <label for="send-amount">Amount</label>
             <div class="amount-input">

@@ -100,6 +100,12 @@ class CIWorkflowContractTest(unittest.TestCase):
             "zipalign\" -c -P 16",
             'android:allowBackup="false"',
             'android:usesCleartextTraffic="false"',
+            "android.permission.CAMERA",
+            "android.permission.VIBRATE",
+            'android.hardware.camera.any"[[:space:]]*android:required="false"',
+            "aapt2\" dump badging",
+            "native-code: 'arm64-v8a'",
+            "miner|sidecar|btc09-core",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.workflow)
