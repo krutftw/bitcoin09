@@ -217,6 +217,39 @@ class DirectDistributionContractTest(unittest.TestCase):
             "preinstalled rustup must be put on PATH before deciding to run rustup-init",
         )
 
+    def test_appveyor_remaps_and_rejects_local_rust_build_paths(self):
+        wrapper = pathlib.Path(
+            "tools/release/run_windows_appveyor.ps1"
+        ).read_text(encoding="utf-8")
+        builder = pathlib.Path(
+            "tools/release/build_windows_appveyor.ps1"
+        ).read_text(encoding="utf-8")
+
+        for token in (
+            "$env:CARGO_ENCODED_RUSTFLAGS",
+            "[char]0x1f",
+            "--remap-path-prefix=$repoRoot=/src/bitcoin09",
+            "--remap-path-prefix=$cargoHome=/cargo",
+            "--remap-path-prefix=$rustupHome=/rustup",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, wrapper)
+
+        self.assertLess(
+            wrapper.index("$env:CARGO_ENCODED_RUSTFLAGS"),
+            wrapper.index("build_windows_appveyor.ps1"),
+            "Rust paths must be remapped before the Tauri build starts",
+        )
+        for token in (
+            "Assert-NoLocalBuildPaths",
+            "[System.Text.Encoding]::GetEncoding(28591)",
+            "$env:USERPROFILE",
+            "$walletExecutable",
+            "$core",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, builder)
+
     def test_appveyor_rustup_bootstrap_uses_the_process_exit_code(self):
         script = pathlib.Path(
             "tools/release/install_appveyor_toolchain.ps1"
