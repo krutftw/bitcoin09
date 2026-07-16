@@ -462,22 +462,8 @@ textarea { resize: none; line-height: 1.5; }
 .two-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
 
 .send-form { margin-top: 22px; }
-.input-with-button { position: relative; }
-.input-with-button input { padding-right: 72px; }
-
-.input-action {
-  min-height: 40px;
-  padding: 0 12px;
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  border: 0;
-  border-radius: 9px;
-  color: var(--orange-dark);
-  background: #f8eee5;
-  font-size: 12px;
-  font-weight: 750;
-}
+.recipient-actions { margin: 8px 0 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.recipient-actions .secondary { min-height: 44px; padding: 8px 12px; border-radius: 11px; font-size: 13px; }
 
 .amount-input { position: relative; }
 .amount-input input { padding-right: 58px; font-variant-numeric: tabular-nums; }

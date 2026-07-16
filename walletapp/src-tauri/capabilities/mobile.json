@@ -6,6 +6,9 @@
   "platforms": ["android", "iOS"],
   "permissions": [
     "core:default",
-    "wallet-core:default"
+    "wallet-core:default",
+    "barcode-scanner:allow-check-permissions",
+    "barcode-scanner:allow-request-permissions",
+    "barcode-scanner:allow-scan"
   ]
 }

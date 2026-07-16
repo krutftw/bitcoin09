@@ -66,9 +66,26 @@ try {
   }
 
   const flow = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await flow.addInitScript(() => {
+    window.__TAURI__ = {
+      barcodeScanner: {
+        Format: { QRCode: "QR_CODE" },
+        checkPermissions: async () => "prompt",
+        requestPermissions: async () => "granted",
+        scan: async (options) => {
+          window.__btc09ScannerOptions = options;
+          return { content: "4d8kwx6xn65W5LwJV4qRJubSkuyHg124kn", format: "QR_CODE", bounds: {} };
+        },
+      },
+    };
+  });
   await flow.goto(`http://127.0.0.1:${address.port}/mobile.html?demo=home`, { waitUntil: "networkidle" });
   await flow.getByRole("button", { name: "Send" }).click();
-  await flow.locator("#send-address").fill("4d8kwx6xn65W5LwJV4qRJubSkuyHg124kn");
+  await flow.getByRole("button", { name: "Scan QR" }).click();
+  assert.equal(await flow.locator("#send-address").inputValue(), "4d8kwx6xn65W5LwJV4qRJubSkuyHg124kn");
+  assert.deepEqual(await flow.evaluate(() => window.__btc09ScannerOptions), {
+    cameraDirection: "back", formats: ["QR_CODE"],
+  });
   await flow.locator("#send-amount").fill("1.25");
   await flow.getByRole("button", { name: "Review payment" }).click();
   await flow.locator("#review-screen:visible").waitFor();

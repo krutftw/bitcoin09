@@ -112,7 +112,13 @@ test("the Tauri bridge exposes only the bounded wallet command set", async () =>
   assert.doesNotMatch(mobile, /shell|process|filesystem|http/);
   const parsed = JSON.parse(capability);
   assert.deepEqual(parsed.platforms, ["android", "iOS"]);
-  assert.deepEqual(parsed.permissions, ["core:default", "wallet-core:default"]);
+  assert.deepEqual(parsed.permissions, [
+    "core:default",
+    "wallet-core:default",
+    "barcode-scanner:allow-check-permissions",
+    "barcode-scanner:allow-request-permissions",
+    "barcode-scanner:allow-scan",
+  ]);
 });
 
 test("the Android host uses BTC09 launcher artwork rather than template icons", async () => {
@@ -168,4 +174,29 @@ test("Android wrapper pins the reviewed Gradle download", async () => {
   ), "utf8");
   assert.match(properties, /gradle-8\.14\.3-bin\.zip/);
   assert.match(properties, /distributionSha256Sum=bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531/);
+});
+
+test("QR scanning is mobile-only and uses the smallest camera surface", async () => {
+  const [cargo, rust, capability, androidManifest, iosInfo] = await Promise.all([
+    readFile(path.join(root, "walletapp", "src-tauri", "Cargo.toml"), "utf8"),
+    readFile(path.join(root, "walletapp", "src-tauri", "src", "lib.rs"), "utf8"),
+    readFile(path.join(root, "walletapp", "src-tauri", "capabilities", "mobile.json"), "utf8"),
+    readFile(path.join(root, "walletapp", "src-tauri", "gen", "android", "app", "src", "main", "AndroidManifest.xml"), "utf8"),
+    readFile(path.join(root, "walletapp", "src-tauri", "Info.ios.plist"), "utf8"),
+  ]);
+  assert.match(cargo, /cfg\(any\(target_os = "android", target_os = "ios"\)\)[\s\S]*tauri-plugin-barcode-scanner = "=2\.4\.5"/);
+  assert.match(rust, /\.plugin\(tauri_plugin_barcode_scanner::init\(\)\)/);
+  assert.match(androidManifest, /android\.permission\.CAMERA/);
+  assert.match(androidManifest, /android\.permission\.VIBRATE" tools:node="remove"/);
+  assert.match(androidManifest, /android\.hardware\.camera\.any"[\s\S]*android:required="false"/);
+  assert.match(androidManifest, /android\.hardware\.camera" android:required="false"/);
+  assert.match(iosInfo, /NSCameraUsageDescription/);
+  assert.match(iosInfo, /Scan a BTC09 recipient address from a QR code\./);
+  const permissions = JSON.parse(capability).permissions;
+  for (const permission of [
+    "barcode-scanner:allow-check-permissions",
+    "barcode-scanner:allow-request-permissions",
+    "barcode-scanner:allow-scan",
+  ]) assert.ok(permissions.includes(permission), `missing ${permission}`);
+  assert.ok(!permissions.some((permission) => /vibrate|open-app-settings|allow-cancel/.test(permission)));
 });

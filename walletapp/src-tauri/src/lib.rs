@@ -106,6 +106,7 @@ pub fn run() {
     #[cfg(mobile)]
     tauri::Builder::default()
         .plugin(tauri_plugin_wallet_core::init())
+        .plugin(tauri_plugin_barcode_scanner::init())
         .run(tauri::generate_context!())
         .expect("BTC09 Wallet could not start");
 }
