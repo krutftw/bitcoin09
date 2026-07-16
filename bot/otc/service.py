@@ -31,6 +31,7 @@ from bot.otc.explorer import (
     ExplorerError,
     ExplorerProtocolError,
     Tip,
+    TipMismatch,
     TransactionStatus,
     _address_text as _canonical_09c_address,
 )
@@ -1164,7 +1165,15 @@ class TradeService:
     def _reconcile_all_deposits(
         self,
     ) -> tuple[AddressBatch, ReconciliationResult]:
-        batch = self.explorer.batch_outputs(self.store.watched_deposit_addresses)
+        for attempt in range(3):
+            try:
+                batch = self.explorer.batch_outputs(
+                    self.store.watched_deposit_addresses
+                )
+                break
+            except TipMismatch:
+                if attempt == 2:
+                    raise
         if not isinstance(batch, AddressBatch):
             raise AccountingInvariantError("explorer returned an invalid address batch")
         if batch.network != self.store.network:
