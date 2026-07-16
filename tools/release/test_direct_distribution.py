@@ -180,6 +180,24 @@ class DirectDistributionContractTest(unittest.TestCase):
             "rustup-init writes non-fatal warnings to stderr on AppVeyor",
         )
 
+    def test_appveyor_runs_native_tools_outside_the_ps_runner(self):
+        pipeline = pathlib.Path("appveyor.yml").read_text(encoding="utf-8")
+        wrapper_path = pathlib.Path("tools/release/run_windows_appveyor.ps1")
+        self.assertTrue(wrapper_path.exists(), "the Windows AppVeyor wrapper is missing")
+        wrapper = wrapper_path.read_text(encoding="utf-8") if wrapper_path.exists() else ""
+        command = (
+            "cmd: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass "
+            "-File tools\\release\\run_windows_appveyor.ps1"
+        )
+        self.assertIn(command, pipeline)
+        self.assertNotIn("ps: ./tools/release/install_appveyor_toolchain.ps1", pipeline)
+        self.assertNotIn("ps: ./tools/release/build_windows_appveyor.ps1", pipeline)
+        self.assertLess(
+            wrapper.index("install_appveyor_toolchain.ps1"),
+            wrapper.index("build_windows_appveyor.ps1"),
+            "the pinned toolchain must be installed before the Windows build starts",
+        )
+
     def test_gitlab_has_manual_reproducible_direct_package_jobs(self):
         pipeline = pathlib.Path(".gitlab-ci.yml").read_text(encoding="utf-8")
         for token in (
