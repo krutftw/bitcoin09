@@ -332,90 +332,23 @@ func (c *Chain) ConfirmedOutputsForPKH(pkh [20]byte) (AddressOutputSnapshot, err
 // under one Chain RLock. The canonical sequence is validated exactly once and
 // outputs are sorted by raw transaction ID followed by numeric vout.
 func (c *Chain) SpendableOutputsForPKHs(pkhs [][20]byte) (SpendableOutputsSnapshot, error) {
+	owners, err := walletOwners(pkhs, false)
+	if err != nil {
+		return SpendableOutputsSnapshot{}, err
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	tip, err := c.canonicalTipSnapshotLocked()
+	view, err := c.walletViewForOwnersLocked(owners, 0)
 	if err != nil {
 		return SpendableOutputsSnapshot{}, err
 	}
-	result := SpendableOutputsSnapshot{
-		Network: tip.Network, Complete: true, Tip: tip,
-		Outputs: make([]SpendableOutputSnapshot, 0),
-	}
-	if uint64(len(pkhs)) > uint64(^uint32(0)) {
-		return SpendableOutputsSnapshot{}, errors.New("too many spendable-output owners")
-	}
-	owners := make(map[[20]byte]uint32, len(pkhs))
-	for index, pkh := range pkhs {
-		if _, duplicate := owners[pkh]; duplicate {
-			return SpendableOutputsSnapshot{}, errors.New("duplicate spendable-output owner")
-		}
-		owners[pkh] = uint32(index)
-	}
-	canonical, err := c.validatedCanonicalSequenceLocked()
-	if err != nil {
-		return SpendableOutputsSnapshot{}, err
-	}
-	type createdOutput struct {
-		output   SpendableOutputSnapshot
-		height   int64
-		coinbase bool
-		spent    bool
-	}
-	created := make(map[OutPoint]int)
-	matched := make([]createdOutput, 0)
-	for height, blockIndex := range canonical {
-		for _, tx := range blockIndex.block.Txs {
-			if tx == nil {
-				return SpendableOutputsSnapshot{}, errors.New("nil transaction in canonical spendable snapshot")
-			}
-			for _, input := range tx.Ins {
-				if index, ok := created[input.Prev]; ok {
-					if matched[index].spent {
-						return SpendableOutputsSnapshot{}, errors.New("canonical output has multiple spenders")
-					}
-					matched[index].spent = true
-				}
-			}
-			txID := tx.ID()
-			for vout, output := range tx.Outs {
-				ownerIndex, owned := owners[output.PubKeyHash]
-				if !owned {
-					continue
-				}
-				if output.Value <= 0 || !MoneyRange(output.Value) {
-					return SpendableOutputsSnapshot{}, errors.New("canonical owned output amount out of range")
-				}
-				outpoint := OutPoint{TxID: txID, Idx: uint32(vout)}
-				if _, duplicate := created[outpoint]; duplicate {
-					return SpendableOutputsSnapshot{}, errors.New("duplicate canonical owned outpoint")
-				}
-				created[outpoint] = len(matched)
-				matched = append(matched, createdOutput{
-					output: SpendableOutputSnapshot{
-						OutPoint: outpoint, AmountUnits: output.Value,
-						OwnerPKH: output.PubKeyHash, OwnerIndex: ownerIndex,
-					},
-					height: int64(height), coinbase: tx.IsCoinbase(),
-				})
-			}
-		}
-	}
-	for _, candidate := range matched {
-		if candidate.spent || (candidate.coinbase && tip.Height-candidate.height+1 < c.params.CoinbaseMaturity) {
-			continue
-		}
-		result.Outputs = append(result.Outputs, candidate.output)
-	}
-	sort.Slice(result.Outputs, func(i, j int) bool {
-		left, right := result.Outputs[i].OutPoint, result.Outputs[j].OutPoint
-		if comparison := bytes.Compare(left.TxID[:], right.TxID[:]); comparison != 0 {
-			return comparison < 0
-		}
-		return left.Idx < right.Idx
-	})
-	return result, nil
+	return SpendableOutputsSnapshot{
+		Network:  view.Network,
+		Complete: view.Complete,
+		Tip:      view.Tip,
+		Outputs:  view.SpendableOutputs,
+	}, nil
 }
 
 func (c *Chain) canonicalTipSnapshotLocked() (ChainTipSnapshot, error) {
