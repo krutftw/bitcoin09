@@ -85,6 +85,67 @@ class DirectDistributionContractTest(unittest.TestCase):
         native_status = homepage.split("Native wallet beta", 1)[-1].split("</aside>", 1)[0]
         self.assertNotIn("In preparation", native_status)
 
+    def test_homepage_and_download_guide_disclose_the_signing_policy(self):
+        homepage = pathlib.Path("docs/index.html").read_text(encoding="utf-8")
+        guide = pathlib.Path("docs/DIRECT-DOWNLOADS.md").read_text(encoding="utf-8")
+        required = (
+            "Code signing policy",
+            "Free code signing provided by",
+            "SignPath.io",
+            "certificate by SignPath Foundation",
+        )
+        for surface in (homepage, guide):
+            for token in required:
+                with self.subTest(token=token):
+                    self.assertIn(token, surface)
+
+    def test_appveyor_builds_the_unsigned_windows_artifact_for_signpath(self):
+        pipeline_path = pathlib.Path("appveyor.yml")
+        self.assertTrue(pipeline_path.exists(), "free AppVeyor pipeline is missing")
+        pipeline = pipeline_path.read_text(encoding="utf-8") if pipeline_path.exists() else ""
+        toolchain = pathlib.Path("tools/release/install_appveyor_toolchain.ps1")
+        build = pathlib.Path("tools/release/build_windows_appveyor.ps1")
+        self.assertTrue(toolchain.exists(), "AppVeyor toolchain installer is missing")
+        self.assertTrue(build.exists(), "AppVeyor Windows builder is missing")
+        implementation = "\n".join(
+            (
+                pipeline,
+                toolchain.read_text(encoding="utf-8") if toolchain.exists() else "",
+                build.read_text(encoding="utf-8") if build.exists() else "",
+            )
+        )
+        for token in (
+            "Visual Studio 2022",
+            "go1.25.12.windows-amd64.zip",
+            "d5dc82da351b00e5eedd04f41356817d674cc4308131f0f638a5b14c5c3af4cb",
+            "Install-Product node 24.16.0 x64",
+            "rustup toolchain install 1.95.0 --profile minimal --no-self-update",
+            "RUSTUP_TOOLCHAIN",
+            "npm ci",
+            "go test ./...",
+            "package_windows_direct.ps1",
+            "-AllowUnsignedPreflight",
+            "btc09-wallet-windows-x64-setup.exe",
+            "verify-wallet-edition.mjs",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, implementation)
+
+        for forbidden in (
+            "SIGNPATH_API_TOKEN",
+            "BEGIN PRIVATE KEY",
+            "signtool sign",
+            "rustup default",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, implementation)
+
+        self.assertLess(
+            implementation.index("prepare-sidecar.mjs wallet"),
+            implementation.index("cargo test --manifest-path walletapp/src-tauri/Cargo.toml"),
+            "Tauri tests need the wallet-only sidecar before Cargo starts",
+        )
+
     def test_gitlab_has_manual_reproducible_direct_package_jobs(self):
         pipeline = pathlib.Path(".gitlab-ci.yml").read_text(encoding="utf-8")
         for token in (

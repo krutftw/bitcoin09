@@ -12,6 +12,10 @@ BTC09 Wallet is distributed directly through GitHub Releases. No app-store accou
 
 Windows is waiting for free signing through SignPath Foundation; an unsigned installer is not published. macOS and iPhone are not included in this beta. v0.1.32 remains the stable full app for Windows, macOS, mining, and full-node use.
 
+## Code signing policy
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation. Read about [SignPath](https://signpath.io/) or open the full [Code signing policy](../CODE_SIGNING.md) for the signed scope, team roles, approval rules, privacy behavior, and security-reporting path.
+
 ## What wallet-only means
 
 The native package can create or restore a wallet, lock it, receive, review and send payments, show activity, back up the wallet, and combine small wallet outputs. It does not contain the node or mining commands. Mining remains available in the full BTC09 desktop release.
@@ -28,4 +32,4 @@ Do not use a wallet file sent through a direct message, a mirror, or a file-shar
 
 The project does not announce a native platform until its final file has passed artifact inspection, signature verification, a clean install, the wallet flow, checksum generation, upload, and download read-back. A platform that has not passed remains listed as in progress rather than downloadable.
 
-See the public [code signing policy](../CODE_SIGNING.md) for the Windows trust process.
+See the public [Code signing policy](../CODE_SIGNING.md) for the Windows trust process.
