@@ -3,21 +3,25 @@ package desktop
 import "context"
 
 type Status struct {
-	Version          string   `json:"version"`
-	Network          string   `json:"network"`
-	Mode             string   `json:"mode"`
-	WalletExists     bool     `json:"wallet_exists"`
-	WalletVersion    int      `json:"wallet_version"`
-	NeedsUnlock      bool     `json:"needs_unlock"`
-	WalletPath       string   `json:"wallet_path"`
-	Addresses        []string `json:"addresses"`
-	BalanceUnits     int64    `json:"balance_units"`
-	BalanceAvailable bool     `json:"balance_available"`
-	Height           int64    `json:"height"`
-	TipHash          string   `json:"tip_hash"`
-	PeerCount        int      `json:"peer_count"`
-	SyncState        string   `json:"sync_state"`
-	SendAvailable    bool     `json:"send_available"`
+	Version              string   `json:"version"`
+	Network              string   `json:"network"`
+	Mode                 string   `json:"mode"`
+	WalletExists         bool     `json:"wallet_exists"`
+	WalletVersion        int      `json:"wallet_version"`
+	NeedsUnlock          bool     `json:"needs_unlock"`
+	WalletPath           string   `json:"wallet_path"`
+	Addresses            []string `json:"addresses"`
+	BalanceUnits         int64    `json:"balance_units"`
+	ImmatureUnits        int64    `json:"immature_units"`
+	SpendableOutputCount int      `json:"spendable_output_count"`
+	CleanupAvailable     bool     `json:"cleanup_available"`
+	CleanupRecommended   bool     `json:"cleanup_recommended"`
+	BalanceAvailable     bool     `json:"balance_available"`
+	Height               int64    `json:"height"`
+	TipHash              string   `json:"tip_hash"`
+	PeerCount            int      `json:"peer_count"`
+	SyncState            string   `json:"sync_state"`
+	SendAvailable        bool     `json:"send_available"`
 }
 
 type RecoveryWalletCreateRequest struct {
@@ -56,6 +60,15 @@ type SendRequest struct {
 	Fee         string `json:"fee"`
 }
 
+type MaxSendRequest struct {
+	Destination string `json:"destination"`
+	Fee         string `json:"fee"`
+}
+
+type CleanupRequest struct {
+	Fee string `json:"fee"`
+}
+
 type SendPreview struct {
 	PendingID        string   `json:"pending_id"`
 	Destination      string   `json:"destination"`
@@ -73,6 +86,34 @@ type SendResult struct {
 	TxID       string `json:"txid"`
 	Status     string `json:"status"`
 	PeerWrites int    `json:"peer_writes"`
+}
+
+type CleanupPreview struct {
+	PendingID        string `json:"pending_id"`
+	Address          string `json:"address"`
+	AmountUnits      int64  `json:"amount_units"`
+	FeeUnits         int64  `json:"fee_units"`
+	InputCount       int    `json:"input_count"`
+	MoreAvailable    bool   `json:"more_available"`
+	TxID             string `json:"txid"`
+	ChainHeight      int64  `json:"chain_height"`
+	ExpiresAtUnix    int64  `json:"expires_at_unix"`
+	ConfirmationCode string `json:"confirmation_code"`
+}
+
+type ActivityItem struct {
+	TxID              string `json:"txid"`
+	Kind              string `json:"kind"`
+	Status            string `json:"status"`
+	NetUnits          int64  `json:"net_units"`
+	BlockHeight       int64  `json:"block_height"`
+	Confirmations     int64  `json:"confirmations"`
+	BlocksUntilMature int64  `json:"blocks_until_mature"`
+}
+
+type ActivityResult struct {
+	Height int64          `json:"height"`
+	Items  []ActivityItem `json:"items"`
 }
 
 type MinerStartRequest struct {
@@ -119,6 +160,15 @@ type Service interface {
 	Backup(context.Context, string) (BackupResult, error)
 	PreviewSend(context.Context, SendRequest) (SendPreview, error)
 	ConfirmSend(context.Context, string) (SendResult, error)
+}
+
+// WalletFeaturesService is optional so older embedded service implementations
+// remain source-compatible while the desktop server exposes richer wallet UI.
+type WalletFeaturesService interface {
+	Activity(context.Context) (ActivityResult, error)
+	PreviewMaxSend(context.Context, MaxSendRequest) (SendPreview, error)
+	PreviewCleanup(context.Context, CleanupRequest) (CleanupPreview, error)
+	ConfirmCleanup(context.Context, string) (SendResult, error)
 }
 
 // RecoveryWalletService is implemented by desktop services that support the
