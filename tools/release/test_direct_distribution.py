@@ -198,6 +198,23 @@ class DirectDistributionContractTest(unittest.TestCase):
             "the pinned toolchain must be installed before the Windows build starts",
         )
 
+    def test_appveyor_binds_goroot_to_the_pinned_go_toolchain(self):
+        script = pathlib.Path(
+            "tools/release/install_appveyor_toolchain.ps1"
+        ).read_text(encoding="utf-8")
+        goroot_assignment = script.index("$env:GOROOT = $goRoot")
+        go_validation = script.index("& go version")
+        self.assertLess(
+            goroot_assignment,
+            go_validation,
+            "Go must not reuse AppVeyor's preinstalled GOROOT",
+        )
+        self.assertIn(
+            "Set-AppveyorBuildVariable -Name GOROOT -Value $env:GOROOT",
+            script,
+        )
+        self.assertIn("& go env GOROOT", script)
+
     def test_gitlab_has_manual_reproducible_direct_package_jobs(self):
         pipeline = pathlib.Path(".gitlab-ci.yml").read_text(encoding="utf-8")
         for token in (
