@@ -1165,6 +1165,7 @@ class TradeService:
     def _reconcile_all_deposits(
         self,
     ) -> tuple[AddressBatch, ReconciliationResult]:
+        batch = None
         for attempt in range(3):
             try:
                 batch = self.explorer.batch_outputs(
