@@ -265,6 +265,21 @@ const marketBoardComponents = [
 const seedPosts = [
   {
     channelKey: "announcements",
+    marker: "Bitcoin 09 v0.1.32 is out.",
+    content: [
+      "Bitcoin 09 v0.1.32 is out.",
+      "",
+      "The wallet now shows sends, received payments, mining rewards, and confirmations in one Activity tab. Each entry can copy its TXID or open it in the explorer.",
+      "",
+      "Max works out the amount you can send after the fee. If your wallet has built up lots of small mining payments, Combine small payments prepares a same-wallet cleanup and shows the exact count, amount, fee, and check code before anything is sent.",
+      "",
+      "The main balance is now labelled ready to send. Any mining rewards waiting for maturity are shown separately. Cleanup is optional and costs the fee shown in the review.",
+      "",
+      "Release and checksums: https://github.com/krutftw/bitcoin09/releases/tag/v0.1.32",
+    ].join("\n"),
+  },
+  {
+    channelKey: "announcements",
     marker: "Bitcoin 09 v0.1.31 is out.",
     content: [
       "Bitcoin 09 v0.1.31 is out.",

@@ -518,6 +518,18 @@ def register_node_owned_commands(bot: commands.Bot) -> None:
     async def leaderboard_placeholder(_interaction: discord.Interaction) -> None:
         return None
 
+    @bot.tree.command(
+        name="wallet", description="Open the current Bitcoin 09 wallet guide."
+    )
+    async def wallet_placeholder(_interaction: discord.Interaction) -> None:
+        return None
+
+    @bot.tree.command(
+        name="mine", description="Open the current Bitcoin 09 mining guide."
+    )
+    async def mine_placeholder(_interaction: discord.Interaction) -> None:
+        return None
+
 
 class OTCBot(commands.Bot):
     def __init__(self, config: Config, runtime: Runtime) -> None:

@@ -107,13 +107,35 @@ test("registered stats commands and role buttons are routed", () => {
   assert.equal(classifyInteraction({ type: 2, data: { name: "stats" } }), "stats");
   assert.equal(classifyInteraction({ type: 2, data: { name: "rank" } }), "rank");
   assert.equal(classifyInteraction({ type: 2, data: { name: "leaderboard" } }), "leaderboard");
+  assert.equal(classifyInteraction({ type: 2, data: { name: "wallet" } }), "wallet");
+  assert.equal(classifyInteraction({ type: 2, data: { name: "mine" } }), "mine");
   assert.equal(classifyInteraction({ type: 3, data: { custom_id: "role:toggle:miner" } }), "role");
   assert.equal(classifyInteraction({ type: 2, data: { name: "unknown" } }), null);
   assert.deepEqual(statsBot.getCommandDefinitions().map(({ name }) => name), [
     "stats",
     "rank",
     "leaderboard",
+    "wallet",
+    "mine",
   ]);
+});
+
+test("wallet and mining help is short, current, and points to official pages", () => {
+  const wallet = statsBot.formatWalletHelp();
+  const mining = statsBot.formatMiningHelp();
+  assert.match(wallet, /Open the BTC09 Wallet/);
+  assert.match(wallet, /Send, receive, Activity/);
+  assert.match(wallet, /https:\/\/btc09\.org\/#download/);
+  assert.match(wallet, /recovery words/i);
+  assert.match(mining, /Mine tab/);
+  assert.match(mining, /PPLNS/);
+  assert.match(mining, /0% pool fee/);
+  assert.match(mining, /100 confirmations/);
+  assert.match(mining, /https:\/\/btc09\.org\/#mining-guide/);
+  for (const message of [wallet, mining]) {
+    assert.ok(message.length < 700, `help is too long: ${message.length}`);
+    assert.doesNotMatch(message, /—/);
+  }
 });
 
 test("XP rank roles are created once and displayed separately", async () => {

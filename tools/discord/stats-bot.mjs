@@ -107,6 +107,16 @@ export function getCommandDefinitions() {
       description: "Show the Bitcoin 09 community activity leaderboard.",
       type: 1,
     },
+    {
+      name: "wallet",
+      description: "Open the current Bitcoin 09 wallet guide.",
+      type: 1,
+    },
+    {
+      name: "mine",
+      description: "Open the current Bitcoin 09 mining guide.",
+      type: 1,
+    },
   ];
 }
 
@@ -189,6 +199,8 @@ async function handleInteraction(interaction) {
 	if (action === "stats") await handleStatsInteraction(interaction);
 	if (action === "rank") await handleRankInteraction(interaction);
 	if (action === "leaderboard") await handleLeaderboardInteraction(interaction);
+	if (action === "wallet") await respondToInteraction(interaction, formatWalletHelp(), true);
+	if (action === "mine") await respondToInteraction(interaction, formatMiningHelp(), true);
 	if (action === "role") await handleRoleButtonInteraction(interaction);
 }
 
@@ -196,8 +208,29 @@ export function classifyInteraction(interaction) {
 	if (interaction?.type === 2 && interaction.data?.name === "stats") return "stats";
 	if (interaction?.type === 2 && interaction.data?.name === "rank") return "rank";
 	if (interaction?.type === 2 && interaction.data?.name === "leaderboard") return "leaderboard";
+	if (interaction?.type === 2 && interaction.data?.name === "wallet") return "wallet";
+	if (interaction?.type === 2 && interaction.data?.name === "mine") return "mine";
 	if (interaction?.type === 3 && interaction.data?.custom_id?.startsWith("role:toggle:")) return "role";
 	return null;
+}
+
+export function formatWalletHelp() {
+  return [
+    "**BTC09 Wallet**",
+    "Open the BTC09 Wallet: https://btc09.org/#download",
+    "Create a wallet or restore it with your 24 recovery words. Send, receive, Activity, backup, and mining are all in the app.",
+    "Keep recovery words offline. Nobody from BTC09 will ask for them.",
+  ].join("\n");
+}
+
+export function formatMiningHelp() {
+  return [
+    "**Mine 09C**",
+    "Open the BTC09 Wallet and choose the Mine tab. Pick a sensible CPU thread count, then start.",
+    "The official PPLNS pool has a 0% pool fee and pays accepted shares directly from a block. Rewards need 100 confirmations before they can be sent.",
+    "If it fails, use Copy help report in the Mine tab and post it in mining help.",
+    "Guide: https://btc09.org/#mining-guide",
+  ].join("\n");
 }
 
 async function handleStatsInteraction(interaction) {

@@ -498,17 +498,20 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
                     command.name: command for command in bot.tree.get_commands()
                 }
                 self.assertTrue(
-                    {"stats", "rank", "leaderboard"} <= commands_by_name.keys()
+                    {"stats", "rank", "leaderboard", "wallet", "mine"}
+                    <= commands_by_name.keys()
                 )
                 self.assertEqual(
                     {
                         name: commands_by_name[name].description
-                        for name in ("stats", "rank", "leaderboard")
+                        for name in ("stats", "rank", "leaderboard", "wallet", "mine")
                     },
                     {
                         "stats": "Show live Bitcoin 09 mining and network stats.",
                         "rank": "Show your Bitcoin 09 community activity level.",
                         "leaderboard": "Show the Bitcoin 09 community activity leaderboard.",
+                        "wallet": "Open the current Bitcoin 09 wallet guide.",
+                        "mine": "Open the current Bitcoin 09 mining guide.",
                     },
                 )
             finally:
