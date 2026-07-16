@@ -68,7 +68,11 @@ class CIWorkflowContractTest(unittest.TestCase):
             'GIT_DEPTH: "0"',
             "Jobs/SAST.gitlab-ci.yml",
             "Jobs/Secret-Detection.gitlab-ci.yml",
-            "Jobs/Dependency-Scanning.v2.gitlab-ci.yml",
+            "govulncheck@v1.3.0",
+            "govulncheck ./...",
+            "pip-audit==2.10.0",
+            "pip-audit -r bot/requirements.txt",
+            "npm --prefix walletapp audit --omit=dev --audit-level=high",
             "go vet ./...",
             "go test -race ./...",
             "go test -tags walletedition ./desktop ./cmd/btc09",
@@ -78,6 +82,8 @@ class CIWorkflowContractTest(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.gitlab)
+
+        self.assertNotIn("Jobs/Dependency-Scanning.v2.gitlab-ci.yml", self.gitlab)
 
         for forbidden in ("PRIVATE_KEY", "KEYSTORE_PASSWORD", "codesign", "signtool"):
             with self.subTest(forbidden=forbidden):
