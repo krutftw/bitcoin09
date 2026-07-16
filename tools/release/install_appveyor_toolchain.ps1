@@ -39,6 +39,7 @@ Expand-Archive -LiteralPath $goArchive -DestinationPath $toolsRoot -Force
 Remove-Item -LiteralPath $goArchive -Force
 
 $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+$env:GOROOT = $goRoot
 $env:PATH = "$cargoBin;$goRoot\bin;$env:PATH"
 $rustup = Get-Command rustup -ErrorAction SilentlyContinue
 if ($null -eq $rustup) {
@@ -70,11 +71,16 @@ $env:GOTOOLCHAIN = 'local'
 if (Get-Command Set-AppveyorBuildVariable -ErrorAction SilentlyContinue) {
     Set-AppveyorBuildVariable -Name PATH -Value $env:PATH
     Set-AppveyorBuildVariable -Name GOTOOLCHAIN -Value $env:GOTOOLCHAIN
+    Set-AppveyorBuildVariable -Name GOROOT -Value $env:GOROOT
     Set-AppveyorBuildVariable -Name RUSTUP_TOOLCHAIN -Value $env:RUSTUP_TOOLCHAIN
 }
 
 if ((& go version) -notmatch "go$([regex]::Escape($goVersion))") {
     throw 'The pinned Go toolchain is not active.'
+}
+$activeGoRoot = [System.IO.Path]::GetFullPath((& go env GOROOT).Trim())
+if (-not $activeGoRoot.Equals($goRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "The pinned Go root is not active ($activeGoRoot)."
 }
 if ((& rustc --version) -notmatch "rustc $([regex]::Escape($rustVersion))") {
     throw 'The pinned Rust toolchain is not active.'
