@@ -206,7 +206,7 @@ verify-linux-appimage:
     - when: never
   before_script:
     - apt-get update
-    - apt-get install -y --no-install-recommends ca-certificates curl unzip xvfb x11-utils dbus-x11 libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 librsvg2-2
+    - apt-get install -y --no-install-recommends ca-certificates curl unzip xvfb x11-utils dbus-x11 libasound2 libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 librsvg2-2
     - rm -rf /var/lib/apt/lists/*
   script:
     - |

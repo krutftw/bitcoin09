@@ -352,6 +352,9 @@ encrypted local file, while existing V1 wallets stay unchanged and readable.
 Full node and explicit remote-solo modes remain available. There are no
 consensus changes.
 
+The wallet-only v0.1.33 beta is also available as a signed Android APK and a
+Linux AppImage from [GitHub Releases](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.33-beta.1).
+
 Network:
 
 ```text

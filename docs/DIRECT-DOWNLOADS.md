@@ -1,14 +1,16 @@
 # BTC09 Wallet direct downloads
 
-BTC09 Wallet will use GitHub Releases instead of the Microsoft Store, Google Play, or Apple's stores. v0.1.32 remains the current release until each native package has passed its release gate.
+BTC09 Wallet is distributed directly through GitHub Releases. No app-store account is required.
 
-## Planned native files
+## Available beta files
 
-- **Windows x64:** a wallet-only installer signed through SignPath Foundation. An unsigned preflight file is not a public release.
-- **Android ARM64:** a wallet-only signed APK. Android shows its standard sideload permission when an APK is installed from a browser or file manager. This is expected even when the APK has a valid project signature.
-- **Linux x64:** a wallet-only AppImage that can run without a system-wide installation.
+- **Android ARM64 signed APK:** [btc09-wallet-android-arm64.apk](https://github.com/krutftw/bitcoin09/releases/download/v0.1.33-beta.1/btc09-wallet-android-arm64.apk)
+- **Linux x64:** [btc09-wallet-linux-x64.AppImage](https://github.com/krutftw/bitcoin09/releases/download/v0.1.33-beta.1/btc09-wallet-linux-x64.AppImage)
+- **Checksums:** [SHA256SUMS](https://github.com/krutftw/bitcoin09/releases/download/v0.1.33-beta.1/SHA256SUMS)
 
-The native release does not include macOS or iPhone. Warning-free public Mac distribution needs a paid Apple Developer ID. Free iPhone provisioning expires after seven days and is not a practical public download.
+[Open the v0.1.33 beta release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.33-beta.1). Android shows its standard sideload permission when an APK is installed from a browser or file manager. The APK is signed with the project release key.
+
+Windows is waiting for free signing through SignPath Foundation; an unsigned installer is not published. macOS and iPhone are not included in this beta. v0.1.32 remains the stable full app for Windows, macOS, mining, and full-node use.
 
 ## What wallet-only means
 
@@ -16,9 +18,9 @@ The native package can create or restore a wallet, lock it, receive, review and 
 
 ## Verify a download
 
-Official files are attached to an immutable release at [GitHub Releases](https://github.com/krutftw/bitcoin09/releases). Each release includes `SHA256SUMS`.
+Official files are attached to [GitHub Releases](https://github.com/krutftw/bitcoin09/releases). Each release includes `SHA256SUMS`.
 
-On Windows, open the installer's Properties and check Digital Signatures before running it. The expected publisher for the free signing route is SignPath Foundation. On Android, the project publishes the release certificate fingerprint with the APK and uses the same key for future updates.
+On Android, the project publishes the release certificate fingerprint with the APK and uses the same key for future updates. On Linux, verify the AppImage checksum before making it executable.
 
 Do not use a wallet file sent through a direct message, a mirror, or a file-sharing link. BTC09 maintainers will never ask for recovery words, private keys, or a wallet password.
 
