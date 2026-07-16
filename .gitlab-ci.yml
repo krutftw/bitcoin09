@@ -18,7 +18,6 @@ variables:
 include:
   - template: Jobs/SAST.gitlab-ci.yml
   - template: Jobs/Secret-Detection.gitlab-ci.yml
-  - template: Jobs/Dependency-Scanning.v2.gitlab-ci.yml
 
 .go-cache:
   image: golang:1.25.12-bookworm
@@ -36,6 +35,8 @@ go-quality:
   extends: .go-cache
   timeout: 20m
   script:
+    - go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+    - govulncheck ./...
     - go vet ./...
     - go test -race ./...
 
@@ -56,6 +57,7 @@ javascript-contracts:
   image: node:24-bookworm
   timeout: 10m
   script:
+    - npm --prefix walletapp audit --omit=dev --audit-level=high
     - node --test tools/discord/*.test.mjs
     - node --test nineinbox/web/*.test.mjs
     - node --test tools/desktop/*.test.mjs tools/desktop/*.test.cjs
@@ -74,7 +76,9 @@ python-contracts:
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   before_script:
     - python -m pip install --disable-pip-version-check -r bot/requirements.txt
+    - python -m pip install --disable-pip-version-check pip-audit==2.10.0
   script:
+    - pip-audit -r bot/requirements.txt
     - python -m unittest discover -s bot/tests -p 'test_*.py'
     - >-
       python -m unittest
