@@ -797,6 +797,10 @@ type supplyData struct {
 }
 
 type retargetData struct {
+	DifficultyAlgorithm      string  `json:"difficulty_algorithm"`
+	ASERTActivationHeight    int64   `json:"asert_activation_height"`
+	BlocksToASERT            int64   `json:"blocks_to_asert"`
+	ASERTHalfLifeSeconds     int64   `json:"asert_half_life_seconds"`
 	TargetBlockSeconds       int64   `json:"target_block_seconds"`
 	RetargetInterval         int64   `json:"retarget_interval"`
 	EpochStartHeight         int64   `json:"retarget_epoch_start_height"`
@@ -807,6 +811,7 @@ type retargetData struct {
 	EpochAverageBlockSeconds float64 `json:"epoch_average_block_seconds"`
 	RetargetProgress         float64 `json:"retarget_progress"`
 	EstimatedNextDifficulty  float64 `json:"estimated_next_difficulty"`
+	NextBlockDifficulty      float64 `json:"next_block_difficulty"`
 	AdjustmentLimitFactor    float64 `json:"difficulty_adjustment_limit_factor"`
 }
 
@@ -991,6 +996,48 @@ func supplyAt(p *core.Params, tip int64) supplyData {
 
 func (s *Server) retargetAt(tip int64, difficulty float64) retargetData {
 	p := s.chain.Params()
+	data := retargetData{
+		DifficultyAlgorithm:     "legacy-2016",
+		ASERTActivationHeight:   p.ASERTActivationHeight,
+		ASERTHalfLifeSeconds:    p.ASERTHalfLife,
+		TargetBlockSeconds:      p.TargetBlockTime,
+		EstimatedNextDifficulty: difficulty,
+		NextBlockDifficulty:     s.difficulty(s.chain.NextBitsForTip()),
+		AdjustmentLimitFactor:   4,
+	}
+	if p.ASERTActivationHeight > tip {
+		data.BlocksToASERT = p.ASERTActivationHeight - tip
+	}
+	if p.ASERTActivationHeight > 0 && tip >= p.ASERTActivationHeight {
+		data.DifficultyAlgorithm = "asert"
+		data.EstimatedNextDifficulty = data.NextBlockDifficulty
+		data.AdjustmentLimitFactor = 0
+		start := tip - 120
+		if anchor := p.ASERTActivationHeight - 1; start < anchor {
+			start = anchor
+		}
+		if start < 0 {
+			start = 0
+		}
+		if start >= tip {
+			return data
+		}
+		startBlock := s.chain.BlockAt(start)
+		tipBlock := s.chain.BlockAt(tip)
+		if startBlock == nil || tipBlock == nil {
+			return data
+		}
+		elapsedSeconds := tipBlock.Header.Time - startBlock.Header.Time
+		if elapsedSeconds <= 0 {
+			return data
+		}
+		data.EpochStartHeight = start
+		data.EpochElapsedBlocks = tip - start
+		data.EpochElapsedSeconds = elapsedSeconds
+		data.EpochAverageBlockSeconds = float64(elapsedSeconds) / float64(data.EpochElapsedBlocks)
+		return data
+	}
+
 	interval := p.RetargetInterval
 	if interval <= 0 {
 		interval = 1
@@ -1006,17 +1053,12 @@ func (s *Server) retargetAt(tip int64, difficulty float64) retargetData {
 		elapsedBlocks = 0
 	}
 
-	data := retargetData{
-		TargetBlockSeconds:      p.TargetBlockTime,
-		RetargetInterval:        interval,
-		EpochStartHeight:        epochStart,
-		NextRetargetHeight:      nextRetarget,
-		BlocksToRetarget:        blocksToRetarget,
-		EpochElapsedBlocks:      elapsedBlocks,
-		RetargetProgress:        float64(elapsedBlocks) / float64(interval),
-		EstimatedNextDifficulty: difficulty,
-		AdjustmentLimitFactor:   4,
-	}
+	data.RetargetInterval = interval
+	data.EpochStartHeight = epochStart
+	data.NextRetargetHeight = nextRetarget
+	data.BlocksToRetarget = blocksToRetarget
+	data.EpochElapsedBlocks = elapsedBlocks
+	data.RetargetProgress = float64(elapsedBlocks) / float64(interval)
 
 	if elapsedBlocks <= 0 {
 		return data
@@ -1122,6 +1164,10 @@ type homeData struct {
 	BlocksToRetarget        int64
 	EpochAverage            string
 	EstimatedNextDifficulty string
+	ASERTActive             bool
+	ASERTActivationHeight   int64
+	BlocksToASERT           int64
+	ASERTHalfLife           string
 	Supply                  string
 	BlockReward             string
 	NextHalvingHeight       int64
@@ -1205,6 +1251,10 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		d.BlocksToRetarget = retarget.BlocksToRetarget
 		d.EpochAverage = secondsText(retarget.EpochAverageBlockSeconds)
 		d.EstimatedNextDifficulty = fmt.Sprintf("%.2f", retarget.EstimatedNextDifficulty)
+		d.ASERTActive = retarget.DifficultyAlgorithm == "asert"
+		d.ASERTActivationHeight = retarget.ASERTActivationHeight
+		d.BlocksToASERT = retarget.BlocksToASERT
+		d.ASERTHalfLife = secondsText(float64(retarget.ASERTHalfLifeSeconds))
 		d.NetworkHashrate = hashrateText(mining.EstimatedNetworkHashrateHPS)
 		if mining.HashrateObservationBlocks > 0 {
 			d.HashrateObservation = fmt.Sprintf("%d blocks / %s", mining.HashrateObservationBlocks, secondsText(float64(mining.HashrateObservationSeconds)))
@@ -1443,6 +1493,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"highest_advertised_peer_height":     highestAdvertisedPeerHeight,
 		"advertised_peer_height_lag":         advertisedPeerHeightLag,
 		"difficulty":                         diff,
+		"difficulty_algorithm":               retarget.DifficultyAlgorithm,
+		"asert_activation_height":            retarget.ASERTActivationHeight,
+		"blocks_to_asert":                    retarget.BlocksToASERT,
+		"asert_half_life_seconds":            retarget.ASERTHalfLifeSeconds,
 		"target_block_seconds":               retarget.TargetBlockSeconds,
 		"retarget_interval":                  retarget.RetargetInterval,
 		"retarget_epoch_start_height":        retarget.EpochStartHeight,
@@ -1453,6 +1507,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"epoch_average_block_seconds":        retarget.EpochAverageBlockSeconds,
 		"retarget_progress":                  retarget.RetargetProgress,
 		"estimated_next_difficulty":          retarget.EstimatedNextDifficulty,
+		"next_block_difficulty":              retarget.NextBlockDifficulty,
 		"difficulty_adjustment_limit_factor": retarget.AdjustmentLimitFactor,
 		"uptime_sec":                         int(time.Since(s.start).Seconds()),
 		"circulating_supply":                 supply.CirculatingSupply,
@@ -1590,12 +1645,12 @@ tr:last-child td { border-bottom: 0; }
 <div class="stat"><b>{{.TargetBlockTime}}s</b><span>target</span></div>
 <div class="stat"><b>{{.EpochAverage}}</b><span>avg this window</span></div>
 <div class="stat"><b>{{.NetworkHashrate}}</b><span>estimated network</span></div>
-<div class="stat"><b>{{.BlocksToRetarget}}</b><span>blocks to retarget</span></div>
+{{if .ASERTActive}}<div class="stat"><b>active</b><span>ASERT per block</span></div>{{else}}{{if .ASERTActivationHeight}}<div class="stat"><b>{{.BlocksToASERT}}</b><span>blocks to ASERT</span></div>{{else}}<div class="stat"><b>{{.BlocksToRetarget}}</b><span>blocks to retarget</span></div>{{end}}{{end}}
 <div class="stat"><b>{{.Supply}} 09C</b><span>supply</span></div>
 <div class="stat"><b>{{.BlockReward}} 09C</b><span>block reward</span></div>
 <div class="stat"><b>{{.BlocksToHalving}}</b><span>blocks to halving</span></div>
 </div>
-<p class="note">Difficulty retargets every {{.RetargetInterval}} blocks. Next retarget: height {{.NextRetargetHeight}}. Estimated next difficulty: {{.EstimatedNextDifficulty}} if this window keeps the same average.{{if .HashrateObservation}} Hashrate estimate uses {{.HashrateObservation}}; top solo payout address {{.TopSoloConcentration}}.{{end}}</p>
+{{if .ASERTActive}}<p class="note">Difficulty adjusts after every block with ASERT ({{.ASERTHalfLife}} half-life). Estimated next difficulty: {{.EstimatedNextDifficulty}}.{{if .HashrateObservation}} Hashrate estimate uses {{.HashrateObservation}}; top solo payout address {{.TopSoloConcentration}}.{{end}}</p>{{else}}{{if .ASERTActivationHeight}}<p class="note">Per-block ASERT activates at height {{.ASERTActivationHeight}}, in {{.BlocksToASERT}} blocks. Until then the legacy window remains active. Current old-rule projection: {{.EstimatedNextDifficulty}}.{{if .HashrateObservation}} Hashrate estimate uses {{.HashrateObservation}}; top solo payout address {{.TopSoloConcentration}}.{{end}}</p>{{else}}<p class="note">Difficulty retargets every {{.RetargetInterval}} blocks. Next retarget: height {{.NextRetargetHeight}}. Estimated next difficulty: {{.EstimatedNextDifficulty}} if this window keeps the same average.{{if .HashrateObservation}} Hashrate estimate uses {{.HashrateObservation}}; top solo payout address {{.TopSoloConcentration}}.{{end}}</p>{{end}}{{end}}
 <h2>Latest blocks</h2>
 <div class="table-wrap"><table>
 <thead><tr><th>Height</th><th>Time (UTC)</th><th>Miner</th><th>Txs</th><th>Reward</th><th>Block ID</th></tr></thead><tbody>

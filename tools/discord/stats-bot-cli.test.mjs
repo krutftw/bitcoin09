@@ -53,6 +53,10 @@ const explorerStatus = {
   blocks_to_retarget: 678,
   next_retarget_height: 8064,
   estimated_next_difficulty: 149.26,
+  difficulty_algorithm: "legacy-2016",
+  asert_activation_height: 12096,
+  blocks_to_asert: 4710,
+  asert_half_life_seconds: 7200,
   highest_advertised_peer_height: 7390,
   advertised_peer_height_lag: 4,
   payout_address_windows: [
@@ -99,9 +103,24 @@ test("chain stats use the official explorer without calling miner download or po
   assert.match(message, /Estimated network hashrate: \*\*16\.30 KH\/s\*\*/);
   assert.match(message, /Top solo payout address, last 100 blocks: \*\*72\.0%/);
   assert.match(message, /Distributed\/multi-output blocks, last 100: \*\*20\*\*/);
+  assert.match(message, /ASERT: \*\*4,710 blocks\*\*, height \*\*12,096\*\*/);
   assert.match(message, /Highest advertised peer tip: \*\*7,390\*\* \(local node 4 blocks behind\)/);
   assert.doesNotMatch(message, /Community pool/);
   assert.doesNotMatch(message, /ntmminer/i);
+});
+
+test("chain stats report ASERT without a fake legacy retarget", () => {
+  const active = {
+    ...explorerStatus,
+    difficulty_algorithm: "asert",
+    blocks_to_asert: 0,
+    blocks_to_retarget: 0,
+    next_retarget_height: 0,
+  };
+  const message = formatStatsMessage({ explorer: active, checkedAt: new Date(0) });
+  assert.match(message, /Difficulty adjustment: \*\*ASERT active\*\*, 2h half-life/);
+  assert.doesNotMatch(message, /Retarget:/);
+  assert.doesNotMatch(message, /retarget in 0/i);
 });
 
 test("stats implementation contains no retired pool dependency", async () => {

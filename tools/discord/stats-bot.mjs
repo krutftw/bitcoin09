@@ -443,6 +443,10 @@ export function formatStatsMessage(stats) {
   const explorer = stats.explorer;
   const retargetBlocks = explorer.blocks_to_retarget ?? null;
   const nextRetargetHeight = explorer.next_retarget_height ?? null;
+  const difficultyAlgorithm = explorer.difficulty_algorithm ?? "legacy-2016";
+  const asertActivationHeight = explorer.asert_activation_height ?? null;
+  const asertBlocks = explorer.blocks_to_asert ?? null;
+  const asertHalfLife = formatDuration(explorer.asert_half_life_seconds).replace(".0h", "h");
   const payoutWindows = Array.isArray(explorer.payout_address_windows) ? explorer.payout_address_windows : [];
   const window100 = payoutWindows.find((window) => Number(window.requested_blocks) === 100);
   const sourceWindows = Array.isArray(explorer.block_source_windows) ? explorer.block_source_windows : [];
@@ -453,10 +457,25 @@ export function formatStatsMessage(stats) {
     `Network height / peers: **${Number(explorer.height).toLocaleString()} / ${Number(explorer.peers).toLocaleString()}**`,
     `Estimated network hashrate: **${formatHashrate(explorer.estimated_network_hashrate_hps)}**`,
     `Difficulty: **${formatNumber(explorer.difficulty, 2)}**`,
-    `Target / avg this window: **${formatDuration(explorer.target_block_seconds)} / ${formatDuration(explorer.epoch_average_block_seconds)}**`,
-    `Retarget: **${retargetBlocks == null ? "unavailable" : Number(retargetBlocks).toLocaleString() + " blocks"}**${nextRetargetHeight == null ? "" : `, height **${Number(nextRetargetHeight).toLocaleString()}**`}`,
-    `Est. next difficulty: **${formatNumber(explorer.estimated_next_difficulty, 2)}**`,
+    `Target / recent average: **${formatDuration(explorer.target_block_seconds)} / ${formatDuration(explorer.epoch_average_block_seconds)}**`,
   ];
+
+  if (difficultyAlgorithm === "asert") {
+    lines.push(
+      `Difficulty adjustment: **ASERT active**, ${asertHalfLife} half-life`,
+      `Next block difficulty: **${formatNumber(explorer.next_block_difficulty ?? explorer.estimated_next_difficulty, 2)}**`,
+    );
+  } else {
+    lines.push(
+      `Retarget: **${retargetBlocks == null ? "unavailable" : Number(retargetBlocks).toLocaleString() + " blocks"}**${nextRetargetHeight == null ? "" : `, height **${Number(nextRetargetHeight).toLocaleString()}**`}`,
+    );
+    if (asertActivationHeight != null && Number(asertActivationHeight) > 0) {
+      lines.push(
+        `ASERT: **${Number(asertBlocks).toLocaleString()} blocks**, height **${Number(asertActivationHeight).toLocaleString()}**`,
+      );
+    }
+    lines.push(`Est. next difficulty: **${formatNumber(explorer.estimated_next_difficulty, 2)}**`);
+  }
 
   if (sourceWindow100) {
     lines.push(
