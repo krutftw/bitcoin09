@@ -41,7 +41,7 @@ func TestCalculateASERTMatchesPublishedVector(t *testing.T) {
     maxTarget := CompactToTarget(0x1d00ffff)
     got := calculateASERTTarget(
         CompactToTarget(0x1802aee8), 600,
-        1234568190-1234567290, 0, 172800, maxTarget,
+        1234568190-1234567290, 1, 172800, maxTarget,
     )
     if bits := TargetToCompact(got); bits != 0x1802ae16 {
         t.Fatalf("ASERT bits = %08x, want 1802ae16", bits)

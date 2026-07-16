@@ -74,6 +74,90 @@ func WorkFromTarget(target *big.Int) *big.Int {
 	return num.Div(num, den)
 }
 
+// calculateASERTTarget implements the published aserti3 fixed-point
+// approximation. All arithmetic that can exceed 64 bits is deliberately done
+// with big.Int so every supported platform reaches the same consensus target.
+func calculateASERTTarget(
+	refTarget *big.Int,
+	targetSpacing, timeDiff, heightDiff, halfLife int64,
+	maxTarget *big.Int,
+) *big.Int {
+	one := big.NewInt(1)
+	if refTarget == nil || refTarget.Sign() <= 0 {
+		return new(big.Int).Set(one)
+	}
+	if maxTarget == nil || maxTarget.Sign() <= 0 {
+		return new(big.Int).Set(one)
+	}
+	if halfLife <= 0 || targetSpacing <= 0 || heightDiff < 0 {
+		if refTarget.Cmp(maxTarget) > 0 {
+			return new(big.Int).Set(maxTarget)
+		}
+		return new(big.Int).Set(refTarget)
+	}
+
+	// exponent = ((timeDiff - spacing*(heightDiff+1)) * 65536) / halfLife.
+	// Quo truncates toward zero, matching the reference C++ integer division.
+	scheduled := new(big.Int).Add(big.NewInt(heightDiff), one)
+	scheduled.Mul(scheduled, big.NewInt(targetSpacing))
+	exponentBig := new(big.Int).Sub(big.NewInt(timeDiff), scheduled)
+	exponentBig.Mul(exponentBig, big.NewInt(65536))
+	exponentBig.Quo(exponentBig, big.NewInt(halfLife))
+	if !exponentBig.IsInt64() {
+		if exponentBig.Sign() < 0 {
+			return new(big.Int).Set(one)
+		}
+		return new(big.Int).Set(maxTarget)
+	}
+	exponent := exponentBig.Int64()
+
+	// Split into a floored integer component and a non-negative fraction.
+	shifts := exponent / 65536
+	frac := exponent % 65536
+	if frac < 0 {
+		shifts--
+		frac += 65536
+	}
+
+	// 65536 * 2^x, 0 <= x < 1. The maximum intermediate is wider than a
+	// signed int64, so retain exact big.Int arithmetic for the polynomial.
+	fracBig := big.NewInt(frac)
+	factorNumerator := new(big.Int).Mul(big.NewInt(195766423245049), fracBig)
+	fracSquared := new(big.Int).Mul(new(big.Int).Set(fracBig), fracBig)
+	factorNumerator.Add(factorNumerator,
+		new(big.Int).Mul(big.NewInt(971821376), fracSquared))
+	fracCubed := new(big.Int).Mul(new(big.Int).Set(fracSquared), fracBig)
+	factorNumerator.Add(factorNumerator,
+		new(big.Int).Mul(big.NewInt(5127), fracCubed))
+	factorNumerator.Add(factorNumerator, new(big.Int).Lsh(one, 47))
+	factorNumerator.Rsh(factorNumerator, 48)
+	factor := factorNumerator.Add(factorNumerator, big.NewInt(65536))
+
+	nextTarget := new(big.Int).Mul(new(big.Int).Set(refTarget), factor)
+	shifts -= 16 // divide the fixed-point factor by 65536
+	if shifts <= 0 {
+		right := -shifts
+		if right >= int64(nextTarget.BitLen()) {
+			nextTarget.SetInt64(0)
+		} else {
+			nextTarget.Rsh(nextTarget, uint(right))
+		}
+	} else {
+		if shifts > int64(maxTarget.BitLen()+17) {
+			return new(big.Int).Set(maxTarget)
+		}
+		nextTarget.Lsh(nextTarget, uint(shifts))
+	}
+
+	if nextTarget.Sign() == 0 {
+		return new(big.Int).Set(one)
+	}
+	if nextTarget.Cmp(maxTarget) > 0 {
+		return new(big.Int).Set(maxTarget)
+	}
+	return nextTarget
+}
+
 // NextBits returns the required difficulty bits for the block at `height`,
 // given accessors for ancestor headers on the same chain.
 //
