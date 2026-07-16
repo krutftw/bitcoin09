@@ -255,7 +255,10 @@ func enforceDistributionEdition(command string, args []string, walletEdition boo
 		return "", nil, errors.New("That command is not available in the BTC09 Wallet edition.")
 	}
 
+	// Keep the compile-time safety flag ahead of every caller-controlled
+	// argument. Go's flag parser stops at "--" and at positional arguments.
 	locked := make([]string, 0, len(args)+1)
+	locked = append(locked, "-wallet-only")
 	for _, arg := range args {
 		if arg == "-wallet-only" || arg == "--wallet-only" ||
 			strings.HasPrefix(arg, "-wallet-only=") || strings.HasPrefix(arg, "--wallet-only=") {
@@ -263,7 +266,6 @@ func enforceDistributionEdition(command string, args []string, walletEdition boo
 		}
 		locked = append(locked, arg)
 	}
-	locked = append(locked, "-wallet-only")
 	return command, locked, nil
 }
 
