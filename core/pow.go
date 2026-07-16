@@ -158,6 +158,10 @@ func calculateASERTTarget(
 	return nextTarget
 }
 
+func asertActive(p *Params, height int64) bool {
+	return p != nil && p.ASERTActivationHeight > 0 && height >= p.ASERTActivationHeight
+}
+
 // NextBits returns the required difficulty bits for the block at `height`,
 // given accessors for ancestor headers on the same chain.
 //
@@ -166,6 +170,19 @@ func calculateASERTTarget(
 func NextBits(p *Params, height int64, bitsAt func(h int64) uint32, timeAt func(h int64) int64) uint32 {
 	if height == 0 {
 		return p.MaxTargetBits
+	}
+	if asertActive(p, height) {
+		anchorHeight := p.ASERTActivationHeight - 1
+		parentHeight := height - 1
+		target := calculateASERTTarget(
+			CompactToTarget(bitsAt(anchorHeight)),
+			p.TargetBlockTime,
+			timeAt(parentHeight)-timeAt(anchorHeight-1),
+			parentHeight-anchorHeight,
+			p.ASERTHalfLife,
+			p.MaxTarget(),
+		)
+		return TargetToCompact(target)
 	}
 	prev := height - 1
 	if height%p.RetargetInterval != 0 {

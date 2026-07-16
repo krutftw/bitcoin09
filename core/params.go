@@ -112,6 +112,28 @@ func canonicalRegTestParams() Params {
 	}
 }
 
+func validateConsensusParams(p *Params) error {
+	if p.ASERTActivationHeight == 0 {
+		if p.ASERTHalfLife != 0 || p.ASERTFutureDrift != 0 || p.ASERTMedianTimeBlocks != 0 {
+			return errors.New("ASERT parameters set without an activation height")
+		}
+		return nil
+	}
+	if p.ASERTActivationHeight < 2 {
+		return errors.New("ASERT activation height must leave an anchor parent")
+	}
+	if p.ASERTHalfLife <= 0 {
+		return errors.New("ASERT half-life must be positive")
+	}
+	if p.ASERTFutureDrift <= 0 {
+		return errors.New("ASERT future drift must be positive")
+	}
+	if p.ASERTMedianTimeBlocks < 3 || p.ASERTMedianTimeBlocks%2 == 0 {
+		return errors.New("ASERT median-time window must be an odd number of at least three blocks")
+	}
+	return nil
+}
+
 var MainNet = canonicalMainNetParams()
 
 var RegTest = canonicalRegTestParams()
