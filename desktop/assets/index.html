@@ -53,10 +53,10 @@
           <p class="kicker">WELCOME TO BTC09</p>
           <h1>Set up your wallet</h1>
           <p class="setup-intro">Create a new wallet or restore one with its 24 recovery words. Keys never leave this computer.</p>
-          <div class="file-location">
-            <span>WALLET FILE</span>
+          <details class="file-location">
+            <summary>Stored on this device</summary>
             <code id="first-run-path">—</code>
-          </div>
+          </details>
           <div class="setup-switch" role="group" aria-label="Wallet setup choice">
             <button id="show-create" class="is-active" type="button">New wallet</button>
             <button id="show-restore" type="button">Restore wallet</button>
@@ -314,6 +314,7 @@
     <div><strong id="result-title">Payment submitted</strong><code id="result-txid"></code><div class="result-actions"><button id="copy-result-txid" type="button">Copy TXID</button><a id="open-result-txid" href="#" target="_blank" rel="noopener noreferrer">Open in explorer ↗</a></div></div>
     <button id="dismiss-result" class="icon-button" type="button" aria-label="Dismiss result">×</button>
   </section>
+  <script src="/assets/network.js" defer></script>
   <script src="/assets/app.js" defer></script>
 </body>
 </html>

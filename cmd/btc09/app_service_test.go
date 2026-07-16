@@ -35,6 +35,25 @@ type appMinerConfigCapture struct {
 	config pool.RemoteClientConfig
 }
 
+func TestWalletOnlyServiceKeepsWalletFeaturesWithoutExposingTheMiner(t *testing.T) {
+	var service any = newWalletOnlyAppService(&appService{})
+	if _, ok := service.(desktop.Service); !ok {
+		t.Fatal("wallet-only service lost the core wallet API")
+	}
+	if _, ok := service.(desktop.WalletFeaturesService); !ok {
+		t.Fatal("wallet-only service lost activity and cleanup")
+	}
+	if _, ok := service.(desktop.RecoveryWalletService); !ok {
+		t.Fatal("wallet-only service lost recovery wallets")
+	}
+	if _, ok := service.(desktop.PreviewCancelService); !ok {
+		t.Fatal("wallet-only service lost preview cancellation")
+	}
+	if _, ok := service.(desktop.MinerService); ok {
+		t.Fatal("wallet-only service still exposes on-device mining")
+	}
+}
+
 func (c *appMinerConfigCapture) set(config pool.RemoteClientConfig) {
 	c.mu.Lock()
 	c.config = config
@@ -393,6 +412,20 @@ func TestAppMinerTracksRetriesJobsAndAcceptedBlocksWithoutDoubleCounting(t *test
 
 func TestAppMinerDefaultsBoundsAndRejectsConcurrentStart(t *testing.T) {
 	service, _, _ := newAppTestService(t)
+	initial, err := service.MinerStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantWorkers := runtime.NumCPU() / 4
+	if wantWorkers < 1 {
+		wantWorkers = 1
+	}
+	if wantWorkers > 4 {
+		wantWorkers = 4
+	}
+	if initial.Workers != wantWorkers {
+		t.Fatalf("initial miner workers = %d, want %d", initial.Workers, wantWorkers)
+	}
 	if _, err := service.CreateWallet(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -407,10 +440,6 @@ func TestAppMinerDefaultsBoundsAndRejectsConcurrentStart(t *testing.T) {
 	status, err := service.StartMiner(context.Background(), desktop.MinerStartRequest{})
 	if err != nil {
 		t.Fatal(err)
-	}
-	wantWorkers := runtime.NumCPU() - 1
-	if wantWorkers < 1 {
-		wantWorkers = 1
 	}
 	if status.Workers != wantWorkers || status.LogicalCPUs != runtime.NumCPU() {
 		t.Fatalf("default status = %+v want workers=%d", status, wantWorkers)

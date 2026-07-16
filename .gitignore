@@ -13,3 +13,7 @@ __pycache__/
 *.pyc
 bot/**/__pycache__/
 bot/.coverage
+/walletapp/node_modules/
+/walletapp/src-tauri/target/
+/walletapp/src-tauri/binaries/*
+/walletapp/src-tauri/gen/schemas/

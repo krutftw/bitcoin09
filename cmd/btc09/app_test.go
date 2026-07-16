@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -55,6 +56,87 @@ func TestDesktopOptionsUseStandardWalletAndRejectUnsafeArguments(t *testing.T) {
 	}
 }
 
+func TestDesktopHostModeKeepsTheWalletInsideItsNativeWindow(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	options, err := parseAppOptions([]string{"-network", "regtest", "-datadir", dataDir, "-desktop-host"})
+	if err != nil {
+		t.Fatalf("parse desktop host options: %v", err)
+	}
+	if !options.noBrowser {
+		t.Fatal("desktop host mode would still open the system browser")
+	}
+}
+
+func TestDesktopHostPublishesLaunchJSONAndStopsWhenWindowCloses(t *testing.T) {
+	inputReader, inputWriter := io.Pipe()
+	outputReader, outputWriter := io.Pipe()
+	done := make(chan error, 1)
+	dataDir := filepath.Join(t.TempDir(), "data")
+	go func() {
+		done <- runDesktopHost(context.Background(), appOptions{
+			network: "regtest", dataDir: dataDir, walletFile: filepath.Join(dataDir, "wallet-regtest.json"),
+			noBrowser: true, desktopHost: true,
+		}, inputReader, outputWriter)
+		_ = outputWriter.Close()
+	}()
+
+	decoded := make(chan struct {
+		SchemaVersion int    `json:"schema_version"`
+		Version       string `json:"version"`
+		LaunchURL     string `json:"launch_url"`
+	}, 1)
+	decodeErrors := make(chan error, 1)
+	go func() {
+		var info struct {
+			SchemaVersion int    `json:"schema_version"`
+			Version       string `json:"version"`
+			LaunchURL     string `json:"launch_url"`
+		}
+		if err := json.NewDecoder(outputReader).Decode(&info); err != nil {
+			decodeErrors <- err
+			return
+		}
+		decoded <- info
+	}()
+
+	var info struct {
+		SchemaVersion int    `json:"schema_version"`
+		Version       string `json:"version"`
+		LaunchURL     string `json:"launch_url"`
+	}
+	select {
+	case info = <-decoded:
+	case err := <-decodeErrors:
+		t.Fatalf("decode desktop host launch: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop host did not publish its launch information")
+	}
+	if info.SchemaVersion != 1 || info.Version != nodeVersion || info.LaunchURL == "" {
+		t.Fatalf("desktop host launch = %+v", info)
+	}
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Get(info.LaunchURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("desktop host launch status = %d", response.StatusCode)
+	}
+
+	if err := inputWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("desktop host shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("desktop host stayed running after its window closed")
+	}
+}
+
 func TestDesktopMainnetDefaultsToFastModeAndAllowsExplicitFullNode(t *testing.T) {
 	fast, err := parseAppOptions(nil)
 	if err != nil {
@@ -69,6 +151,10 @@ func TestDesktopMainnetDefaultsToFastModeAndAllowsExplicitFullNode(t *testing.T)
 	}
 	if full.mode != "full" {
 		t.Fatalf("full options = %+v", full)
+	}
+	walletOnly, err := parseAppOptions([]string{"-wallet-only"})
+	if err != nil || !walletOnly.walletOnly {
+		t.Fatalf("wallet-only options=%+v err=%v", walletOnly, err)
 	}
 	for _, args := range [][]string{
 		{"-mode", "unknown"},
@@ -189,5 +275,68 @@ func TestDesktopRuntimeBindsLoopbackServesAuthenticatedStatusAndShutsDown(t *tes
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("runtime did not shut down")
+	}
+}
+
+func TestWalletOnlyRuntimeDoesNotExposeTheMinerEndpoint(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ready := make(chan appRuntimeInfo, 1)
+	done := make(chan error, 1)
+	dataDir := filepath.Join(t.TempDir(), "data")
+	go func() {
+		done <- runDesktopApp(ctx, appOptions{
+			network: "regtest", dataDir: dataDir,
+			walletFile: filepath.Join(dataDir, "wallet-regtest.json"), noBrowser: true, walletOnly: true,
+		}, ready)
+	}()
+
+	var runtime appRuntimeInfo
+	select {
+	case runtime = <-ready:
+	case err := <-done:
+		t.Fatalf("wallet-only runtime exited before ready: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("wallet-only runtime did not become ready")
+	}
+
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	launch, err := client.Get(runtime.LaunchURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = launch.Body.Close()
+	if launch.StatusCode != http.StatusSeeOther || len(launch.Cookies()) != 1 {
+		t.Fatalf("wallet-only launch status=%d cookies=%d", launch.StatusCode, len(launch.Cookies()))
+	}
+	request, err := http.NewRequest(http.MethodGet, runtime.Origin+"/api/v1/miner/status", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.AddCookie(launch.Cookies()[0])
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusNotImplemented || envelope.Error.Code != "miner_unavailable" {
+		t.Fatalf("wallet-only miner status=%d response=%+v", response.StatusCode, envelope)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("wallet-only shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("wallet-only runtime did not shut down")
 	}
 }

@@ -1,0 +1,168 @@
+:root {
+  color: #171a16;
+  background: #d9d4c9;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(255, 253, 248, 0.9), transparent 32%),
+    #d9d4c9;
+}
+
+.startup-card {
+  width: min(540px, 100%);
+  overflow: hidden;
+  border: 1px solid #cfc8ba;
+  border-radius: 18px;
+  background: #fffdf8;
+  box-shadow: 0 24px 70px rgba(28, 29, 24, 0.13);
+}
+
+header,
+footer {
+  display: flex;
+  align-items: center;
+}
+
+header {
+  gap: 12px;
+  padding: 18px 20px;
+  border-bottom: 1px solid #ddd6c9;
+}
+
+.mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 50%;
+  background: #171a16;
+  color: #d77b4c;
+  font: 12px Consolas, "Courier New", monospace;
+}
+
+header strong,
+header small {
+  display: block;
+}
+
+header strong {
+  font-size: 15px;
+}
+
+header small,
+footer {
+  color: #65695f;
+  font: 11px/1.45 Consolas, "Courier New", monospace;
+}
+
+section {
+  min-height: 300px;
+  padding: 52px 44px 46px;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 26px;
+  border: 2px solid #d8d2c5;
+  border-top-color: #a74f2a;
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: #713319;
+  font: 11px Consolas, "Courier New", monospace;
+  letter-spacing: 0.11em;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(25px, 4vw, 30px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+#detail {
+  max-width: 400px;
+  margin: 13px 0 0;
+  color: #65695f;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+button {
+  min-height: 42px;
+  margin-top: 24px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9px;
+  background: #171a16;
+  color: #fffdf8;
+  font: 12px Consolas, "Courier New", monospace;
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 2px solid #a74f2a;
+  outline-offset: 3px;
+}
+
+footer {
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-top: 1px solid #ddd6c9;
+  background: #f4f1e8;
+}
+
+body.has-error .spinner {
+  border: 0;
+  border-radius: 0;
+  animation: none;
+}
+
+body.has-error .spinner::before {
+  color: #a53a27;
+  content: "!";
+  font: 24px/28px Consolas, "Courier New", monospace;
+}
+
+body.has-error .eyebrow {
+  color: #a53a27;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 560px) {
+  body {
+    padding: 12px;
+  }
+
+  section {
+    min-height: 270px;
+    padding: 42px 26px 38px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 1600ms;
+  }
+}

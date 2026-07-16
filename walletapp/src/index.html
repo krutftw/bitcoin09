@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BTC09 Wallet</title>
+    <link rel="stylesheet" href="./startup.css" />
+    <script src="./startup.js" defer></script>
+  </head>
+  <body>
+    <main class="startup-card" aria-live="polite">
+      <header>
+        <span class="mark" aria-hidden="true">09</span>
+        <div>
+          <strong>BTC09 Wallet</strong>
+          <small>Self-custody on this device</small>
+        </div>
+      </header>
+      <section>
+        <div id="spinner" class="spinner" aria-hidden="true"></div>
+        <p class="eyebrow">STARTING</p>
+        <h1 id="title">Opening your wallet</h1>
+        <p id="detail">Checking your wallet and connecting to the network.</p>
+        <button id="close-wallet" type="button" hidden>Close wallet</button>
+      </section>
+      <footer>
+        <span>Your keys stay on this device.</span>
+        <span>v0.1.33</span>
+      </footer>
+    </main>
+  </body>
+</html>
