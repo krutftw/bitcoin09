@@ -26,6 +26,7 @@ from bot.otc.explorer import AddressBatch, Tip, TransactionStatus
 from bot.otc.discord_ui import (
     COMMON_ASSETS,
     MAINTENANCE_NOTICE,
+    TRADE_HELP,
     DiscordTradeUI,
     AddressModal,
     DisputeModal,
@@ -411,6 +412,15 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
             rendered.index("invalidate_public_feed"),
         )
 
+    def test_guild_sync_prunes_retired_global_commands_after_copy(self) -> None:
+        source = inspect.getsource(OTCBot.setup_hook)
+        self.assertIn("self.tree.clear_commands(guild=None)", source)
+        guild_sync = source.index("await self.tree.sync(guild=guild)")
+        prune = source.index("self.tree.clear_commands(guild=None)")
+        global_sync = source.index("await self.tree.sync()", prune)
+        self.assertLess(guild_sync, prune)
+        self.assertLess(prune, global_sync)
+
     def test_public_settlement_allowlists_have_one_domain_owner(self) -> None:
         methods = getattr(otc_domain, "PUBLIC_SETTLEMENT_METHODS")
         networks = getattr(otc_domain, "PUBLIC_SETTLEMENT_NETWORKS")
@@ -466,6 +476,43 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
                 timer.cancel()
             self.assertEqual(observed_accepting, [False])
             self.assertFalse(target.exists())
+
+    async def test_otc_bot_keeps_node_owned_commands_in_its_sync_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = SimpleNamespace(
+                service=self.service,
+                controller=self.ui,
+                public_feed_path=str(Path(directory) / "feed.json"),
+            )
+            with patch.dict("os.environ", {"BOT_TOKEN": "test-token"}, clear=True):
+                config = Config.from_environment()
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*asyncio.iscoroutinefunction.*",
+                    category=DeprecationWarning,
+                )
+                bot = OTCBot(config, runtime)
+            try:
+                commands_by_name = {
+                    command.name: command for command in bot.tree.get_commands()
+                }
+                self.assertTrue(
+                    {"stats", "rank", "leaderboard"} <= commands_by_name.keys()
+                )
+                self.assertEqual(
+                    {
+                        name: commands_by_name[name].description
+                        for name in ("stats", "rank", "leaderboard")
+                    },
+                    {
+                        "stats": "Show live Bitcoin 09 mining and network stats.",
+                        "rank": "Show your Bitcoin 09 community activity level.",
+                        "leaderboard": "Show the Bitcoin 09 community activity leaderboard.",
+                    },
+                )
+            finally:
+                await bot.close()
 
     def test_explorer_anchor_probe_rejects_mismatched_transaction_tip(self) -> None:
         tip = Tip("a" * 64, 10)
@@ -734,12 +781,12 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
                     {
                         "sell", "buy", "list", "view", "accept", "deposit",
                         "confirm-sent", "confirm-received", "cancel", "dispute",
-                        "address", "balance", "resolve", "reconcile", "mine", "withdraw",
+                        "address", "balance", "help", "resolve", "reconcile", "mine", "withdraw",
                     }
                     <= {command.name for command in group.commands}
                 )
                 self.assertTrue(
-                    {"sell", "orders", "buy", "deposit", "confirm", "cancel", "dispute", "setaddress", "balance", "withdraw", "Translate to English"}
+                    {"help", "sell", "orders", "buy", "deposit", "confirm", "cancel", "dispute", "setaddress", "balance", "withdraw", "Translate to English"}
                     <= {command.name for command in bot.tree.get_commands()}
                 )
                 rendered = " ".join(
@@ -749,6 +796,13 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(re.search(r"[\u3400-\u9fff]", rendered))
             finally:
                 await bot.close()
+
+    async def test_help_replies_immediately_with_current_trade_steps(self) -> None:
+        interaction = FakeInteraction(201, 20)
+        await self.ui.show_help(interaction)
+        self.assertEqual(interaction.response.sent, [(TRADE_HELP, True, None)])
+        self.assertIn("/trade list", TRADE_HELP)
+        self.assertIn("/trade accept <order_id>", TRADE_HELP)
 
     async def test_disabled_registration_marks_only_blocked_new_order_commands_paused(
         self,

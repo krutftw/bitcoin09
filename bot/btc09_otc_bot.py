@@ -496,6 +496,29 @@ def build_runtime(config: Config) -> Runtime:
     return Runtime(service, controller, config.public_feed_path)
 
 
+def register_node_owned_commands(bot: commands.Bot) -> None:
+    """Keep Node-handled commands present when discord.py bulk-syncs the guild."""
+
+    @bot.tree.command(
+        name="stats", description="Show live Bitcoin 09 mining and network stats."
+    )
+    async def stats_placeholder(_interaction: discord.Interaction) -> None:
+        return None
+
+    @bot.tree.command(
+        name="rank", description="Show your Bitcoin 09 community activity level."
+    )
+    async def rank_placeholder(_interaction: discord.Interaction) -> None:
+        return None
+
+    @bot.tree.command(
+        name="leaderboard",
+        description="Show the Bitcoin 09 community activity leaderboard.",
+    )
+    async def leaderboard_placeholder(_interaction: discord.Interaction) -> None:
+        return None
+
+
 class OTCBot(commands.Bot):
     def __init__(self, config: Config, runtime: Runtime) -> None:
         intents = discord.Intents.default()
@@ -516,6 +539,7 @@ class OTCBot(commands.Bot):
             runtime.controller,
             accepting_orders_requested=config.accepting_orders_requested,
         )
+        register_node_owned_commands(self)
 
     async def setup_hook(self) -> None:
         try:
@@ -541,6 +565,8 @@ class OTCBot(commands.Bot):
             guild = discord.Object(id=self.config.guild_id)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
+            self.tree.clear_commands(guild=None)
+            await self.tree.sync()
         else:
             await self.tree.sync()
 

@@ -55,6 +55,16 @@ MAINTENANCE_NOTICE = (
     "trade system completes its controlled pilot. Do not send 09C to an old "
     "deposit address. Follow #announcements for the verified launch."
 )
+TRADE_HELP = (
+    "**Bitcoin 09 OTC escrow**\n"
+    "`/trade list` - browse open WTS and WTB offers\n"
+    "`/trade sell` - offer 09C for sale\n"
+    "`/trade buy` - offer to buy 09C\n"
+    "`/trade accept <order_id>` - accept an open offer\n"
+    "`/trade view <order_id>` - check an order before acting\n\n"
+    "The bot escrows 09C only. Payment in AUD, USD, USDT, BTC, or other "
+    "agreed funds stays directly between the buyer and seller. Start small."
+)
 _CUSTOM_ACTION_RE = re.compile(r"[a-z][a-z0-9_]{0,31}\Z", re.ASCII)
 _FUND_ACTIONS = frozenset(
     {
@@ -465,6 +475,9 @@ class DiscordTradeUI:
             await self._followup(interaction, content)
         except Exception as exc:
             await self._error(interaction, exc)
+
+    async def show_help(self, interaction: Any) -> None:
+        await self._respond(interaction, TRADE_HELP, ephemeral=True)
 
     async def view_order(self, interaction: Any, order_id: int) -> None:
         await self._defer(interaction)
@@ -1039,6 +1052,10 @@ def register_trade_ui(
         ),
     )
 
+    @group.command(name="help", description="Show the Bitcoin 09 OTC trade steps")
+    async def trade_help(interaction: discord.Interaction) -> None:
+        await controller.show_help(interaction)
+
     @group.command(name="sell", description=f"{pause_prefix}Create a WTS offer")
     @app_commands.autocomplete(asset=_asset_autocomplete)
     async def trade_sell(interaction: discord.Interaction, amount: str | None = None, total_price: str | None = None, asset: str | None = None, method: str | None = None, network: str | None = None, receive_address: str | None = None) -> None:
@@ -1145,6 +1162,10 @@ def _register_legacy_wrappers(
 ) -> None:
     tree = bot.tree
     pause_prefix = "" if accepting_orders_requested else "PAUSED: "
+
+    @tree.command(name="help", description="Show the current Bitcoin 09 bot commands")
+    async def help_command(interaction: discord.Interaction) -> None:
+        await controller.show_help(interaction)
 
     @tree.command(
         name="sell", description=f"{pause_prefix}Compatibility wrapper; use /trade sell"
