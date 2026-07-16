@@ -3,7 +3,7 @@ import unittest
 
 
 class DirectDistributionContractTest(unittest.TestCase):
-    def test_public_guide_describes_the_no_store_release_without_overpromising(self):
+    def test_public_guide_links_the_released_no_store_beta(self):
         guide_path = pathlib.Path("docs/DIRECT-DOWNLOADS.md")
         self.assertTrue(guide_path.exists(), "direct-download guide is missing")
         guide = guide_path.read_text(encoding="utf-8") if guide_path.exists() else ""
@@ -18,11 +18,15 @@ class DirectDistributionContractTest(unittest.TestCase):
             "macOS",
             "iPhone",
             "SHA256SUMS",
+            "Available beta files",
+            "releases/tag/v0.1.33-beta.1",
+            "btc09-wallet-android-arm64.apk",
+            "btc09-wallet-linux-x64.AppImage",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, guide)
 
-        self.assertNotIn("available now", guide.lower())
+        self.assertNotIn("will use GitHub Releases", guide)
 
     def test_code_signing_policy_is_public_and_excludes_mining(self):
         policy_path = pathlib.Path("CODE_SIGNING.md")
@@ -63,21 +67,23 @@ class DirectDistributionContractTest(unittest.TestCase):
 
         self.assertNotIn("Start mining", script)
 
-    def test_homepage_reports_native_packaging_as_status_not_a_download(self):
+    def test_homepage_links_the_released_native_wallet_beta(self):
         homepage = pathlib.Path("docs/index.html").read_text(encoding="utf-8")
         for token in (
-            "Native wallet update",
+            "Native wallet beta",
             "Windows signing",
             "Android signed APK",
             "Linux AppImage",
-            "Apple later",
-            "v0.1.32 stays current",
+            "Not in this beta",
+            "releases/download/v0.1.33-beta.1/btc09-wallet-android-arm64.apk",
+            "releases/download/v0.1.33-beta.1/btc09-wallet-linux-x64.AppImage",
+            "releases/download/v0.1.33-beta.1/SHA256SUMS",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, homepage)
 
-        native_status = homepage.split("Native wallet update", 1)[-1].split("</aside>", 1)[0]
-        self.assertNotIn("releases/download/v0.1.33", native_status)
+        native_status = homepage.split("Native wallet beta", 1)[-1].split("</aside>", 1)[0]
+        self.assertNotIn("In preparation", native_status)
 
     def test_gitlab_has_manual_reproducible_direct_package_jobs(self):
         pipeline = pathlib.Path(".gitlab-ci.yml").read_text(encoding="utf-8")
@@ -101,6 +107,7 @@ class DirectDistributionContractTest(unittest.TestCase):
             "APPIMAGE_EXTRACT_AND_RUN=1",
             "xwininfo -root -tree",
             "BTC09 Wallet",
+            "libasound2",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, pipeline)
