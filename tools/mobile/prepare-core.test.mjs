@@ -6,6 +6,7 @@ import { bindingPlan } from "./prepare-core.mjs";
 test("Android binding is a pinned, app-private AAR with a modern minimum API", () => {
   const plan = bindingPlan("android", "win32", "C:/repo");
 
+  assert.deepEqual(plan.prepareCommand, ["go", "tool", "gomobile", "init"]);
   assert.deepEqual(plan.command, ["go", "tool", "gomobile", "bind"]);
   assert.ok(plan.args.includes("-target=android"));
   assert.ok(plan.args.includes("-androidapi=24"));

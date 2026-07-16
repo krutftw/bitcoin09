@@ -27,6 +27,7 @@ export function bindingPlan(target, platform = process.platform, root = defaultR
   }
   args.push(`-o=${output}`, "./mobilewallet");
   return {
+    prepareCommand: ["go", "tool", "gomobile", "init"],
     command: ["go", "tool", "gomobile", "bind"],
     args,
     output,
@@ -85,6 +86,7 @@ function build(target) {
   const plan = bindingPlan(target);
   mkdirSync(path.dirname(plan.output), { recursive: true });
   rmSync(plan.output, { recursive: true, force: true });
+  run(plan.prepareCommand[0], plan.prepareCommand.slice(1));
   run(plan.command[0], [...plan.command.slice(1), ...plan.args]);
   if (!existsSync(plan.output)) {
     throw new Error(`Mobile core output was not created at ${plan.output}.`);
