@@ -16,6 +16,8 @@ export function bindingPlan(target, platform = process.platform, root = defaultR
     throw new Error("The iPhone wallet core must be built on macOS with Xcode.");
   }
   const plugin = path.join(root, "walletapp", "plugins", "tauri-plugin-wallet-core");
+  const toolDirectory = path.join(root, "walletapp", "src-tauri", "target", "mobile-tools");
+  const gobind = path.join(toolDirectory, platform === "win32" ? "gobind.exe" : "gobind");
   const output = target === "android"
     ? path.join(plugin, "android", "libs", "mobilewallet.aar")
     : path.join(plugin, "ios", "Frameworks", "Mobilewallet.xcframework");
@@ -27,12 +29,13 @@ export function bindingPlan(target, platform = process.platform, root = defaultR
   }
   args.push(`-o=${output}`, "./mobilewallet");
   return {
-    prepareCommand: ["go", "tool", "gomobile", "init"],
+    prepareCommand: ["go", "build", "-trimpath", `-o=${gobind}`, "golang.org/x/mobile/cmd/gobind"],
     command: ["go", "tool", "gomobile", "bind"],
     args,
     output,
     package: "./mobilewallet",
     root,
+    toolDirectory,
   };
 }
 
@@ -84,10 +87,16 @@ async function checkBindings() {
 
 function build(target) {
   const plan = bindingPlan(target);
+  mkdirSync(plan.toolDirectory, { recursive: true });
   mkdirSync(path.dirname(plan.output), { recursive: true });
   rmSync(plan.output, { recursive: true, force: true });
   run(plan.prepareCommand[0], plan.prepareCommand.slice(1));
-  run(plan.command[0], [...plan.command.slice(1), ...plan.args]);
+  run(plan.command[0], [...plan.command.slice(1), ...plan.args], {
+    env: {
+      ...process.env,
+      PATH: `${plan.toolDirectory}${path.delimiter}${process.env.PATH || ""}`,
+    },
+  });
   if (!existsSync(plan.output)) {
     throw new Error(`Mobile core output was not created at ${plan.output}.`);
   }

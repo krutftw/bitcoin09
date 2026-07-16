@@ -6,7 +6,11 @@ import { bindingPlan } from "./prepare-core.mjs";
 test("Android binding is a pinned, app-private AAR with a modern minimum API", () => {
   const plan = bindingPlan("android", "win32", "C:/repo");
 
-  assert.deepEqual(plan.prepareCommand, ["go", "tool", "gomobile", "init"]);
+  assert.deepEqual(plan.prepareCommand.slice(0, 3), ["go", "build", "-trimpath"]);
+  assert.match(plan.prepareCommand[3], /-o=.*mobile-tools[\\/]gobind\.exe$/);
+  assert.equal(plan.prepareCommand[4], "golang.org/x/mobile/cmd/gobind");
+  assert.doesNotMatch(plan.prepareCommand.join(" "), /@latest/);
+  assert.match(plan.toolDirectory, /src-tauri[\\/]target[\\/]mobile-tools$/);
   assert.deepEqual(plan.command, ["go", "tool", "gomobile", "bind"]);
   assert.ok(plan.args.includes("-target=android"));
   assert.ok(plan.args.includes("-androidapi=24"));
