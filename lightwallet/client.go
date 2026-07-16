@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net"
 	"net/http"
@@ -70,6 +71,24 @@ func (c *Client) Snapshot(ctx context.Context, addresses []string) (SnapshotResp
 	}
 	if err := c.validateSnapshot(response, canonical); err != nil {
 		return SnapshotResponse{}, fmt.Errorf("invalid gateway snapshot: %w", err)
+	}
+	return response, nil
+}
+
+func (c *Client) View(ctx context.Context, addresses []string, activityLimit int) (ViewResponse, error) {
+	if activityLimit < 0 || activityLimit > MaxWalletActivityLimit {
+		return ViewResponse{}, fmt.Errorf("activity limit must be between 0 and %d", MaxWalletActivityLimit)
+	}
+	canonical, err := canonicalClientAddresses(addresses)
+	if err != nil {
+		return ViewResponse{}, err
+	}
+	var response ViewResponse
+	if err := c.post(ctx, ViewPath, ViewRequest{Addresses: canonical, ActivityLimit: activityLimit}, &response); err != nil {
+		return ViewResponse{}, err
+	}
+	if err := c.validateView(response, canonical, activityLimit); err != nil {
+		return ViewResponse{}, fmt.Errorf("invalid gateway view: %w", err)
 	}
 	return response, nil
 }
@@ -206,4 +225,178 @@ func (c *Client) validateSnapshot(response SnapshotResponse, addresses []string)
 		return errors.New("snapshot spendable total is inconsistent")
 	}
 	return nil
+}
+
+func (c *Client) validateView(response ViewResponse, addresses []string, activityLimit int) error {
+	if response.SchemaVersion != SchemaVersion || response.Network != c.network || response.Tip.Height < 0 ||
+		len(response.Addresses) != len(addresses) || len(response.Outputs) > MaxSnapshotOutputs ||
+		len(response.ImmatureOutputs) > MaxSnapshotOutputs || len(response.Activity) > activityLimit ||
+		response.SpendableOutputCount != len(response.Outputs) {
+		return errors.New("view identity is inconsistent")
+	}
+	if _, err := decodeCanonicalHash(response.Tip.Hash); err != nil {
+		return errors.New("view tip is invalid")
+	}
+	owners := make(map[string]struct{}, len(addresses))
+	for index, address := range addresses {
+		if response.Addresses[index] != address {
+			return errors.New("view address set changed")
+		}
+		owners[address] = struct{}{}
+	}
+	seenOutpoints := make(map[core.OutPoint]struct{}, len(response.Outputs)+len(response.ImmatureOutputs))
+	spendableTotal, err := validateViewOutputs(response.Outputs, owners, seenOutpoints)
+	if err != nil || spendableTotal != response.SpendableUnits {
+		return errors.New("view spendable outputs are inconsistent")
+	}
+	maturity := c.coinbaseMaturity()
+	var immatureTotal int64
+	var previousTxID core.Hash32
+	var previousVout uint32
+	for index, output := range response.ImmatureOutputs {
+		txID, err := decodeCanonicalHash(output.TxID)
+		wantConfirmations, validHeight := viewConfirmations(response.Tip.Height, output.BlockHeight)
+		if err != nil || output.AmountUnits <= 0 || !core.MoneyRange(output.AmountUnits) || !validHeight ||
+			output.Confirmations != wantConfirmations ||
+			output.Confirmations <= 0 || output.Confirmations >= maturity {
+			return errors.New("view immature output is invalid")
+		}
+		if _, owned := owners[output.Address]; !owned {
+			return errors.New("view immature output has a foreign owner")
+		}
+		outpoint := core.OutPoint{TxID: txID, Idx: output.Vout}
+		if _, duplicate := seenOutpoints[outpoint]; duplicate {
+			return errors.New("view contains a duplicate outpoint")
+		}
+		seenOutpoints[outpoint] = struct{}{}
+		if index > 0 {
+			comparison := bytes.Compare(previousTxID[:], txID[:])
+			if comparison > 0 || (comparison == 0 && previousVout >= output.Vout) {
+				return errors.New("view immature outputs are not strictly sorted")
+			}
+		}
+		if immatureTotal > core.MaxMoneyUnits-output.AmountUnits {
+			return errors.New("view immature total overflow")
+		}
+		immatureTotal += output.AmountUnits
+		previousTxID, previousVout = txID, output.Vout
+	}
+	if immatureTotal != response.ImmatureUnits {
+		return errors.New("view immature total is inconsistent")
+	}
+	seenActivity := make(map[core.Hash32]struct{}, len(response.Activity))
+	confirmedPhase := false
+	previousConfirmedHeight := int64(0)
+	hasConfirmed := false
+	var previousMempoolID core.Hash32
+	for index, item := range response.Activity {
+		txID, err := decodeCanonicalHash(item.TxID)
+		if err != nil {
+			return errors.New("view activity transaction ID is invalid")
+		}
+		if _, duplicate := seenActivity[txID]; duplicate {
+			return errors.New("view contains duplicate activity")
+		}
+		seenActivity[txID] = struct{}{}
+		if !validViewActivityAmount(item) {
+			return errors.New("view activity amount or kind is invalid")
+		}
+		switch item.Status {
+		case core.WalletActivityMempool:
+			if confirmedPhase || item.Kind == core.WalletActivityMiningReward || item.BlockHeight != -1 ||
+				item.Confirmations != 0 || item.BlocksUntilMature != 0 {
+				return errors.New("view mempool activity is inconsistent")
+			}
+			if index > 0 && response.Activity[index-1].Status == core.WalletActivityMempool &&
+				bytes.Compare(previousMempoolID[:], txID[:]) >= 0 {
+				return errors.New("view mempool activity is not strictly sorted")
+			}
+			previousMempoolID = txID
+		case core.WalletActivityConfirmed:
+			confirmedPhase = true
+			wantConfirmations, validHeight := viewConfirmations(response.Tip.Height, item.BlockHeight)
+			if !validHeight || (hasConfirmed && item.BlockHeight > previousConfirmedHeight) ||
+				item.Confirmations != wantConfirmations || item.Confirmations <= 0 {
+				return errors.New("view confirmed activity is inconsistent")
+			}
+			wantBlocks := int64(0)
+			if item.Kind == core.WalletActivityMiningReward && item.Confirmations < maturity {
+				wantBlocks = maturity - item.Confirmations
+			}
+			if item.BlocksUntilMature != wantBlocks {
+				return errors.New("view mining reward maturity is inconsistent")
+			}
+			previousConfirmedHeight = item.BlockHeight
+			hasConfirmed = true
+		default:
+			return errors.New("view activity status is invalid")
+		}
+	}
+	return nil
+}
+
+func viewConfirmations(tipHeight, blockHeight int64) (int64, bool) {
+	if tipHeight < 0 || blockHeight < 0 || blockHeight > tipHeight {
+		return 0, false
+	}
+	distance := tipHeight - blockHeight
+	if distance == math.MaxInt64 {
+		return 0, false
+	}
+	return distance + 1, true
+}
+
+func validateViewOutputs(outputs []SnapshotOutput, owners map[string]struct{}, seen map[core.OutPoint]struct{}) (int64, error) {
+	var total int64
+	var previousTxID core.Hash32
+	var previousVout uint32
+	for index, output := range outputs {
+		txID, err := decodeCanonicalHash(output.TxID)
+		if err != nil || output.AmountUnits <= 0 || !core.MoneyRange(output.AmountUnits) {
+			return 0, errors.New("invalid spendable output")
+		}
+		if _, owned := owners[output.Address]; !owned {
+			return 0, errors.New("foreign spendable owner")
+		}
+		outpoint := core.OutPoint{TxID: txID, Idx: output.Vout}
+		if _, duplicate := seen[outpoint]; duplicate {
+			return 0, errors.New("duplicate spendable outpoint")
+		}
+		seen[outpoint] = struct{}{}
+		if index > 0 {
+			comparison := bytes.Compare(previousTxID[:], txID[:])
+			if comparison > 0 || (comparison == 0 && previousVout >= output.Vout) {
+				return 0, errors.New("spendable outputs are not strictly sorted")
+			}
+		}
+		if total > core.MaxMoneyUnits-output.AmountUnits {
+			return 0, errors.New("spendable total overflow")
+		}
+		total += output.AmountUnits
+		previousTxID, previousVout = txID, output.Vout
+	}
+	return total, nil
+}
+
+func validViewActivityAmount(item ViewActivityItem) bool {
+	if item.NetUnits < -core.MaxMoneyUnits || item.NetUnits > core.MaxMoneyUnits {
+		return false
+	}
+	switch item.Kind {
+	case core.WalletActivityReceived, core.WalletActivityMiningReward:
+		return item.NetUnits > 0
+	case core.WalletActivitySent:
+		return item.NetUnits < 0
+	case core.WalletActivityCleanup:
+		return item.NetUnits <= 0
+	default:
+		return false
+	}
+}
+
+func (c *Client) coinbaseMaturity() int64 {
+	if c.network == core.MainNetMachineID {
+		return 100
+	}
+	return 2
 }
