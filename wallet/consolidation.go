@@ -77,6 +77,9 @@ func (w *Wallet) PrepareCleanupAt(c *core.Chain, expected core.ChainTipSnapshot,
 		}
 		return nil
 	})
+	if err != nil {
+		prepared = nil
+	}
 	return snapshot, prepared, err
 }
 
@@ -99,6 +102,9 @@ func (w *Wallet) PrepareCleanupFromRemoteSnapshot(remote RemoteSnapshot, fee int
 		}
 		return validateSelectedAnchored(prepared.SelectedOutpoints, anchoredOutpoints(snapshot))
 	})
+	if err != nil {
+		prepared = nil
+	}
 	return snapshot, prepared, err
 }
 
