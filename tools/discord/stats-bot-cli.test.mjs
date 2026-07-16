@@ -34,6 +34,15 @@ test("watch exits cleanly on terminal startup configuration errors", () => {
   assert.match(result.stderr, /Missing required environment variables/);
 });
 
+test("CLI help lists every Node-owned guild command", () => {
+  const result = run("--help");
+  assert.equal(result.status, 0);
+  assert.match(
+    result.stdout,
+    /\/stats, \/rank, \/leaderboard, \/wallet, and \/mine commands/,
+  );
+});
+
 const explorerStatus = {
   height: 7386,
   peers: 6,

@@ -819,7 +819,7 @@ Usage:
 
 Modes:
   no args              Print current stats locally.
-  --register-commands  Register the guild /stats, /rank, and /leaderboard commands.
+  --register-commands  Register the guild /stats, /rank, /leaderboard, /wallet, and /mine commands.
   --post               Post or update one stats message in Discord.
   --watch              Keep a gateway connection open for role buttons.
 
