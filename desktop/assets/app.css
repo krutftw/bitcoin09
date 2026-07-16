@@ -142,8 +142,10 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
 .balance-value b { color: var(--copper); font: 13px var(--mono); }
 .balance-note { min-height: 18px; margin: 0; color: var(--ink-muted); font: 12px var(--mono); }
 .balance-note small { margin-left: 9px; }
+.balance-secondary { margin: 8px 0 0; color: var(--ink-muted); font: 11px/1.45 var(--mono); }
+.balance-secondary strong { margin-left: 5px; color: var(--ink); font-weight: 500; }
 
-.quick-actions { max-width: 500px; margin: 8px auto 28px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.quick-actions { max-width: 580px; margin: 8px auto 28px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
 .ledger-tab { padding: 0; display: grid; justify-items: center; gap: 7px; background: transparent; color: var(--ink-muted); font: 12px var(--mono); }
 .ledger-tab span { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid var(--line); border-radius: 50%; background: var(--paper-bright); color: var(--ink); font-size: 18px; transition: background 140ms ease, color 140ms ease, border-color 140ms ease; }
 .ledger-tab b { font-weight: 400; }
@@ -209,11 +211,43 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
 .amount-input { display: grid; grid-template-columns: 1fr auto; align-items: center; border: 1px solid var(--line); border-radius: 9px; background: var(--paper-bright); }
 .amount-input input { border: 0; background: transparent; }
 .amount-input b { padding-right: 12px; color: var(--copper); font: 11px var(--mono); }
+.field-label-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.field-label-action #send-max { margin: -6px -5px -6px 0; padding: 6px; border: 0; background: transparent; color: var(--copper-dark); font: 11px var(--mono); cursor: pointer; }
+.field-label-action #send-max:hover { text-decoration: underline; text-underline-offset: 3px; }
+.field-label-action #send-max:disabled { color: var(--ink-muted); cursor: not-allowed; text-decoration: none; opacity: .55; }
+.amount-with-max:focus-within { border-color: var(--copper); }
 .backup-copy .primary-action, #send-form .primary-action { max-width: 230px; }
+
+.compact-action { min-height: 34px; padding-inline: 12px; }
+.activity-list { min-height: 96px; border-top: 1px solid var(--line); }
+.activity-empty { margin: 0; padding: 28px 0; color: var(--ink-muted); font-size: 14px; text-align: center; }
+.activity-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 20px; padding: 15px 0; border-bottom: 1px solid var(--line); }
+.activity-main { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 11px; align-items: center; }
+.activity-mark { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 50%; background: var(--paper); color: var(--copper-dark); font: 14px var(--mono); }
+.activity-copy { min-width: 0; }
+.activity-copy strong { display: block; font-size: 15px; font-weight: 500; }
+.activity-copy code { display: block; margin-top: 3px; overflow: hidden; color: var(--ink-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.activity-value { align-self: center; text-align: right; }
+.activity-value strong { display: block; font: 13px var(--mono); font-weight: 500; }
+.activity-value strong.is-positive { color: var(--signal); }
+.activity-value span { display: block; margin-top: 4px; color: var(--ink-muted); font: 11px var(--mono); }
+.activity-actions { grid-column: 1 / -1; margin-left: 43px; display: flex; gap: 13px; }
+.activity-actions button, .activity-actions a { padding: 0; border: 0; background: transparent; color: var(--copper-dark); font: 11px var(--mono); text-decoration: none; cursor: pointer; }
+.activity-actions button:hover, .activity-actions a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+.cleanup-card { margin-top: 22px; padding: 18px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, .65fr); gap: 24px; align-items: end; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+.cleanup-card.is-recommended { border-color: #b88361; box-shadow: inset 3px 0 0 var(--copper); }
+.cleanup-card .tool-label { color: var(--copper-dark); font: 10px var(--mono); letter-spacing: .09em; }
+.cleanup-card h3 { margin: 5px 0 6px; font-size: 18px; font-weight: 500; }
+.cleanup-card p { margin: 0; color: var(--ink-muted); font-size: 13px; line-height: 1.45; }
+.cleanup-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.cleanup-controls .field-label { margin-bottom: 6px; }
+.cleanup-controls .amount-input input { min-width: 0; height: 39px; }
+.cleanup-controls .quiet-action { min-height: 41px; white-space: nowrap; }
 
 .review-sheet { width: min(540px, calc(100% - 28px)); max-height: calc(100vh - 28px); padding: 0; border: 0; border-radius: 16px; background: transparent; color: var(--ink); }
 .review-sheet::backdrop { background: rgba(17, 19, 16, .68); backdrop-filter: blur(4px); }
-.review-card { padding: 30px; border-radius: 16px; background: var(--paper-bright); }
+.review-card { max-height: calc(100vh - 28px); padding: 30px; overflow: auto; border-radius: 16px; background: var(--paper-bright); }
 .review-header { display: flex; justify-content: space-between; align-items: center; }
 .review-card > p { color: var(--ink-muted); font-size: 14px; line-height: 1.45; }
 .review-ledger { margin: 24px 0 0; border-top: 1px solid var(--line); }
@@ -229,6 +263,9 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
 .send-result code { display: block; margin-top: 5px; color: #afb3a6; font-size: 10px; }
 .result-mark { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--signal); border-radius: 50%; color: #94be9a; }
 .send-result .icon-button { color: var(--paper-bright); }
+.result-actions { margin-top: 8px; display: flex; gap: 14px; }
+.result-actions button, .result-actions a { padding: 0; border: 0; background: transparent; color: #e5a177; font: 11px var(--mono); text-decoration: none; cursor: pointer; }
+.result-actions button:hover, .result-actions a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 @keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -251,6 +288,7 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
   .account-summary { padding-top: 24px; }
   .ledger-panel { padding: 23px 20px 26px; }
   .receive-layout { grid-template-columns: 120px minmax(0, 1fr); gap: 20px; }
+  .cleanup-card { grid-template-columns: 1fr; gap: 15px; }
   .recovery-word-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
@@ -260,9 +298,9 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
   .address-chip { max-width: 145px; }
   .balance-value strong { font-size: 42px; }
   .balance-value span { font-size: 16px; }
-  .quick-actions { max-width: 360px; gap: 8px; }
-  .ledger-tab { gap: 5px; font-size: 11px; }
-  .ledger-tab span { width: 39px; height: 39px; }
+  .quick-actions { width: 100%; max-width: 390px; gap: 4px; }
+  .ledger-tab { gap: 5px; font-size: 10px; }
+  .ledger-tab span { width: 36px; height: 36px; font-size: 16px; }
   .receive-layout { display: block; }
   .qr-frame { width: 140px; margin: 0 auto 22px; }
   .field-pair { grid-template-columns: 1fr; gap: 16px; }
@@ -279,7 +317,12 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
   .miner-actions { flex-wrap: wrap; }
   .miner-actions #miner-session-meta { width: 100%; margin: 2px 0 0; }
   .miner-help-row { grid-template-columns: 1fr; gap: 8px; }
+  .cleanup-controls { grid-template-columns: 1fr; }
+  .cleanup-controls .quiet-action { width: 100%; }
+  .activity-row { gap: 10px; }
+  .activity-actions { margin-left: 43px; }
   .review-ledger div { grid-template-columns: 88px 1fr; }
+  .send-result { right: 14px; bottom: 14px; width: calc(100% - 28px); grid-template-columns: auto minmax(0, 1fr) auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -132,14 +132,16 @@
           </header>
 
           <section class="account-summary">
-            <span class="balance-label">TOTAL BALANCE</span>
+            <span class="balance-label">READY TO SEND</span>
             <p class="balance-value"><strong id="balance-major">0</strong><span id="balance-minor">.00000000</span> <b>09C</b></p>
             <p class="balance-note"><span id="balance-state">LOCAL CHAIN BALANCE</span><small id="tip-hash">Tip —</small></p>
+            <p id="mining-rewards" class="balance-secondary" hidden>Mining rewards waiting <strong id="mining-rewards-value">0.00000000 09C</strong></p>
           </section>
 
           <nav class="quick-actions" aria-label="Wallet actions">
             <button class="ledger-tab is-active" type="button" data-panel="receive-panel"><span aria-hidden="true">↓</span><b>Receive</b></button>
             <button class="ledger-tab" type="button" data-panel="send-panel"><span aria-hidden="true">↑</span><b>Send</b></button>
+            <button class="ledger-tab" type="button" data-panel="activity-panel"><span aria-hidden="true">≡</span><b>Activity</b></button>
             <button class="ledger-tab" type="button" data-panel="miner-panel"><span aria-hidden="true">M</span><b>Mine</b></button>
             <button class="ledger-tab" type="button" data-panel="safety-panel"><span aria-hidden="true">◇</span><b>Backup</b></button>
           </nav>
@@ -167,12 +169,35 @@
               <form id="send-form" novalidate>
                 <label class="field wide-field"><span class="field-label">DESTINATION ADDRESS</span><input id="send-destination" name="destination" autocomplete="off" spellcheck="false" required></label>
                 <div class="field-pair">
-                  <label class="field"><span class="field-label">AMOUNT</span><span class="amount-input"><input id="send-amount" name="amount" inputmode="decimal" placeholder="0.00000000" required><b>09C</b></span></label>
+                  <div class="field"><span class="field-label field-label-action"><label for="send-amount">AMOUNT</label><button id="send-max" type="button" aria-label="Use maximum amount">Max</button></span><span class="amount-input amount-with-max"><input id="send-amount" name="amount" inputmode="decimal" placeholder="0.00000000" required><b>09C</b></span></div>
                   <label class="field"><span class="field-label">NETWORK FEE</span><span class="amount-input"><input id="send-fee" name="fee" inputmode="decimal" value="0.00010000" required><b>09C</b></span></label>
                 </div>
                 <p id="send-availability" class="field-note">Checking chain and peer connection…</p>
                 <button class="primary-action full-action" id="preview-send" type="submit">Review payment</button>
               </form>
+            </section>
+
+            <section id="activity-panel" class="ledger-panel activity-panel" hidden aria-label="Activity can include Received, Sent, Mining reward, and Wallet cleanup">
+              <div class="panel-heading">
+                <div><p class="kicker">ACTIVITY</p><h2>Wallet history</h2></div>
+                <button id="refresh-activity" class="quiet-action compact-action" type="button">Refresh</button>
+              </div>
+              <p class="panel-intro">Recent payments and mining rewards.</p>
+              <div id="activity-list" class="activity-list" aria-live="polite">
+                <p class="activity-empty">Open Activity to load wallet history.</p>
+              </div>
+
+              <section id="cleanup-card" class="cleanup-card" hidden>
+                <div class="cleanup-copy">
+                  <span class="tool-label">WALLET TOOL</span>
+                  <h3>Combine small payments</h3>
+                  <p id="cleanup-summary">Use fewer payments in a future send.</p>
+                </div>
+                <div class="cleanup-controls">
+                  <label class="field"><span class="field-label">NETWORK FEE</span><span class="amount-input"><input id="cleanup-fee" inputmode="decimal" value="0.00010000"><b>09C</b></span></label>
+                  <button id="preview-cleanup" class="quiet-action" type="button">Review cleanup</button>
+                </div>
+              </section>
             </section>
 
             <section id="safety-panel" class="ledger-panel" hidden>
@@ -257,6 +282,7 @@
         <div><dt>AMOUNT</dt><dd id="review-amount">—</dd></div>
         <div><dt>FEE</dt><dd id="review-fee">—</dd></div>
         <div class="review-total"><dt>TOTAL</dt><dd id="review-total">—</dd></div>
+        <div id="review-input-count" hidden><dt>PAYMENTS</dt><dd id="review-input-count-value">—</dd></div>
         <div><dt>CHAIN HEIGHT</dt><dd id="review-height">—</dd></div>
         <div><dt>CHECK CODE</dt><dd id="review-code">—</dd></div>
       </dl>
@@ -264,10 +290,28 @@
     </form>
   </dialog>
 
+  <dialog id="review-cleanup" class="review-sheet" aria-labelledby="cleanup-review-title">
+    <form method="dialog" class="review-card">
+      <div class="review-header"><p class="kicker">WALLET CLEANUP</p><button class="icon-button" value="cancel" aria-label="Close cleanup review">×</button></div>
+      <h2 id="cleanup-review-title">Combine these payments?</h2>
+      <p>This sends them back to one address in this wallet.</p>
+      <dl class="review-ledger">
+        <div><dt>PAYMENTS</dt><dd id="cleanup-review-count">—</dd></div>
+        <div><dt>BACK TO</dt><dd id="cleanup-review-address">—</dd></div>
+        <div><dt>NEW AMOUNT</dt><dd id="cleanup-review-amount">—</dd></div>
+        <div><dt>FEE</dt><dd id="cleanup-review-fee">—</dd></div>
+        <div><dt>CHAIN HEIGHT</dt><dd id="cleanup-review-height">—</dd></div>
+        <div><dt>CHECK CODE</dt><dd id="cleanup-review-code">—</dd></div>
+      </dl>
+      <p id="cleanup-more-note" class="review-note" hidden>Another batch may remain after this one confirms.</p>
+      <div class="review-actions"><button class="quiet-action" value="cancel">Go back</button><button id="confirm-cleanup" class="primary-action" type="button">Combine payments</button></div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   <section id="send-result" class="send-result" aria-live="polite" hidden>
     <span class="result-mark" aria-hidden="true">✓</span>
-    <div><strong>Payment submitted</strong><code id="result-txid"></code></div>
+    <div><strong id="result-title">Payment submitted</strong><code id="result-txid"></code><div class="result-actions"><button id="copy-result-txid" type="button">Copy TXID</button><a id="open-result-txid" href="#" target="_blank" rel="noopener noreferrer">Open in explorer ↗</a></div></div>
     <button id="dismiss-result" class="icon-button" type="button" aria-label="Dismiss result">×</button>
   </section>
   <script src="/assets/app.js" defer></script>
