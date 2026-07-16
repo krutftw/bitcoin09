@@ -25,6 +25,8 @@ import (
 const (
 	appSendLifetime              = 5 * time.Minute
 	appMaxPending                = 32
+	appDefaultFeeUnits           = int64(10_000)
+	appCleanupRecommendation     = 20
 	defaultMainnetMiningEndpoint = "https://btc09.org"
 )
 
@@ -35,6 +37,7 @@ type appPeerSet interface {
 
 type appGateway interface {
 	Snapshot(context.Context, []string) (lightwallet.SnapshotResponse, error)
+	View(context.Context, []string, int) (lightwallet.ViewResponse, error)
 	Broadcast(context.Context, *core.Tx) (lightwallet.BroadcastResponse, error)
 }
 
@@ -55,10 +58,18 @@ type appServiceConfig struct {
 	MiningURL  string
 }
 
+type appPendingPurpose string
+
+const (
+	appPendingSend    appPendingPurpose = "send"
+	appPendingCleanup appPendingPurpose = "cleanup"
+)
+
 type appPendingPayment struct {
 	tx        *core.Tx
 	expiresAt time.Time
 	inFlight  bool
+	purpose   appPendingPurpose
 }
 
 type appService struct {
@@ -75,6 +86,7 @@ type appService struct {
 	miningHTTP bool
 
 	mu             sync.Mutex
+	previewMu      sync.Mutex
 	pending        map[string]*appPendingPayment
 	now            func() time.Time
 	submit         func(*core.Tx) (core.TxAcceptanceResult, int, error)
@@ -409,12 +421,12 @@ func (s *appService) Status(ctx context.Context) (desktop.Status, error) {
 	status.WalletVersion = w.Schema()
 	status.Addresses = addresses
 	if s.mode == "fast" {
-		remote, err := s.gateway.Snapshot(ctx, addresses)
+		remote, err := s.gateway.View(ctx, addresses, 0)
 		if err != nil {
 			status.SyncState = "unavailable"
 			return status, nil
 		}
-		walletSnapshot, err := w.ValidateRemoteSnapshot(remoteWalletSnapshot(remote))
+		walletSnapshot, err := w.ValidateRemoteSnapshot(remoteWalletViewSnapshot(remote))
 		if err != nil {
 			status.SyncState = "unavailable"
 			return status, nil
@@ -422,30 +434,36 @@ func (s *appService) Status(ctx context.Context) (desktop.Status, error) {
 		status.Height = walletSnapshot.Tip.Height
 		status.TipHash = fmt.Sprintf("%x", walletSnapshot.Tip.Hash)
 		status.BalanceUnits = walletSnapshot.SpendableUnits
+		status.ImmatureUnits = remote.ImmatureUnits
+		status.SpendableOutputCount = len(walletSnapshot.Outpoints)
+		status.CleanupAvailable, status.CleanupRecommended = cleanupAvailabilityByAddress(remote.Outputs)
 		status.BalanceAvailable = true
 		status.SyncState = "connected"
 		status.SendAvailable = true
 		return status, nil
 	}
-	tip, err := s.chain.CanonicalTipSnapshot()
+	pkhs, err := decodeWalletPKHs(addresses)
 	if err != nil {
 		return desktop.Status{}, err
 	}
-	status.Height = tip.Height
-	status.TipHash = fmt.Sprintf("%x", tip.Hash)
+	view, err := s.chain.WalletViewForPKHs(pkhs, 0)
+	if err != nil || !view.Complete || view.Network != s.network || view.Tip.Network != s.network {
+		return desktop.Status{}, errors.New("wallet chain view is unavailable")
+	}
+	status.Height = view.Tip.Height
+	status.TipHash = fmt.Sprintf("%x", view.Tip.Hash)
 	if s.peers != nil {
 		status.PeerCount = s.peers.PeerCount()
 		if status.PeerCount > 0 {
 			status.SyncState = "connected"
 		}
 	}
-	balance, err := w.BalanceE(s.chain)
-	if err != nil {
-		return desktop.Status{}, err
-	}
-	status.BalanceUnits = balance
+	status.BalanceUnits = view.SpendableUnits
+	status.ImmatureUnits = view.ImmatureUnits
+	status.SpendableOutputCount = len(view.SpendableOutputs)
+	status.CleanupAvailable, status.CleanupRecommended = cleanupAvailabilityByOwner(view.SpendableOutputs)
 	status.BalanceAvailable = true
-	status.SendAvailable = tip.Height > 0 && status.PeerCount > 0
+	status.SendAvailable = view.Tip.Height > 0 && status.PeerCount > 0
 	return status, nil
 }
 
@@ -634,6 +652,27 @@ func (s *appService) PreviewSend(ctx context.Context, request desktop.SendReques
 	if amount > core.MaxMoneyUnits-fee {
 		return desktop.SendPreview{}, publicAppError(http.StatusBadRequest, "amount_invalid", "The amount plus fee is too large.", nil)
 	}
+	return s.previewPayment(ctx, request.Destination, amount, fee, false)
+}
+
+func (s *appService) PreviewMaxSend(ctx context.Context, request desktop.MaxSendRequest) (desktop.SendPreview, error) {
+	if err := ctx.Err(); err != nil {
+		return desktop.SendPreview{}, err
+	}
+	fee, err := parseCoinAmount(request.Fee, true)
+	if err != nil {
+		return desktop.SendPreview{}, publicAppError(http.StatusBadRequest, "fee_invalid", "Enter a valid fee with up to eight decimal places.", err)
+	}
+	return s.previewPayment(ctx, request.Destination, 0, fee, true)
+}
+
+func (s *appService) previewPayment(ctx context.Context, destination string, amount, fee int64, maximum bool) (desktop.SendPreview, error) {
+	s.previewMu.Lock()
+	defer s.previewMu.Unlock()
+	excluded, err := s.pendingRestrictions()
+	if err != nil {
+		return desktop.SendPreview{}, err
+	}
 	w, err := s.walletHandle()
 	if err != nil {
 		return desktop.SendPreview{}, publicAppError(http.StatusConflict, "wallet_required", "Create the wallet before sending 09C.", err)
@@ -645,48 +684,189 @@ func (s *appService) PreviewSend(ctx context.Context, request desktop.SendReques
 		if addressErr != nil {
 			return desktop.SendPreview{}, addressErr
 		}
-		remote, snapshotErr := s.gateway.Snapshot(ctx, addresses)
+		remote, snapshotErr := s.gateway.View(ctx, addresses, 0)
 		if snapshotErr != nil {
 			return desktop.SendPreview{}, publicAppError(http.StatusServiceUnavailable, "wallet_service_unavailable", "The wallet service is temporarily unavailable. Your funds are safe; try again.", snapshotErr)
 		}
 		var walletSnapshot wallet.Snapshot
-		walletSnapshot, prepared, err = w.PrepareFromRemoteSnapshot(remoteWalletSnapshot(remote), request.Destination, amount, fee, nil)
+		if maximum {
+			walletSnapshot, prepared, err = w.PrepareMaximumFromRemoteSnapshot(remoteWalletViewSnapshot(remote), destination, fee, excluded)
+		} else {
+			walletSnapshot, prepared, err = w.PrepareFromRemoteSnapshot(remoteWalletViewSnapshot(remote), destination, amount, fee, excluded)
+		}
 		tip = walletSnapshot.Tip
 	} else {
 		tip, err = s.chain.CanonicalTipSnapshot()
 		if err == nil {
-			_, prepared, err = w.PrepareAt(s.chain, tip, request.Destination, amount, fee, nil)
+			if maximum {
+				_, prepared, err = w.PrepareMaximumAt(s.chain, tip, destination, fee, excluded)
+			} else {
+				_, prepared, err = w.PrepareAt(s.chain, tip, destination, amount, fee, excluded)
+			}
 		}
 	}
 	if err != nil {
 		return desktop.SendPreview{}, publicAppError(http.StatusBadRequest, "payment_invalid", "The payment could not be prepared. Check the address, amount, fee, and balance.", err)
 	}
-	pendingID, err := appRandomID()
+	if maximum {
+		if prepared == nil || prepared.Tx == nil || len(prepared.Tx.Outs) != 1 {
+			return desktop.SendPreview{}, errors.New("maximum payment preview is inconsistent")
+		}
+		amount = prepared.Tx.Outs[0].Value
+	}
+	return s.newSendPreview(prepared, tip, destination, amount, fee, appPendingSend)
+}
+
+func (s *appService) newSendPreview(prepared *wallet.PreparedPayment, tip core.ChainTipSnapshot, destination string, amount, fee int64, purpose appPendingPurpose) (desktop.SendPreview, error) {
+	if prepared == nil || prepared.Tx == nil || amount <= 0 || fee < 0 || amount > core.MaxMoneyUnits-fee {
+		return desktop.SendPreview{}, errors.New("payment preview is inconsistent")
+	}
+	pendingID, expiresAt, err := s.storePending(prepared.Tx, purpose)
 	if err != nil {
 		return desktop.SendPreview{}, err
 	}
 	txID := prepared.Tx.ID()
-	expiresAt := s.now().Add(appSendLifetime)
 	selected := make([]string, len(prepared.SelectedOutpoints))
 	for index, outpoint := range prepared.SelectedOutpoints {
 		selected[index] = formatOutpoint(outpoint)
 	}
-	s.mu.Lock()
-	s.prunePendingLocked(s.now())
-	if len(s.pending) >= appMaxPending {
-		s.mu.Unlock()
-		return desktop.SendPreview{}, publicAppError(http.StatusTooManyRequests, "too_many_previews", "Confirm or wait for an existing payment preview before creating another.", nil)
-	}
-	s.pending[pendingID] = &appPendingPayment{tx: prepared.Tx, expiresAt: expiresAt}
-	s.mu.Unlock()
 	return desktop.SendPreview{
-		PendingID: pendingID, Destination: request.Destination, AmountUnits: amount, FeeUnits: fee,
+		PendingID: pendingID, Destination: destination, AmountUnits: amount, FeeUnits: fee,
 		TotalUnits: amount + fee, TxID: fmt.Sprintf("%x", txID), SelectedInputs: selected,
 		ChainHeight: tip.Height, ExpiresAtUnix: expiresAt.Unix(), ConfirmationCode: strings.ToUpper(fmt.Sprintf("%x", txID[:3])),
 	}, nil
 }
 
+func (s *appService) Activity(ctx context.Context) (desktop.ActivityResult, error) {
+	if err := ctx.Err(); err != nil {
+		return desktop.ActivityResult{}, err
+	}
+	w, err := s.walletHandle()
+	if err != nil {
+		return desktop.ActivityResult{}, publicAppError(http.StatusConflict, "wallet_required", "Create the wallet to see activity.", err)
+	}
+	addresses, err := w.AddressesE()
+	if err != nil {
+		return desktop.ActivityResult{}, err
+	}
+	if s.mode == "fast" {
+		view, err := s.gateway.View(ctx, addresses, lightwallet.MaxWalletActivityLimit)
+		if err != nil {
+			return desktop.ActivityResult{}, publicAppError(http.StatusServiceUnavailable, "wallet_service_unavailable", "The wallet service is temporarily unavailable. Your funds are safe; try again.", err)
+		}
+		if _, err := w.ValidateRemoteSnapshot(remoteWalletViewSnapshot(view)); err != nil {
+			return desktop.ActivityResult{}, publicAppError(http.StatusServiceUnavailable, "wallet_service_unavailable", "The wallet service returned inconsistent data.", err)
+		}
+		items := make([]desktop.ActivityItem, len(view.Activity))
+		for index, item := range view.Activity {
+			items[index] = desktop.ActivityItem{
+				TxID: item.TxID, Kind: item.Kind, Status: item.Status, NetUnits: item.NetUnits,
+				BlockHeight: item.BlockHeight, Confirmations: item.Confirmations, BlocksUntilMature: item.BlocksUntilMature,
+			}
+		}
+		return desktop.ActivityResult{Height: view.Tip.Height, Items: items}, nil
+	}
+	pkhs, err := decodeWalletPKHs(addresses)
+	if err != nil {
+		return desktop.ActivityResult{}, err
+	}
+	view, err := s.chain.WalletViewForPKHs(pkhs, core.MaxWalletActivityLimit)
+	if err != nil || !view.Complete || view.Network != s.network || view.Tip.Network != s.network {
+		return desktop.ActivityResult{}, publicAppError(http.StatusServiceUnavailable, "wallet_service_unavailable", "Wallet activity is temporarily unavailable.", err)
+	}
+	items := make([]desktop.ActivityItem, len(view.Activity))
+	for index, item := range view.Activity {
+		items[index] = desktop.ActivityItem{
+			TxID: fmt.Sprintf("%x", item.TxID), Kind: item.Kind, Status: item.Status, NetUnits: item.NetUnits,
+			BlockHeight: item.BlockHeight, Confirmations: item.Confirmations, BlocksUntilMature: item.BlocksUntilMature,
+		}
+	}
+	return desktop.ActivityResult{Height: view.Tip.Height, Items: items}, nil
+}
+
+func (s *appService) PreviewCleanup(ctx context.Context, request desktop.CleanupRequest) (desktop.CleanupPreview, error) {
+	if err := ctx.Err(); err != nil {
+		return desktop.CleanupPreview{}, err
+	}
+	fee, err := parseCoinAmount(request.Fee, true)
+	if err != nil {
+		return desktop.CleanupPreview{}, publicAppError(http.StatusBadRequest, "fee_invalid", "Enter a valid fee with up to eight decimal places.", err)
+	}
+	s.previewMu.Lock()
+	defer s.previewMu.Unlock()
+	excluded, err := s.pendingRestrictions()
+	if err != nil {
+		return desktop.CleanupPreview{}, err
+	}
+	w, err := s.walletHandle()
+	if err != nil {
+		return desktop.CleanupPreview{}, publicAppError(http.StatusConflict, "wallet_required", "Create the wallet before combining payments.", err)
+	}
+	var tip core.ChainTipSnapshot
+	var prepared *wallet.PreparedCleanup
+	if s.mode == "fast" {
+		addresses, addressErr := w.AddressesE()
+		if addressErr != nil {
+			return desktop.CleanupPreview{}, addressErr
+		}
+		remote, viewErr := s.gateway.View(ctx, addresses, 0)
+		if viewErr != nil {
+			return desktop.CleanupPreview{}, publicAppError(http.StatusServiceUnavailable, "wallet_service_unavailable", "The wallet service is temporarily unavailable. Your funds are safe; try again.", viewErr)
+		}
+		var snapshot wallet.Snapshot
+		snapshot, prepared, err = w.PrepareCleanupFromRemoteSnapshot(remoteWalletViewSnapshot(remote), fee, excluded)
+		tip = snapshot.Tip
+	} else {
+		tip, err = s.chain.CanonicalTipSnapshot()
+		if err == nil {
+			_, prepared, err = w.PrepareCleanupAt(s.chain, tip, fee, excluded)
+		}
+	}
+	if err != nil {
+		return desktop.CleanupPreview{}, cleanupAppError(err, len(excluded) > 0)
+	}
+	if prepared == nil || prepared.Tx == nil || len(prepared.SelectedOutpoints) < 2 {
+		return desktop.CleanupPreview{}, errors.New("cleanup preview is inconsistent")
+	}
+	pendingID, expiresAt, err := s.storePending(prepared.Tx, appPendingCleanup)
+	if err != nil {
+		return desktop.CleanupPreview{}, err
+	}
+	txID := prepared.Tx.ID()
+	return desktop.CleanupPreview{
+		PendingID: pendingID, Address: prepared.Address, AmountUnits: prepared.AmountUnits, FeeUnits: prepared.FeeUnits,
+		InputCount: len(prepared.SelectedOutpoints), MoreAvailable: prepared.MoreAvailable,
+		TxID: fmt.Sprintf("%x", txID), ChainHeight: tip.Height, ExpiresAtUnix: expiresAt.Unix(),
+		ConfirmationCode: strings.ToUpper(fmt.Sprintf("%x", txID[:3])),
+	}, nil
+}
+
+func cleanupAppError(err error, hasRestrictions bool) error {
+	switch {
+	case errors.Is(err, wallet.ErrNoCleanupNeeded) && hasRestrictions:
+		return publicAppError(http.StatusConflict, "cleanup_payments_reserved", "Those payments are already being used by a pending transaction.", err)
+	case errors.Is(err, wallet.ErrNoCleanupNeeded):
+		return publicAppError(http.StatusConflict, "cleanup_not_needed", "Nothing to combine yet.", err)
+	case errors.Is(err, wallet.ErrCleanupTooSmall):
+		return publicAppError(http.StatusBadRequest, "cleanup_fee_too_large", "The fee is more than these small payments.", err)
+	case strings.Contains(err.Error(), "chain tip changed") || strings.Contains(err.Error(), "chain tip or network mismatch"):
+		return publicAppError(http.StatusConflict, "cleanup_wallet_changed", "The wallet changed. Review the cleanup again.", err)
+	case strings.Contains(err.Error(), "10,000-byte limit"):
+		return publicAppError(http.StatusConflict, "cleanup_batch_too_large", "This cleanup is too large for one transaction. Confirm this batch first, then run it again after it confirms.", err)
+	default:
+		return publicAppError(http.StatusBadRequest, "cleanup_invalid", "The cleanup could not be prepared. Check the fee and try again.", err)
+	}
+}
+
 func (s *appService) ConfirmSend(ctx context.Context, pendingID string) (desktop.SendResult, error) {
+	return s.confirmPending(ctx, pendingID, appPendingSend)
+}
+
+func (s *appService) ConfirmCleanup(ctx context.Context, pendingID string) (desktop.SendResult, error) {
+	return s.confirmPending(ctx, pendingID, appPendingCleanup)
+}
+
+func (s *appService) confirmPending(ctx context.Context, pendingID string, purpose appPendingPurpose) (desktop.SendResult, error) {
 	if err := ctx.Err(); err != nil {
 		return desktop.SendResult{}, err
 	}
@@ -695,6 +875,10 @@ func (s *appService) ConfirmSend(ctx context.Context, pendingID string) (desktop
 	if pending == nil {
 		s.mu.Unlock()
 		return desktop.SendResult{}, publicAppError(http.StatusConflict, "preview_unavailable", "That payment preview is no longer available.", nil)
+	}
+	if pending.purpose != purpose {
+		s.mu.Unlock()
+		return desktop.SendResult{}, publicAppError(http.StatusConflict, "preview_wrong_action", "Review this preview from the screen that created it.", nil)
 	}
 	if !pending.expiresAt.After(s.now()) {
 		delete(s.pending, pendingID)
@@ -722,6 +906,51 @@ func (s *appService) ConfirmSend(ctx context.Context, pendingID string) (desktop
 	delete(s.pending, pendingID)
 	s.mu.Unlock()
 	return desktop.SendResult{TxID: fmt.Sprintf("%x", tx.ID()), Status: "submitted", PeerWrites: writes}, nil
+}
+
+func (s *appService) pendingRestrictions() (map[core.OutPoint]struct{}, error) {
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prunePendingLocked(now)
+	if len(s.pending) >= appMaxPending {
+		return nil, publicAppError(http.StatusTooManyRequests, "too_many_previews", "Confirm or wait for an existing payment preview before creating another.", nil)
+	}
+	restricted := make(map[core.OutPoint]struct{})
+	for _, pending := range s.pending {
+		if pending == nil || pending.tx == nil {
+			continue
+		}
+		for _, input := range pending.tx.Ins {
+			restricted[input.Prev] = struct{}{}
+		}
+	}
+	if len(restricted) > wallet.MaxRestrictedOutpoints {
+		return nil, publicAppError(http.StatusTooManyRequests, "too_many_previews", "Confirm or wait for an existing payment preview before creating another.", nil)
+	}
+	return restricted, nil
+}
+
+func (s *appService) storePending(tx *core.Tx, purpose appPendingPurpose) (string, time.Time, error) {
+	if tx == nil || (purpose != appPendingSend && purpose != appPendingCleanup) {
+		return "", time.Time{}, errors.New("invalid pending payment")
+	}
+	pendingID, err := appRandomID()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	expiresAt := s.now().Add(appSendLifetime)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prunePendingLocked(s.now())
+	if len(s.pending) >= appMaxPending {
+		return "", time.Time{}, publicAppError(http.StatusTooManyRequests, "too_many_previews", "Confirm or wait for an existing payment preview before creating another.", nil)
+	}
+	if _, duplicate := s.pending[pendingID]; duplicate {
+		return "", time.Time{}, errors.New("duplicate pending payment identifier")
+	}
+	s.pending[pendingID] = &appPendingPayment{tx: tx, expiresAt: expiresAt, purpose: purpose}
+	return pendingID, expiresAt, nil
 }
 
 func (s *appService) prunePendingLocked(now time.Time) {
@@ -752,6 +981,94 @@ func (s *appService) submitPayment(tx *core.Tx) (core.TxAcceptanceResult, int, e
 		return result, 0, errors.New("no peer write succeeded")
 	}
 	return result, writes, nil
+}
+
+func decodeWalletPKHs(addresses []string) ([][20]byte, error) {
+	if len(addresses) == 0 {
+		return nil, errors.New("wallet has no addresses")
+	}
+	pkhs := make([][20]byte, len(addresses))
+	seen := make(map[[20]byte]struct{}, len(addresses))
+	for index, address := range addresses {
+		pkh, err := core.DecodeAddress(address)
+		if err != nil || core.EncodeAddress(pkh) != address {
+			return nil, errors.New("wallet contains an invalid address")
+		}
+		if _, duplicate := seen[pkh]; duplicate {
+			return nil, errors.New("wallet contains duplicate addresses")
+		}
+		seen[pkh] = struct{}{}
+		pkhs[index] = pkh
+	}
+	return pkhs, nil
+}
+
+type cleanupAvailability struct {
+	count int
+	total int64
+}
+
+func cleanupAvailabilityByOwner(outputs []core.SpendableOutputSnapshot) (available, recommended bool) {
+	groups := make(map[uint32]cleanupAvailability)
+	for _, output := range outputs {
+		group := groups[output.OwnerIndex]
+		if output.AmountUnits <= 0 || !core.MoneyRange(output.AmountUnits) || group.total > core.MaxMoneyUnits-output.AmountUnits {
+			continue
+		}
+		group.count++
+		group.total += output.AmountUnits
+		groups[output.OwnerIndex] = group
+	}
+	return summarizeCleanupAvailability(groups)
+}
+
+func cleanupAvailabilityByAddress(outputs []lightwallet.SnapshotOutput) (available, recommended bool) {
+	groups := make(map[string]cleanupAvailability)
+	for _, output := range outputs {
+		group := groups[output.Address]
+		if output.AmountUnits <= 0 || !core.MoneyRange(output.AmountUnits) || group.total > core.MaxMoneyUnits-output.AmountUnits {
+			continue
+		}
+		group.count++
+		group.total += output.AmountUnits
+		groups[output.Address] = group
+	}
+	return summarizeCleanupAvailability(groups)
+}
+
+func summarizeCleanupAvailability[K comparable](groups map[K]cleanupAvailability) (available, recommended bool) {
+	for _, group := range groups {
+		if group.count < 2 || group.total <= appDefaultFeeUnits {
+			continue
+		}
+		available = true
+		if group.count >= appCleanupRecommendation {
+			recommended = true
+		}
+	}
+	return available, recommended
+}
+
+func remoteWalletViewSnapshot(response lightwallet.ViewResponse) wallet.RemoteSnapshot {
+	remote := wallet.RemoteSnapshot{
+		Network:   response.Network,
+		Tip:       core.ChainTipSnapshot{Network: response.Network, Height: response.Tip.Height},
+		Addresses: append([]string(nil), response.Addresses...), SpendableUnits: response.SpendableUnits,
+		Outpoints: make([]wallet.RemoteSnapshotOutpoint, 0, len(response.Outputs)),
+	}
+	if decoded, err := hex.DecodeString(response.Tip.Hash); err == nil && len(decoded) == len(remote.Tip.Hash) {
+		copy(remote.Tip.Hash[:], decoded)
+	}
+	for _, output := range response.Outputs {
+		var txID core.Hash32
+		if decoded, err := hex.DecodeString(output.TxID); err == nil && len(decoded) == len(txID) {
+			copy(txID[:], decoded)
+		}
+		remote.Outpoints = append(remote.Outpoints, wallet.RemoteSnapshotOutpoint{
+			TxID: txID, Vout: output.Vout, AmountUnits: output.AmountUnits, Address: output.Address,
+		})
+	}
+	return remote
 }
 
 func remoteWalletSnapshot(response lightwallet.SnapshotResponse) wallet.RemoteSnapshot {

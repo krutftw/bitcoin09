@@ -55,6 +55,7 @@ type appTestPeers struct {
 type appTestGateway struct {
 	lastBroadcast *core.Tx
 	snapshotErr   error
+	viewErr       error
 }
 
 func (g *appTestGateway) Snapshot(_ context.Context, addresses []string) (lightwallet.SnapshotResponse, error) {
@@ -71,10 +72,41 @@ func (g *appTestGateway) Snapshot(_ context.Context, addresses []string) (lightw
 	}, nil
 }
 
+func (g *appTestGateway) View(_ context.Context, addresses []string, activityLimit int) (lightwallet.ViewResponse, error) {
+	if g.viewErr != nil {
+		return lightwallet.ViewResponse{}, g.viewErr
+	}
+	sorted := append([]string(nil), addresses...)
+	sort.Strings(sorted)
+	response := lightwallet.ViewResponse{
+		SchemaVersion: lightwallet.SchemaVersion, Network: core.RegTestMachineID,
+		Tip: lightwallet.Tip{Hash: strings.Repeat("1", 64), Height: 42}, Addresses: sorted,
+		Outputs: []lightwallet.SnapshotOutput{
+			{TxID: strings.Repeat("2", 64), AmountUnits: 2 * core.UnitsPerCoin, Address: sorted[0]},
+			{TxID: strings.Repeat("3", 64), AmountUnits: core.UnitsPerCoin, Address: sorted[0]},
+		},
+		SpendableUnits: 3 * core.UnitsPerCoin, SpendableOutputCount: 2,
+		ImmatureOutputs: []lightwallet.ViewImmatureOutput{{
+			TxID: strings.Repeat("4", 64), AmountUnits: 50 * core.UnitsPerCoin, Address: sorted[0], BlockHeight: 42, Confirmations: 1,
+		}},
+		ImmatureUnits: 50 * core.UnitsPerCoin,
+	}
+	if activityLimit > 0 {
+		response.Activity = []lightwallet.ViewActivityItem{{
+			TxID: strings.Repeat("4", 64), Kind: core.WalletActivityMiningReward, Status: core.WalletActivityConfirmed,
+			NetUnits: 50 * core.UnitsPerCoin, BlockHeight: 42, Confirmations: 1, BlocksUntilMature: 1,
+		}}
+	} else {
+		response.Activity = []lightwallet.ViewActivityItem{}
+	}
+	return response, nil
+}
+
 func TestAppServiceFastModeKeepsReceiveAvailableWhenGatewayIsDown(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "chain")
 	walletPath := filepath.Join(t.TempDir(), "wallet-regtest.json")
-	gateway := &appTestGateway{snapshotErr: errors.New("offline")}
+	offline := errors.New("offline")
+	gateway := &appTestGateway{snapshotErr: offline, viewErr: offline}
 	service, err := newAppService(appServiceConfig{
 		Version: "test", Network: core.RegTestMachineID, Params: &core.RegTest,
 		Mode: "fast", DataDir: dataDir, WalletFile: walletPath, Gateway: gateway,
@@ -115,7 +147,8 @@ func TestAppServiceFastModeReadsRemoteFundsAndSignsLocally(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateWallet: %v", err)
 	}
-	if status.Mode != "fast" || status.BalanceUnits != 2*core.UnitsPerCoin || status.Height != 42 || !status.SendAvailable || status.PeerCount != 0 {
+	if status.Mode != "fast" || status.BalanceUnits != 3*core.UnitsPerCoin || status.ImmatureUnits != 50*core.UnitsPerCoin ||
+		status.SpendableOutputCount != 2 || !status.CleanupAvailable || status.Height != 42 || !status.SendAvailable || status.PeerCount != 0 {
 		t.Fatalf("fast status = %+v", status)
 	}
 	public, _, err := ed25519.GenerateKey(rand.Reader)
@@ -593,5 +626,154 @@ func TestAppServiceKeepsPreparedPaymentAfterTransientSubmitFailure(t *testing.T)
 	}
 	if _, err := service.ConfirmSend(context.Background(), preview.PendingID); err != nil {
 		t.Fatalf("prepared payment was not retryable: %v", err)
+	}
+}
+
+func TestAppServiceStatusActivityAndCleanupUseOneWalletView(t *testing.T) {
+	service, chain, walletPath := newAppTestService(t)
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w, err := wallet.Open(walletPath, core.RegTestMachineID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := int64(0); index < 22; index++ {
+		mineCLITestBlock(t, chain, w.PrimaryPKH())
+	}
+	status, err := service.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.SpendableOutputCount != 21 || status.ImmatureUnits != core.InitialRewardUnits ||
+		!status.CleanupAvailable || !status.CleanupRecommended || status.BalanceUnits != 21*core.InitialRewardUnits {
+		t.Fatalf("wallet view status = %+v", status)
+	}
+	activity, err := service.Activity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activity.Height != status.Height || len(activity.Items) != 22 || activity.Items[0].Kind != core.WalletActivityMiningReward ||
+		activity.Items[0].BlocksUntilMature != 1 {
+		t.Fatalf("activity = %+v", activity)
+	}
+
+	service.now = func() time.Time { return time.Unix(2_000, 0) }
+	cleanup, err := service.PreviewCleanup(context.Background(), desktop.CleanupRequest{Fee: "0.00010000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleanup.PendingID == "" || cleanup.Address != status.Addresses[0] || cleanup.InputCount != 21 ||
+		cleanup.FeeUnits != 10_000 || cleanup.AmountUnits != status.BalanceUnits-10_000 ||
+		cleanup.ExpiresAtUnix != 2_300 || len(cleanup.ConfirmationCode) != 6 || cleanup.MoreAvailable {
+		t.Fatalf("cleanup preview = %+v", cleanup)
+	}
+	if len(chain.MempoolTxs()) != 0 {
+		t.Fatal("cleanup preview broadcast before confirmation")
+	}
+	if _, err := service.ConfirmSend(context.Background(), cleanup.PendingID); err == nil {
+		t.Fatal("normal send confirmation accepted a cleanup preview")
+	}
+	service.submit = func(tx *core.Tx) (core.TxAcceptanceResult, int, error) {
+		result, err := wallet.SubmitPayment(chain, tx)
+		return result, 2, err
+	}
+	result, err := service.ConfirmCleanup(context.Background(), cleanup.PendingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.TxID != cleanup.TxID || result.PeerWrites != 2 || len(chain.MempoolTxs()) != 1 {
+		t.Fatalf("cleanup result = %+v mempool=%d", result, len(chain.MempoolTxs()))
+	}
+	if _, err := service.ConfirmCleanup(context.Background(), cleanup.PendingID); err == nil {
+		t.Fatal("cleanup confirmation replay succeeded")
+	}
+}
+
+func TestAppServiceMaximumPreviewUsesBackendAmountAndSendPurpose(t *testing.T) {
+	service, chain, walletPath := newAppTestService(t)
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w, err := wallet.Open(walletPath, core.RegTestMachineID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := int64(0); index < core.RegTest.CoinbaseMaturity+3; index++ {
+		mineCLITestBlock(t, chain, w.PrimaryPKH())
+	}
+	status, err := service.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	externalKey, err := core.NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := core.EncodeAddress(core.PubKeyHash20(externalKey.Public().(ed25519.PublicKey)))
+	preview, err := service.PreviewMaxSend(context.Background(), desktop.MaxSendRequest{Destination: destination, Fee: "0.00010000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.AmountUnits != status.BalanceUnits-10_000 || preview.TotalUnits != status.BalanceUnits ||
+		len(preview.SelectedInputs) != status.SpendableOutputCount {
+		t.Fatalf("maximum preview = %+v status=%+v", preview, status)
+	}
+	if _, err := service.ConfirmCleanup(context.Background(), preview.PendingID); err == nil {
+		t.Fatal("cleanup confirmation accepted a maximum-send preview")
+	}
+	service.submit = func(tx *core.Tx) (core.TxAcceptanceResult, int, error) {
+		result, err := wallet.SubmitPayment(chain, tx)
+		return result, 1, err
+	}
+	if _, err := service.ConfirmSend(context.Background(), preview.PendingID); err != nil {
+		t.Fatalf("maximum send did not use normal send confirmation: %v", err)
+	}
+}
+
+func TestAppServiceFastModeActivityAndCleanup(t *testing.T) {
+	gateway := &appTestGateway{}
+	service, err := newAppService(appServiceConfig{
+		Version: "test", Network: core.RegTestMachineID, Params: &core.RegTest, Mode: "fast",
+		DataDir: filepath.Join(t.TempDir(), "chain"), WalletFile: filepath.Join(t.TempDir(), "wallet-regtest.json"), Gateway: gateway,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	activity, err := service.Activity(context.Background())
+	if err != nil || len(activity.Items) != 1 || activity.Items[0].Status != core.WalletActivityConfirmed {
+		t.Fatalf("fast activity = %+v, %v", activity, err)
+	}
+	cleanup, err := service.PreviewCleanup(context.Background(), desktop.CleanupRequest{Fee: "0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleanup.InputCount != 2 || cleanup.AmountUnits != 3*core.UnitsPerCoin {
+		t.Fatalf("fast cleanup = %+v", cleanup)
+	}
+	if _, err := service.ConfirmSend(context.Background(), cleanup.PendingID); err == nil {
+		t.Fatal("send confirmation accepted fast cleanup")
+	}
+	result, err := service.ConfirmCleanup(context.Background(), cleanup.PendingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gateway.lastBroadcast == nil || result.TxID != cleanup.TxID {
+		t.Fatalf("fast cleanup result=%+v broadcast=%v", result, gateway.lastBroadcast != nil)
+	}
+}
+
+func TestAppServiceCleanupUsesShortPublicErrors(t *testing.T) {
+	service, _, _ := newAppTestService(t)
+	if _, err := service.CreateWallet(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, err := service.PreviewCleanup(context.Background(), desktop.CleanupRequest{Fee: "0.00010000"})
+	var public *desktop.PublicError
+	if !errors.As(err, &public) || public.Message != "Nothing to combine yet." {
+		t.Fatalf("cleanup error = %#v, want short public message", err)
 	}
 }
