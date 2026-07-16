@@ -126,16 +126,12 @@ CREATE INDEX idx_orders_buyer ON orders(buyer_id);
 
 @lru_cache(maxsize=1)
 def committed_v3_store_class():
-    repo_root = Path(__file__).resolve().parents[2]
-    source = subprocess.run(
-        ["git", "show", "735cec0:bot/otc/store.py"],
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
+    # Keep this fixture identical to 735cec0:bot/otc/store.py. The commit is not
+    # reachable from every mirror, so loading it from Git makes fresh CI clones fail.
+    fixture = Path(__file__).resolve().parent / "fixtures" / "otc_store_v3.py"
+    source = fixture.read_text(encoding="utf-8")
     module = types.ModuleType("committed_otc_store_v3")
-    module.__file__ = "git:735cec0:bot/otc/store.py"
+    module.__file__ = str(fixture)
     exec(compile(source, module.__file__, "exec"), module.__dict__)
     return module.Store
 
