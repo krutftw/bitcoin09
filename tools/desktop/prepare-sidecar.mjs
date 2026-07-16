@@ -33,8 +33,14 @@ export function assertMatchingVersions(shellVersion, goSource) {
   }
 }
 
-export function goBuildArguments(output) {
-  return ["build", "-trimpath", "-o", output, "./cmd/btc09"];
+export function goBuildArguments(output, edition = "full") {
+  if (edition !== "full" && edition !== "wallet") {
+    throw new Error(`Unsupported desktop edition: ${edition}`);
+  }
+  const args = ["build", "-trimpath"];
+  if (edition === "wallet") args.push("-tags", "walletedition");
+  args.push("-o", output, "./cmd/btc09");
+  return args;
 }
 
 function commandOutput(command, args, cwd) {
@@ -61,7 +67,7 @@ export function hostTarget(root) {
   return match[1];
 }
 
-export function buildSidecar(root) {
+export function buildSidecar(root, edition = "full") {
   const target = hostTarget(root);
   const platform = targetToGo(target);
   const cargoSource = readFileSync(path.join(root, "walletapp", "src-tauri", "Cargo.toml"), "utf8");
@@ -77,7 +83,7 @@ export function buildSidecar(root) {
   const output = path.join(binaryDirectory, `btc09-core-${target}${platform.extension}`);
   const result = spawnSync(
     "go",
-    goBuildArguments(output),
+    goBuildArguments(output, edition),
     {
       cwd: root,
       env: { ...process.env, GOOS: platform.goos, GOARCH: platform.goarch, CGO_ENABLED: "0" },
@@ -88,13 +94,14 @@ export function buildSidecar(root) {
   if (result.status !== 0) {
     throw new Error("BTC09 Core could not be built for the desktop app.");
   }
-  return { output, target, version: shellVersion };
+  return { output, target, version: shellVersion, edition };
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
 if (import.meta.url === invokedPath) {
   const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
   const root = path.resolve(scriptDirectory, "..", "..");
-  const result = buildSidecar(root);
-  process.stdout.write(`Prepared BTC09 Core ${result.version} for ${result.target}.\n`);
+  const edition = process.argv[2] || "full";
+  const result = buildSidecar(root, edition);
+  process.stdout.write(`Prepared BTC09 Core ${result.version} (${result.edition}) for ${result.target}.\n`);
 }

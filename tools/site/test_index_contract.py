@@ -268,7 +268,7 @@ class IndexContractTest(unittest.TestCase):
         privacy = pathlib.Path("docs/privacy.html").read_text(encoding="utf-8")
         terms = pathlib.Path("docs/terms.html").read_text(encoding="utf-8")
         for token in (
-            "Last updated: 13 July 2026",
+            "Last updated: 16 July 2026",
             "No advertising or analytics",
             "Cloudflare",
             "DigitalOcean",

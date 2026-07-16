@@ -171,6 +171,30 @@ func coins(units int64) string {
 func main() {
 	log.SetFlags(log.Ltime)
 	command, args := selectCommand(os.Args[1:])
+	if walletDistribution {
+		runWalletDistribution(command, args)
+		return
+	}
+	runFullDistribution(command, args)
+}
+
+func runWalletDistribution(command string, args []string) {
+	command, args, err := enforceDistributionEdition(command, args, true)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	switch command {
+	case "app":
+		cmdApp(args)
+	case "version":
+		printVersion(true)
+	default:
+		panic("wallet distribution command gate failed")
+	}
+}
+
+func runFullDistribution(command string, args []string) {
 	switch command {
 	case "app":
 		cmdApp(args)
@@ -199,10 +223,18 @@ func main() {
 	case "genesis-mine":
 		cmdGenesisMine(args)
 	case "version":
-		fmt.Printf("%s (%s) reference node %s\n", core.CoinName, core.Ticker, nodeVersion)
+		printVersion(false)
 	default:
 		usage()
 	}
+}
+
+func printVersion(walletEdition bool) {
+	edition := ""
+	if walletEdition {
+		edition = " (wallet edition)"
+	}
+	fmt.Printf("%s (%s) reference node %s%s\n", core.CoinName, core.Ticker, nodeVersion, edition)
 }
 
 func selectCommand(args []string) (string, []string) {
@@ -210,6 +242,29 @@ func selectCommand(args []string) (string, []string) {
 		return "app", nil
 	}
 	return args[0], args[1:]
+}
+
+func enforceDistributionEdition(command string, args []string, walletEdition bool) (string, []string, error) {
+	if !walletEdition {
+		return command, args, nil
+	}
+	if command == "version" {
+		return command, args, nil
+	}
+	if command != "app" {
+		return "", nil, errors.New("That command is not available in the BTC09 Wallet edition.")
+	}
+
+	locked := make([]string, 0, len(args)+1)
+	for _, arg := range args {
+		if arg == "-wallet-only" || arg == "--wallet-only" ||
+			strings.HasPrefix(arg, "-wallet-only=") || strings.HasPrefix(arg, "--wallet-only=") {
+			continue
+		}
+		locked = append(locked, arg)
+	}
+	locked = append(locked, "-wallet-only")
+	return command, locked, nil
 }
 
 func runMachineCommand(command string, args []string, stdin io.Reader, stdout io.Writer) int {

@@ -1,5 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "node ../tools/desktop/prepare-sidecar.mjs wallet"
+  },
   "bundle": {
     "shortDescription": "Send, receive and manage Bitcoin 09.",
     "longDescription": "A private, self-custody Bitcoin 09 wallet with clear activity, recovery and payment review."

@@ -17,6 +17,18 @@ test("store builds are wallet-only and use separate product copy", async () => {
   const description = `${storeConfig.bundle.shortDescription} ${storeConfig.bundle.longDescription}`;
   assert.match(description, /send, receive/i);
   assert.doesNotMatch(description, /min(e|er|ing)/i);
+  assert.match(storeConfig.build.beforeBuildCommand, /prepare-sidecar\.mjs wallet/);
+});
+
+test("Android release builds both the test APK and Play Store bundle", async () => {
+  const packageJSON = JSON.parse(await readFile(path.join(root, "walletapp", "package.json"), "utf8"));
+  const command = packageJSON.scripts["mobile:android:build"];
+
+  assert.match(command, /android build/);
+  assert.match(command, /--apk/);
+  assert.match(command, /--aab/);
+  assert.match(command, /--target aarch64/);
+  assert.match(command, /--ci/);
 });
 
 test("the native startup error can close the real app window", async () => {

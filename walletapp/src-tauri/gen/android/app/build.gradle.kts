@@ -13,6 +13,20 @@ val tauriProperties = Properties().apply {
     }
 }
 
+val releaseSigningValues = mapOf(
+    "storeFile" to System.getenv("BTC09_ANDROID_KEYSTORE")?.takeIf { it.isNotBlank() },
+    "storePassword" to System.getenv("BTC09_ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() },
+    "keyAlias" to System.getenv("BTC09_ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank() },
+    "keyPassword" to System.getenv("BTC09_ANDROID_KEY_PASSWORD")?.takeIf { it.isNotBlank() },
+)
+val hasAnyReleaseSigningValue = releaseSigningValues.values.any { it != null }
+val hasAllReleaseSigningValues = releaseSigningValues.values.all { it != null }
+if (hasAnyReleaseSigningValue && !hasAllReleaseSigningValues) {
+    throw GradleException(
+        "Android release signing is incomplete. Set all four BTC09_ANDROID signing variables or none of them."
+    )
+}
+
 android {
     compileSdk = 36
     ndkVersion = "29.0.14206865"
@@ -23,6 +37,16 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        if (hasAllReleaseSigningValues) {
+            create("release") {
+                storeFile = rootProject.file(releaseSigningValues.getValue("storeFile")!!)
+                storePassword = releaseSigningValues.getValue("storePassword")!!
+                keyAlias = releaseSigningValues.getValue("keyAlias")!!
+                keyPassword = releaseSigningValues.getValue("keyPassword")!!
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -38,6 +62,9 @@ android {
         }
         getByName("release") {
             isMinifyEnabled = true
+            if (hasAllReleaseSigningValues) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
@@ -45,11 +72,18 @@ android {
             )
         }
     }
-    kotlinOptions {
-        jvmTarget = "1.8"
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures {
         buildConfig = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 

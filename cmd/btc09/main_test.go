@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -762,6 +763,39 @@ func TestReleaseNewer(t *testing.T) {
 func TestNodeVersionMatchesV033Release(t *testing.T) {
 	if nodeVersion != "v0.1.33" {
 		t.Fatalf("nodeVersion = %q, want v0.1.33", nodeVersion)
+	}
+}
+
+func TestWalletDistributionAllowsOnlyTheLockedWalletApp(t *testing.T) {
+	command, args, err := enforceDistributionEdition("app", []string{"-desktop-host", "-wallet-only=false"}, true)
+	if err != nil || command != "app" {
+		t.Fatalf("wallet app gate command=%q args=%v err=%v", command, args, err)
+	}
+	if strings.Contains(strings.Join(args, " "), "wallet-only=false") {
+		t.Fatalf("wallet app retained an unsafe override: %v", args)
+	}
+	if !slices.Contains(args, "-wallet-only") {
+		t.Fatalf("wallet app did not force wallet-only mode: %v", args)
+	}
+
+	if _, _, err := enforceDistributionEdition("version", nil, true); err != nil {
+		t.Fatalf("wallet edition blocked its safe version command: %v", err)
+	}
+	for _, blocked := range []string{
+		"node", "wallet", "send", "mine-pool", "nine-inbox", "prepare-send",
+		"inspect-tx", "broadcast-tx", "genesis-mine", "unknown",
+	} {
+		if _, _, err := enforceDistributionEdition(blocked, nil, true); err == nil {
+			t.Fatalf("wallet edition allowed %q", blocked)
+		}
+	}
+}
+
+func TestFullDistributionCommandLineIsUnchanged(t *testing.T) {
+	want := []string{"-wallet-only=false", "-datadir", "somewhere"}
+	command, got, err := enforceDistributionEdition("mine-pool", want, false)
+	if err != nil || command != "mine-pool" || !reflect.DeepEqual(got, want) {
+		t.Fatalf("full edition command=%q args=%v err=%v", command, got, err)
 	}
 }
 
