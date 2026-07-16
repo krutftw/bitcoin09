@@ -201,7 +201,8 @@ CPU-biased PoW, that requires a coordinated hard fork, not pool-side rules.
 ## Consensus rules, short version
 
 - 88 byte headers, block ids are SHA-256d, PoW check is Argon2id(header) <= target
-- difficulty retargets every 2016 blocks, same as Bitcoin, max 4x move per step
+- legacy difficulty windows through height 12,095; per-block ASERT from height
+  12,096 with a two-hour half-life
 - UTXO model, Ed25519 signatures, base58check addresses (version 0x09)
 - coinbase pays subsidy + fees, spendable after 100 blocks
 - heaviest total work wins, reorgs replay the UTXO set
@@ -237,9 +238,9 @@ https://explorer.btc09.org/api/circulating_supply
 
 `/api/circulating_supply` returns the plain circulating supply number. It
 excludes the burned genesis reward.
-`/api/status` also includes the current retarget window: target seconds,
-observed average block time, blocks to the next retarget, and estimated next
-difficulty if the window keeps the same average.
+`/api/status` reports the active difficulty algorithm, the ASERT activation
+height and countdown, target seconds, observed block cadence, and the next
+block difficulty once ASERT is active.
 
 Discord:
 
@@ -344,16 +345,14 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.32 is current. The wallet adds Activity, Max send, and optional
-small-payment cleanup. The official CPU miner uses non-custodial PPLNS by
-default, with difficulty-weighted shares, a durable public window, and direct
-coinbase payouts at a 0% pool fee. Wallet V2 keeps 24-word recovery and an
-encrypted local file, while existing V1 wallets stay unchanged and readable.
-Full node and explicit remote-solo modes remain available. There are no
-consensus changes.
+v0.1.34 is a mandatory network update for node and solo-miner operators before
+height 12,096. That height switches difficulty from the legacy 2,016-block
+window to per-block ASERT with a two-hour half-life. Wallet files, addresses,
+transactions, supply, rewards, and proof of work are unchanged. Pool miners
+receive the current consensus work from the upgraded coordinator.
 
-The wallet-only v0.1.33 beta is also available as a signed Android APK and a
-Linux AppImage from [GitHub Releases](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.33-beta.1).
+The wallet-only v0.1.34 beta is available as a signed Android APK and a Linux
+AppImage from [GitHub Releases](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34).
 
 Network:
 

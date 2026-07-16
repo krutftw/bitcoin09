@@ -4,13 +4,13 @@ BTC09 Wallet is distributed directly through GitHub Releases. No app-store accou
 
 ## Available beta files
 
-- **Android ARM64 signed APK:** [btc09-wallet-android-arm64.apk](https://github.com/krutftw/bitcoin09/releases/download/v0.1.33-beta.1/btc09-wallet-android-arm64.apk)
-- **Linux x64:** [btc09-wallet-linux-x64.AppImage](https://github.com/krutftw/bitcoin09/releases/download/v0.1.33-beta.1/btc09-wallet-linux-x64.AppImage)
-- **Checksums:** [SHA256SUMS](https://github.com/krutftw/bitcoin09/releases/download/v0.1.33-beta.1/SHA256SUMS)
+- **Android ARM64 signed APK:** [btc09-wallet-android-arm64.apk](https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-wallet-android-arm64.apk)
+- **Linux x64:** [btc09-wallet-linux-x64.AppImage](https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-wallet-linux-x64.AppImage)
+- **Checksums:** [SHA256SUMS](https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/SHA256SUMS)
 
-[Open the v0.1.33 beta release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.33-beta.1). Android shows its standard sideload permission when an APK is installed from a browser or file manager. The APK is signed with the project release key.
+[Open the v0.1.34 release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34). Android shows its standard sideload permission when an APK is installed from a browser or file manager. The APK is signed with the project release key.
 
-Windows is waiting for free signing through SignPath Foundation; an unsigned installer is not published. macOS and iPhone are not included in this beta. v0.1.32 remains the stable full app for Windows, macOS, mining, and full-node use.
+Windows is waiting for free signing through SignPath Foundation; an unsigned native installer is not published. macOS and iPhone are not included in this beta. Node and solo-miner operators must use the v0.1.34 full release before height 12,096.
 
 ## Code signing policy
 

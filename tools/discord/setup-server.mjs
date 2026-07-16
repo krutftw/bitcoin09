@@ -265,6 +265,21 @@ const marketBoardComponents = [
 const seedPosts = [
   {
     channelKey: "announcements",
+    marker: "Mandatory v0.1.34 update",
+    content: [
+      "Mandatory v0.1.34 update",
+      "",
+      "Node and solo-miner operators need to update before block 12,096.",
+      "",
+      "At that block, BTC09 switches from the old 2,016-block difficulty window to per-block ASERT. This removes the large retarget cliff when network hashrate changes quickly.",
+      "",
+      "Pool miners do not need to change settings. The pool sends current work automatically. Everyone using the desktop or mobile app should update normally.",
+      "",
+      "Download v0.1.34 and check the published checksums: https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34",
+    ].join("\n"),
+  },
+  {
+    channelKey: "announcements",
     marker: "Bitcoin 09 v0.1.32 is out.",
     content: [
       "Bitcoin 09 v0.1.32 is out.",
@@ -376,7 +391,7 @@ const seedPosts = [
     content: [
       "Bitcoin 09 Discord is live.",
       "",
-      "Current release: v0.1.32",
+      "Current release: v0.1.34",
       "Source/releases: https://github.com/krutftw/bitcoin09",
       "Explorer: https://explorer.btc09.org",
       "Discord invite: https://discord.gg/fUuGzwRTzP",

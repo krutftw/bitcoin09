@@ -56,7 +56,7 @@ class IndexContractTest(unittest.TestCase):
 
     def test_current_release_makes_the_supported_wallet_miner_the_easy_path(self):
         for token in (
-            "Current release: v0.1.32",
+            "Current release: v0.1.34",
             "Desktop wallet and miner",
             "Open the wallet, choose Mine",
             'id="mining-guide"',
@@ -96,7 +96,7 @@ class IndexContractTest(unittest.TestCase):
         ):
             with self.subTest(asset=asset):
                 self.assertIn(
-                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.32/{asset}",
+                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/{asset}",
                     self.html,
                 )
 
@@ -112,17 +112,7 @@ class IndexContractTest(unittest.TestCase):
         release = pathlib.Path("docs/RELEASE-v0.1.32.md")
         self.assertTrue(release.exists())
         release_text = release.read_text(encoding="utf-8")
-        exchange = pathlib.Path("docs/EXCHANGE-INTEGRATION.md").read_text(
-            encoding="utf-8"
-        )
-        readme = pathlib.Path("README.md").read_text(encoding="utf-8")
-        for surface_name, surface in (
-            ("release", release_text),
-            ("exchange", exchange),
-            ("readme", readme),
-        ):
-            with self.subTest(surface=surface_name):
-                self.assertIn("v0.1.32", surface)
+        self.assertIn("v0.1.32", release_text)
         for token in (
             "Activity",
             "Max",
@@ -132,6 +122,22 @@ class IndexContractTest(unittest.TestCase):
         ):
             with self.subTest(release_token=token):
                 self.assertIn(token, release_text)
+
+    def test_current_operator_docs_explain_the_asert_activation(self):
+        surfaces = {
+            "readme": pathlib.Path("README.md").read_text(encoding="utf-8"),
+            "exchange": pathlib.Path("docs/EXCHANGE-INTEGRATION.md").read_text(
+                encoding="utf-8"
+            ),
+        }
+        for surface_name, surface in surfaces.items():
+            for token in ("v0.1.34", "12,096", "per-block ASERT"):
+                with self.subTest(surface=surface_name, token=token):
+                    self.assertIn(token, surface)
+        self.assertNotIn(
+            "difficulty retargets every 2016 blocks, same as Bitcoin",
+            surfaces["readme"],
+        )
 
     def test_macos_downloads_are_clickable_apps_not_raw_binaries(self):
         for token in (

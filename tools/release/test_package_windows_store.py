@@ -48,8 +48,8 @@ class WindowsStorePackageContractTest(unittest.TestCase):
     def test_store_version_is_valid_and_derived_from_the_wallet_version(self):
         for token in (
             "Cargo.toml",
-            "0.1.33",
-            "1.33.0.0",
+            "0.1.34",
+            "1.34.0.0",
             "Version must use 0.minor.patch",
         ):
             with self.subTest(token=token):

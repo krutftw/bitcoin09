@@ -4,6 +4,25 @@ import test from "node:test";
 
 const source = await readFile(new URL("./setup-server.mjs", import.meta.url), "utf8");
 
+test("v0.1.34 announcement makes the ASERT upgrade clear without hype", () => {
+  const start = source.indexOf('marker: "Mandatory v0.1.34 update"');
+  assert.ok(start >= 0, "missing v0.1.34 upgrade announcement");
+  const announcement = source.slice(start, start + 1500);
+  for (const required of [
+    "Mandatory v0.1.34 update",
+    "before block 12,096",
+    "Node and solo-miner operators",
+    "Pool miners do not need to change settings",
+    "per-block ASERT",
+    "https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34",
+  ]) {
+    assert.ok(announcement.includes(required), `missing ${required}`);
+  }
+  for (const forbidden of ["revolutionary", "game-changing", "seamless", "guaranteed", "profit", "—"]) {
+    assert.ok(!announcement.includes(forbidden), `announcement contains ${forbidden}`);
+  }
+});
+
 test("v0.1.32 announcement explains the wallet changes without hype", () => {
   const start = source.indexOf('marker: "Bitcoin 09 v0.1.32 is out."');
   assert.ok(start >= 0, "missing v0.1.32 announcement");
@@ -79,8 +98,8 @@ test("v0.1.28 announcement explains PPLNS without hype", () => {
   }
 });
 
-test("server status post names v0.1.32 as the current release", () => {
-  assert.ok(source.includes('"Current release: v0.1.32"'));
+test("server status post names v0.1.34 as the current release", () => {
+  assert.ok(source.includes('"Current release: v0.1.34"'));
 });
 
 test("v0.1.31 announcement explains the sync fix without blaming miners", () => {

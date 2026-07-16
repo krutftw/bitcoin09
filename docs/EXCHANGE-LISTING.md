@@ -81,7 +81,7 @@ unspendable, so every circulating coin was publicly mined after genesis.
 - **Initial block subsidy:** 50 09C
 - **Halving interval:** 210,000 blocks
 - **Target block time:** 600 seconds
-- **Difficulty retarget:** every 2,016 blocks, limited to a 4x change
+- **Difficulty adjustment:** per-block ASERT from height 12,096 (two-hour half-life); legacy 2,016-block windows before activation
 - **Coinbase maturity:** 100 blocks
 - **Premine / ICO / team allocation:** none
 - **Genesis reward:** burned and excluded from circulating supply

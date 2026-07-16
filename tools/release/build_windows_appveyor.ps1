@@ -69,8 +69,8 @@ if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
 }
 $item = Get-Item -LiteralPath $installer
 if ($item.VersionInfo.ProductName -ne 'BTC09 Wallet' -or
-    $item.VersionInfo.ProductVersion -ne '0.1.33' -or
-    $item.VersionInfo.FileVersion -ne '0.1.33') {
+    $item.VersionInfo.ProductVersion -ne '0.1.34' -or
+    $item.VersionInfo.FileVersion -ne '0.1.34') {
     throw 'The Windows installer metadata is not safe for the signing policy.'
 }
 $signature = Get-AuthenticodeSignature -LiteralPath $installer
