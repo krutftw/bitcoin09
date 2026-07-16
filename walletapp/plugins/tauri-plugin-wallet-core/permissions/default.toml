@@ -1,0 +1,15 @@
+[default]
+description = "Wallet operations used by the BTC09 mobile app"
+permissions = [
+  "allow-status",
+  "allow-create-wallet",
+  "allow-restore-wallet",
+  "allow-unlock",
+  "allow-lock",
+  "allow-receive",
+  "allow-activity",
+  "allow-preview-send",
+  "allow-confirm-send",
+  "allow-cancel-send",
+  "allow-recovery-phrase",
+]

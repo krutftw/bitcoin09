@@ -1,0 +1,8 @@
+{
+  "default": "../../desktop/assets/icon.svg",
+  "bg_color": "#171a16",
+  "android_bg": "icons/source/android-background.svg",
+  "android_fg": "icons/source/android-foreground.svg",
+  "android_fg_scale": 72,
+  "android_monochrome": "icons/source/android-monochrome.svg"
+}

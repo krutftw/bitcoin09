@@ -17,3 +17,6 @@ bot/.coverage
 /walletapp/src-tauri/target/
 /walletapp/src-tauri/binaries/*
 /walletapp/src-tauri/gen/schemas/
+/walletapp/plugins/tauri-plugin-wallet-core/android/libs/*.aar
+/walletapp/plugins/tauri-plugin-wallet-core/android/libs/*-sources.jar
+/walletapp/plugins/tauri-plugin-wallet-core/ios/Frameworks/*.xcframework/

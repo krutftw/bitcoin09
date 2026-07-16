@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-receive"
+description = "Enables the receive command without any pre-configured scope."
+commands.allow = ["receive"]
+
+[[permission]]
+identifier = "deny-receive"
+description = "Denies the receive command without any pre-configured scope."
+commands.deny = ["receive"]

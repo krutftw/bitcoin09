@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f5f1e8" />
+    <title>BTC09 Wallet</title>
+    <link rel="stylesheet" href="./mobile.css" />
+    <script src="./mobile.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-bar" id="app-bar" hidden>
+        <button class="brand-button" type="button" data-go="home" aria-label="Go home">
+          <span class="coin-mark" aria-hidden="true">09</span>
+          <span>BTC09</span>
+        </button>
+        <span class="network-pill" id="network-pill"><i aria-hidden="true"></i><span>Checking</span></span>
+      </header>
+
+      <main id="app-main" tabindex="-1">
+        <section class="screen welcome-screen" id="onboarding-screen" data-screen="onboarding">
+          <div class="welcome-mark coin-mark" aria-hidden="true">09</div>
+          <p class="eyebrow">BTC09 WALLET</p>
+          <h1>Your coins. Your wallet.</h1>
+          <p class="lead">No account. No terminal. Your keys stay protected on this phone.</p>
+          <div class="stack-actions">
+            <button class="primary" id="create-wallet" type="button">Create a new wallet</button>
+            <button class="secondary" id="show-restore" type="button">I have recovery words</button>
+          </div>
+          <form class="restore-panel" id="restore-form" hidden>
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">RESTORE</p>
+                <h2>Enter all 24 words</h2>
+              </div>
+              <button class="text-button" id="hide-restore" type="button">Cancel</button>
+            </div>
+            <label for="restore-words">Recovery words</label>
+            <textarea id="restore-words" rows="5" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="word 1  word 2  word 3 …"></textarea>
+            <p class="field-note" id="restore-count">0 of 24 words</p>
+            <button class="primary" type="submit">Restore wallet</button>
+          </form>
+          <p class="quiet-note">Self-custody means nobody can recover your wallet if you lose the 24 words.</p>
+        </section>
+
+        <section class="screen centered-screen" id="unlock-screen" data-screen="unlock" hidden>
+          <div class="lock-art" aria-hidden="true">
+            <span class="coin-mark">09</span>
+            <svg viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-9 0h8a2 2 0 0 1 2 2v7H6v-7a2 2 0 0 1 2-2Z" /></svg>
+          </div>
+          <p class="eyebrow">WALLET LOCKED</p>
+          <h1>Welcome back</h1>
+          <p class="lead">Use your phone’s face, fingerprint, or passcode to open your wallet.</p>
+          <button class="primary" id="unlock-wallet" type="button">Unlock wallet</button>
+          <p class="quiet-note">BTC09 Wallet locks whenever it goes into the background.</p>
+        </section>
+
+        <section class="screen" id="backup-screen" data-screen="backup" hidden>
+          <button class="back-button" id="backup-back" type="button" aria-label="Close recovery words" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+            Back
+          </button>
+          <p class="eyebrow">ONE-TIME BACKUP</p>
+          <h1>Write these down</h1>
+          <p class="lead compact">These 24 recovery words are the only way back into your wallet if this phone is lost.</p>
+          <div class="warning-card">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4m0 4h.01M4 20h16L12 4 4 20Z" /></svg>
+            <span>Keep them offline. Never send them to anyone, including BTC09 support.</span>
+          </div>
+          <ol class="word-grid" id="recovery-words" aria-label="Recovery words"></ol>
+          <label class="check-row" id="backup-check-row">
+            <input id="backup-confirmed" type="checkbox" />
+            <span>I wrote down all 24 words in order.</span>
+          </label>
+          <button class="primary" id="finish-backup" type="button" disabled>Continue to wallet</button>
+        </section>
+
+        <section class="screen" id="home-screen" data-screen="home" hidden>
+          <div class="home-intro">
+            <div>
+              <p class="eyebrow">AVAILABLE BALANCE</p>
+              <h1 class="balance"><span id="balance-value">0</span><small>09C</small></h1>
+            </div>
+            <button class="icon-button" id="refresh-wallet" type="button" aria-label="Refresh wallet">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>
+            </button>
+          </div>
+          <p class="balance-note" id="balance-note">Checking the network…</p>
+          <div class="quick-actions">
+            <button class="action-button" data-go="receive" type="button">
+              <span class="action-icon receive-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4v13m-5-5 5 5 5-5M5 20h14" /></svg></span>
+              <span>Receive</span>
+            </button>
+            <button class="action-button" id="home-send" data-go="send" type="button">
+              <span class="action-icon send-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 20V7m-5 5 5-5 5 5M5 4h14" /></svg></span>
+              <span>Send</span>
+            </button>
+          </div>
+          <section class="content-card activity-preview">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">WALLET</p>
+                <h2>Recent activity</h2>
+              </div>
+              <button class="text-button" data-go="activity" type="button">See all</button>
+            </div>
+            <div id="home-activity" class="activity-list" aria-live="polite"></div>
+          </section>
+        </section>
+
+        <section class="screen" id="receive-screen" data-screen="receive" hidden>
+          <button class="back-button" data-back="home" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+            Back
+          </button>
+          <p class="eyebrow">RECEIVE 09C</p>
+          <h1>Show or share</h1>
+          <p class="lead compact">The sender can scan this code or use your address.</p>
+          <div class="qr-card">
+            <img id="receive-qr" alt="QR code for this BTC09 address" />
+          </div>
+          <div class="address-card">
+            <span>Your address</span>
+            <strong id="receive-address">—</strong>
+          </div>
+          <div class="two-actions">
+            <button class="secondary" id="copy-address" type="button">Copy</button>
+            <button class="primary" id="share-address" type="button">Share</button>
+          </div>
+          <p class="quiet-note">Only send BTC09 (09C) to this address.</p>
+        </section>
+
+        <section class="screen" id="send-screen" data-screen="send" hidden>
+          <button class="back-button" data-back="home" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+            Back
+          </button>
+          <p class="eyebrow">SEND 09C</p>
+          <h1>Make a payment</h1>
+          <form id="send-form" class="send-form">
+            <label for="send-address">Recipient address</label>
+            <div class="input-with-button">
+              <input id="send-address" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Paste BTC09 address" required />
+              <button class="input-action" id="paste-address" type="button">Paste</button>
+            </div>
+            <label for="send-amount">Amount</label>
+            <div class="amount-input">
+              <input id="send-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" required />
+              <span>09C</span>
+            </div>
+            <div class="available-row">
+              <span>Available</span>
+              <strong id="send-available">—</strong>
+            </div>
+            <details class="fee-details">
+              <summary>Network fee</summary>
+              <label class="sr-only" for="send-fee">Network fee in 09C</label>
+              <div class="amount-input small">
+                <input id="send-fee" type="text" inputmode="decimal" value="0.0001" required />
+                <span>09C</span>
+              </div>
+              <p class="field-note">The default is suitable for normal payments.</p>
+            </details>
+            <button class="primary" type="submit">Review payment</button>
+          </form>
+        </section>
+
+        <section class="screen" id="review-screen" data-screen="review" hidden>
+          <button class="back-button" id="cancel-review" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+            Edit
+          </button>
+          <p class="eyebrow">REVIEW PAYMENT</p>
+          <h1>Check every detail</h1>
+          <div class="review-amount">
+            <strong id="review-amount">0 09C</strong>
+            <span>Amount to send</span>
+          </div>
+          <dl class="review-list">
+            <div><dt>To</dt><dd id="review-address">—</dd></div>
+            <div><dt>Network fee</dt><dd id="review-fee">—</dd></div>
+            <div><dt>Total</dt><dd id="review-total">—</dd></div>
+            <div><dt>Check code</dt><dd id="review-code" class="check-code">—</dd></div>
+          </dl>
+          <div class="warning-card neutral">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v4m0 4h.01M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0Z" /></svg>
+            <span>Payments cannot be reversed. Confirm the address with the recipient.</span>
+          </div>
+          <button class="primary" id="confirm-send" type="button">Confirm and send</button>
+        </section>
+
+        <section class="screen" id="activity-screen" data-screen="activity" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">WALLET</p>
+              <h1>Activity</h1>
+            </div>
+            <button class="icon-button" id="refresh-activity" type="button" aria-label="Refresh activity">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>
+            </button>
+          </div>
+          <div id="full-activity" class="activity-list full-list" aria-live="polite"></div>
+        </section>
+
+        <section class="screen" id="settings-screen" data-screen="settings" hidden>
+          <p class="eyebrow">YOUR WALLET</p>
+          <h1>Settings</h1>
+          <section class="settings-group">
+            <p class="group-label">BACKUP</p>
+            <button class="settings-row" id="show-recovery" type="button">
+              <span class="settings-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 11V8a5 5 0 0 1 10 0v3m-9 0h8a2 2 0 0 1 2 2v7H6v-7a2 2 0 0 1 2-2Z" /></svg></span>
+              <span><strong>Recovery words</strong><small>View after a security check</small></span>
+              <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+            </button>
+          </section>
+          <section class="settings-group">
+            <p class="group-label">SECURITY</p>
+            <div class="settings-row static-row">
+              <span class="settings-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.6 2.9 8 7 10 4.1-2 7-5.4 7-10V6l-7-3Z" /></svg></span>
+              <span><strong>Device protected</strong><small>Face, fingerprint, or passcode</small></span>
+              <span class="status-tick" aria-label="Enabled">✓</span>
+            </div>
+            <button class="settings-row" id="lock-wallet" type="button">
+              <span class="settings-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2m-9 0h8a2 2 0 0 1 2 2v7H6v-7a2 2 0 0 1 2-2Z" /></svg></span>
+              <span><strong>Lock now</strong><small>Require security check to reopen</small></span>
+              <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+            </button>
+          </section>
+          <section class="settings-group about-card">
+            <div class="about-mark coin-mark" aria-hidden="true">09</div>
+            <div><strong>BTC09 Wallet</strong><small>Version 0.1.33 · Mainnet</small></div>
+          </section>
+        </section>
+      </main>
+
+      <nav id="mobile-nav" class="mobile-nav" aria-label="Wallet" hidden>
+        <button type="button" data-nav="home" aria-label="Home">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 8-7 8 7v9h-5v-6H9v6H4v-9Z" /></svg>
+          <span>Home</span>
+        </button>
+        <button type="button" data-nav="activity" aria-label="Activity">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h10M4 19h7" /></svg>
+          <span>Activity</span>
+        </button>
+        <button type="button" data-nav="settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8 4 2-1-2-4-2 .5-1.5-1L16 4h-5l-.5 2.5-1.5 1L7 7l-2 4 2 1v2l-2 1 2 4 2-.5 1.5 1L11 22h5l.5-2.5 1.5-1 2 .5 2-4-2-1v-2Z" /></svg>
+          <span>Settings</span>
+        </button>
+      </nav>
+      <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+      <div class="busy-cover" id="busy-cover" aria-live="polite" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <strong id="busy-label">Working…</strong>
+      </div>
+    </div>
+  </body>
+</html>
