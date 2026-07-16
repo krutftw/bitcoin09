@@ -43,6 +43,14 @@ test("mobile adapter uses only the wallet plugin and locks on background", async
   assert.doesNotMatch(script, /innerHTML/);
 });
 
+test("mobile activity requests stay within the native wallet limit", async () => {
+  const script = await readFile(path.join(source, "mobile.js"), "utf8");
+  const match = script.match(/call\("activity",\s*\{\s*limit:\s*(\d+)\s*\}\)/);
+  assert.ok(match, "mobile activity request should use an explicit numeric limit");
+  const limit = Number(match[1]);
+  assert.ok(limit >= 1 && limit <= 50, `activity limit ${limit} is outside the native 1-50 range`);
+});
+
 test("production mobile source contains no hidden demo wallet or recovery phrase", async () => {
   const script = await readFile(path.join(source, "mobile.js"), "utf8");
   for (const forbidden of [
