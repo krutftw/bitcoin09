@@ -63,6 +63,32 @@ function apksignerCommand() {
   return executable;
 }
 
+function javaCommand() {
+  const executable = process.platform === "win32" ? "java.exe" : "java";
+  if (process.env.JAVA_HOME) {
+    const configured = path.join(process.env.JAVA_HOME, "bin", executable);
+    if (existsSync(configured)) return configured;
+  }
+  return executable;
+}
+
+export function resolveApksignerInvocation(command, options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== "win32" || !command.toLowerCase().endsWith(".bat")) {
+    return { command, args: [] };
+  }
+  const paths = path.win32;
+  const fileExists = options.fileExists || existsSync;
+  const signerJar = paths.join(paths.dirname(command), "lib", "apksigner.jar");
+  if (!paths.isAbsolute(command) || !fileExists(signerJar)) {
+    throw new Error("Android signature verification needs ANDROID_HOME or ANDROID_SDK_ROOT to locate apksigner.jar.");
+  }
+  return {
+    command: options.javaExecutable || javaCommand(),
+    args: ["-jar", signerJar],
+  };
+}
+
 export function assertAndroidApkSignature({ status, stdout, stderr }) {
   const output = `${stdout || ""}\n${stderr || ""}`;
   if (status !== 0 || !/Signer #1 certificate SHA-256 digest:/i.test(output)) {
@@ -76,7 +102,8 @@ export function verifyAndroidApkSignature(artifactPath) {
   if (path.extname(resolved).toLowerCase() !== ".apk") {
     throw new Error("Android signature verification requires an APK file.");
   }
-  const result = spawnSync(apksignerCommand(), ["verify", "--verbose", "--print-certs", resolved], {
+  const invocation = resolveApksignerInvocation(apksignerCommand());
+  const result = spawnSync(invocation.command, [...invocation.args, "verify", "--verbose", "--print-certs", resolved], {
     encoding: "utf8",
     windowsHide: true,
     maxBuffer: 16 * 1024 * 1024,

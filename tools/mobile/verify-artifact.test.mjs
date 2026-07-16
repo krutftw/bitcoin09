@@ -5,6 +5,20 @@ import * as artifactGate from "./verify-artifact.mjs";
 
 const { assertMobileArtifactEntries } = artifactGate;
 
+test("Windows runs the Android signer jar directly instead of spawning a batch file", () => {
+  const batch = "C:\\Android\\build-tools\\36.0.0\\apksigner.bat";
+  const expectedJar = "C:\\Android\\build-tools\\36.0.0\\lib\\apksigner.jar";
+  const invocation = artifactGate.resolveApksignerInvocation(batch, {
+    platform: "win32",
+    fileExists: (candidate) => candidate === expectedJar,
+    javaExecutable: "C:\\Java\\bin\\java.exe",
+  });
+  assert.deepEqual(invocation, {
+    command: "C:\\Java\\bin\\java.exe",
+    args: ["-jar", expectedJar],
+  });
+});
+
 test("mobile artifact gate accepts ordinary packaged wallet files", () => {
   assert.doesNotThrow(() => assertMobileArtifactEntries([
     { name: "assets/mobile.html", bytes: Buffer.from("BTC09 Wallet Receive Send") },
