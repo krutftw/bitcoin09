@@ -146,6 +146,22 @@ class DirectDistributionContractTest(unittest.TestCase):
             "Tauri tests need the wallet-only sidecar before Cargo starts",
         )
 
+    def test_appveyor_reuses_preinstalled_rustup_before_bootstrap(self):
+        script = pathlib.Path(
+            "tools/release/install_appveyor_toolchain.ps1"
+        ).read_text(encoding="utf-8")
+        rustup_probe = script.index("$rustup = Get-Command rustup")
+        self.assertLess(
+            script.index("$cargoBin ="),
+            rustup_probe,
+            "the AppVeyor image's Cargo bin directory must be known before probing rustup",
+        )
+        self.assertLess(
+            script.index('$env:PATH = "$cargoBin;'),
+            rustup_probe,
+            "preinstalled rustup must be put on PATH before deciding to run rustup-init",
+        )
+
     def test_gitlab_has_manual_reproducible_direct_package_jobs(self):
         pipeline = pathlib.Path(".gitlab-ci.yml").read_text(encoding="utf-8")
         for token in (

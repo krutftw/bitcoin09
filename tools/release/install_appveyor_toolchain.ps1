@@ -39,6 +39,7 @@ Expand-Archive -LiteralPath $goArchive -DestinationPath $toolsRoot -Force
 Remove-Item -LiteralPath $goArchive -Force
 
 $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+$env:PATH = "$cargoBin;$goRoot\bin;$env:PATH"
 $rustup = Get-Command rustup -ErrorAction SilentlyContinue
 if ($null -eq $rustup) {
     $rustupInit = Join-Path $toolsRoot 'rustup-init.exe'
@@ -53,7 +54,6 @@ if ($null -eq $rustup) {
     Remove-Item -LiteralPath $rustupInit -Force
 }
 
-$env:PATH = "$cargoBin;$goRoot\bin;$env:PATH"
 & rustup toolchain install 1.95.0 --profile minimal --no-self-update
 if ($LASTEXITCODE -ne 0) {
     throw 'The pinned Rust toolchain installation failed.'
