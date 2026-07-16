@@ -47,8 +47,10 @@ if ($null -eq $rustup) {
     if ((Get-FileHash -LiteralPath $rustupInit -Algorithm SHA256).Hash -ne $rustupSHA256) {
         throw 'The rustup installer checksum did not match.'
     }
-    & $rustupInit -y --profile minimal --default-toolchain none
-    if ($LASTEXITCODE -ne 0) {
+    $rustupInstall = Start-Process -FilePath $rustupInit `
+        -ArgumentList @('-y', '--profile', 'minimal', '--default-toolchain', 'none') `
+        -Wait -PassThru -NoNewWindow
+    if ($rustupInstall.ExitCode -ne 0) {
         throw 'rustup installation failed.'
     }
     Remove-Item -LiteralPath $rustupInit -Force

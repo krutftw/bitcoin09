@@ -162,6 +162,24 @@ class DirectDistributionContractTest(unittest.TestCase):
             "preinstalled rustup must be put on PATH before deciding to run rustup-init",
         )
 
+    def test_appveyor_rustup_bootstrap_uses_the_process_exit_code(self):
+        script = pathlib.Path(
+            "tools/release/install_appveyor_toolchain.ps1"
+        ).read_text(encoding="utf-8")
+        for token in (
+            "Start-Process",
+            "-Wait",
+            "-PassThru",
+            "$rustupInstall.ExitCode",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, script)
+        self.assertNotIn(
+            "& $rustupInit",
+            script,
+            "rustup-init writes non-fatal warnings to stderr on AppVeyor",
+        )
+
     def test_gitlab_has_manual_reproducible_direct_package_jobs(self):
         pipeline = pathlib.Path(".gitlab-ci.yml").read_text(encoding="utf-8")
         for token in (
