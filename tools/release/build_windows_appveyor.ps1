@@ -7,6 +7,28 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 Set-Location $repoRoot
 
+function Assert-NoLocalBuildPaths([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Missing release binary: $Path"
+    }
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    try {
+        $content = [System.Text.Encoding]::GetEncoding(28591).GetString($bytes)
+        $markers = @($repoRoot)
+        if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+            $markers += [System.IO.Path]::GetFullPath($env:USERPROFILE)
+        }
+        foreach ($marker in $markers) {
+            if ($content.IndexOf($marker, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                throw "Release binary contains a local build path: $Path"
+            }
+        }
+    }
+    finally {
+        [Array]::Clear($bytes, 0, $bytes.Length)
+    }
+}
+
 & go test ./...
 if ($LASTEXITCODE -ne 0) {
     throw 'The Go test suite failed.'
@@ -57,7 +79,10 @@ if ($LASTEXITCODE -ne 0) {
     throw 'The Windows wallet preflight package failed.'
 }
 
+$walletExecutable = Join-Path $repoRoot 'walletapp\src-tauri\target\release\btc09-wallet.exe'
 $core = Join-Path $repoRoot 'walletapp\src-tauri\target\release\btc09-core.exe'
+Assert-NoLocalBuildPaths $walletExecutable
+Assert-NoLocalBuildPaths $core
 & node tools/desktop/verify-wallet-edition.mjs $core
 if ($LASTEXITCODE -ne 0) {
     throw 'The packaged sidecar is not the wallet-only edition.'
