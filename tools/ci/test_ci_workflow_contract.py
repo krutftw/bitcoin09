@@ -97,6 +97,8 @@ class CIWorkflowContractTest(unittest.TestCase):
             '"ndk;29.0.14206865"',
             "rustup target add aarch64-linux-android",
             "npm run mobile:android:build",
+            "app-universal-release.aab",
+            "jar is unsigned",
             "zipalign\" -c -P 16",
             'android:allowBackup="false"',
             'android:usesCleartextTraffic="false"',
@@ -106,6 +108,16 @@ class CIWorkflowContractTest(unittest.TestCase):
             "aapt2\" dump badging",
             "native-code: 'arm64-v8a'",
             "miner|sidecar|btc09-core",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.workflow)
+
+    def test_windows_store_package_is_built_without_signing_credentials(self):
+        for token in (
+            "package_windows_store.ps1",
+            "BTC09.Test.Wallet",
+            "CN=BTC09 Test Publisher",
+            "btc09-wallet-store.msix",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.workflow)

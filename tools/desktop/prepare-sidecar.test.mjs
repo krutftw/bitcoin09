@@ -41,3 +41,15 @@ test("Windows sidecar keeps normal Go metadata for antivirus compatibility", () 
   ]);
   assert.ok(!args.some((argument) => argument.includes("-s -w")));
 });
+
+test("store sidecars compile the restricted wallet edition", () => {
+  assert.deepEqual(goBuildArguments("C:\\build\\btc09-core.exe", "wallet"), [
+    "build",
+    "-trimpath",
+    "-tags",
+    "walletedition",
+    "-o",
+    "C:\\build\\btc09-core.exe",
+    "./cmd/btc09",
+  ]);
+});

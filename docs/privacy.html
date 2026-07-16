@@ -23,7 +23,7 @@
 <p class="eyebrow">Privacy</p>
 <h1>What the public services can see.</h1>
 <p class="intro">Bitcoin 09 does not need an account for the website, wallet, explorer, or Nine Inbox. Each service has a different privacy boundary, explained below.</p>
-<p class="updated">Last updated: 13 July 2026</p>
+<p class="updated">Last updated: 16 July 2026</p>
 
 <div class="summary">
 <h2>In short</h2>
@@ -41,6 +41,13 @@
 <h2>Desktop wallet</h2>
 <p>The wallet runs on a random local <code>127.0.0.1</code> port. New wallet files are encrypted on the device. Passwords, recovery words, private keys, and unsigned payments are not sent to Bitcoin 09 public services.</p>
 <p>In Fast mode, the wallet gateway receives public addresses to return public chain data and receives a signed transaction when you choose to broadcast it. The official PPLNS miner sends a public payout address, an optional worker name, and proof-of-work nonces. The payout ledger stores the public address, share and target proofs, chain tip, sequence, and acceptance time. It does not store worker names or IP addresses. Ordinary web infrastructure may still process temporary connection metadata as described above. Full node mode can verify the chain without the wallet gateway.</p>
+</section>
+
+<section>
+<h2>Mobile wallet</h2>
+<p>The Android and iPhone wallet apps store protected wallet data on the device. The device key is protected by the operating system. Recovery words and private keys are not sent to Bitcoin 09 services, and the wallet data is excluded from normal cloud and device-transfer backups.</p>
+<p>When you choose <strong>Scan QR</strong>, the app asks for camera permission and reads a recipient address on the device. Camera images are not uploaded or kept by Bitcoin 09. You can type or paste an address without granting camera access.</p>
+<p>The mobile wallet uses the same HTTPS wallet gateway as desktop Fast mode. The gateway receives public wallet addresses when the app asks for balances or activity, and receives a signed transaction only after you review and confirm a payment. It does not receive the device key, recovery words, private keys, or wallet unlock code.</p>
 </section>
 
 <section>

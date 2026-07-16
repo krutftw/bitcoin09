@@ -45,6 +45,8 @@ test("Android keeps the device key out of the web view and locks in the backgrou
   assert.match(gradle, /libs\/mobilewallet\.aar/);
   assert.match(gradle, /consumerProguardFiles\("consumer-rules\.pro"\)/);
   assert.match(gradle, /minSdk = 24/);
+  assert.match(gradle, /compilerOptions[\s\S]*JvmTarget\.JVM_17/);
+  assert.doesNotMatch(gradle, /kotlinOptions/);
   assert.match(manifest, /android\.permission\.INTERNET/);
   assert.match(manifest, /android:allowBackup="false"/);
   assert.match(manifest, /android:fullBackupContent="false"/);
@@ -63,6 +65,9 @@ test("Android keeps the device key out of the web view and locks in the backgrou
   assert.match(extractionRules, /<cloud-backup>/);
   assert.match(extractionRules, /<device-transfer>/);
   assert.match(appGradle, /ndkVersion = "29\.0\.14206865"/);
+  assert.match(appGradle, /compileOptions[\s\S]*JavaVersion\.VERSION_17/);
+  assert.match(appGradle, /compilerOptions[\s\S]*JvmTarget\.JVM_17/);
+  assert.doesNotMatch(appGradle, /kotlinOptions/);
   assert.doesNotMatch(appGradle, /usesCleartextTraffic.*true/);
   for (const value of [theme, nightTheme]) {
     assert.match(value, /Theme\.MaterialComponents\.Light\.NoActionBar/);
@@ -169,11 +174,34 @@ test("platform icon generation keeps Apple corners opaque and Android layers ada
 });
 
 test("Android wrapper pins the reviewed Gradle download", async () => {
-  const properties = await readFile(path.join(
-    root, "walletapp", "src-tauri", "gen", "android", "gradle", "wrapper", "gradle-wrapper.properties",
-  ), "utf8");
+  const [properties, rootGradle] = await Promise.all([
+    readFile(path.join(
+      root, "walletapp", "src-tauri", "gen", "android", "gradle", "wrapper", "gradle-wrapper.properties",
+    ), "utf8"),
+    readFile(path.join(root, "walletapp", "src-tauri", "gen", "android", "build.gradle.kts"), "utf8"),
+  ]);
   assert.match(properties, /gradle-8\.14\.3-bin\.zip/);
   assert.match(properties, /distributionSha256Sum=bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531/);
+  assert.match(rootGradle, /com\.android\.tools\.build:gradle:8\.11\.0/);
+  assert.match(rootGradle, /org\.jetbrains\.kotlin:kotlin-gradle-plugin:2\.2\.21/);
+});
+
+test("Android release signing is opt-in and refuses partial credentials", async () => {
+  const gradle = await readFile(path.join(
+    root, "walletapp", "src-tauri", "gen", "android", "app", "build.gradle.kts",
+  ), "utf8");
+  for (const variable of [
+    "BTC09_ANDROID_KEYSTORE",
+    "BTC09_ANDROID_KEYSTORE_PASSWORD",
+    "BTC09_ANDROID_KEY_ALIAS",
+    "BTC09_ANDROID_KEY_PASSWORD",
+  ]) assert.match(gradle, new RegExp(variable));
+  assert.match(gradle, /hasAnyReleaseSigningValue/);
+  assert.match(gradle, /hasAllReleaseSigningValues/);
+  assert.match(gradle, /GradleException/);
+  assert.match(gradle, /signingConfigs\.getByName\("release"\)/);
+  assert.doesNotMatch(gradle, /storePassword\s*=\s*"[^$][^"]*"/);
+  assert.doesNotMatch(gradle, /keyPassword\s*=\s*"[^$][^"]*"/);
 });
 
 test("QR scanning is mobile-only and uses the smallest camera surface", async () => {

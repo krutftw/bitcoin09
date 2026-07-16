@@ -60,7 +60,9 @@ jobs:
         run: |
           python -m unittest \
             tools.release.test_package_macos \
+            tools.release.test_package_windows_store \
             tools.site.test_index_contract \
+            tools.site.test_store_readiness_contract \
             tools.deploy.test_nine_inbox_contract \
             tools.deploy.test_open_miner_contract \
             tools.deploy.test_web_presence_contract \
@@ -115,27 +117,47 @@ jobs:
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865"
           rustup target add aarch64-linux-android
           chmod +x walletapp/src-tauri/gen/android/gradlew
-      - name: Build release-shaped Android APK
+      - name: Build release-shaped Android packages
         working-directory: walletapp
         run: npm run mobile:android:build
       - name: Inspect Android package protections
         run: |
           apk="walletapp/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
+          aab="walletapp/src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab"
           manifest="walletapp/src-tauri/gen/android/app/build/intermediates/merged_manifests/universalRelease/processUniversalReleaseManifest/AndroidManifest.xml"
           "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$apk"
           test -s "$apk"
+          test -s "$aab"
+          jarsigner -verify -verbose "$aab" 2>&1 | tee /tmp/btc09-aab-signature.txt
+          grep -q 'jar is unsigned' /tmp/btc09-aab-signature.txt
           grep -q 'android:allowBackup="false"' "$manifest"
           grep -q 'android:usesCleartextTraffic="false"' "$manifest"
           grep -q 'android:dataExtractionRules="@xml/data_extraction_rules"' "$manifest"
           grep -q 'android.permission.CAMERA' "$manifest"
-          ! grep -q 'android.permission.VIBRATE' "$manifest"
+          if grep -q 'android.permission.VIBRATE' "$manifest"; then
+            echo 'Unexpected vibration permission in Android wallet manifest' >&2
+            exit 1
+          fi
           flat_manifest="$(tr -d '\n\r' < "$manifest")"
           grep -q 'android.hardware.camera.any"[[:space:]]*android:required="false"' <<< "$flat_manifest"
           grep -q 'android.hardware.camera"[[:space:]]*android:required="false"' <<< "$flat_manifest"
           badging="$("$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$apk")"
           grep -q "native-code: 'arm64-v8a'" <<< "$badging"
-          ! unzip -l "$apk" | grep -Eiq 'miner|sidecar|btc09-core'
-          ! grep -q 'android:debuggable="true"' "$manifest"
+          apk_listing="$(unzip -l "$apk")"
+          if grep -Eiq 'miner|sidecar|btc09-core' <<< "$apk_listing"; then
+            echo 'Desktop or mining payload found in Android APK' >&2
+            exit 1
+          fi
+          aab_listing="$(unzip -l "$aab")"
+          grep -q 'base/lib/arm64-v8a/libbtc09_wallet_lib.so' <<< "$aab_listing"
+          if grep -Eiq 'base/lib/(x86|armeabi)|miner|sidecar|btc09-core' <<< "$aab_listing"; then
+            echo 'Unexpected ABI, desktop, or mining payload found in Android AAB' >&2
+            exit 1
+          fi
+          if grep -q 'android:debuggable="true"' "$manifest"; then
+            echo 'Release Android wallet is debuggable' >&2
+            exit 1
+          fi
 
   ios-wallet:
     name: iPhone wallet simulator
@@ -214,3 +236,13 @@ jobs:
       - name: Compile wallet-only edition
         working-directory: walletapp
         run: npm run store:build -- --no-bundle
+      - name: Build unsigned Microsoft Store package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          ./tools/release/package_windows_store.ps1
+          -IdentityName 'BTC09.Test.Wallet'
+          -Publisher 'CN=BTC09 Test Publisher'
+          -PublisherDisplayName 'Bitcoin 09'
+          -OutputPath 'walletapp/src-tauri/target/store/btc09-wallet-store.msix'
+          -SkipBuild

@@ -13,7 +13,7 @@
     "mobile:ui-smoke": "node ../tools/mobile/ui-smoke.mjs",
     "mobile:core:android": "node ../tools/mobile/prepare-core.mjs android",
     "mobile:core:ios": "node ../tools/mobile/prepare-core.mjs ios",
-    "mobile:android:build": "tauri android build --apk --target aarch64 --ci",
+    "mobile:android:build": "tauri android build --apk --aab --target aarch64 --ci",
     "mobile:ios:simulator": "tauri ios build --debug --target aarch64-sim --ci"
   },
   "devDependencies": {
