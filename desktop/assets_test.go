@@ -22,6 +22,10 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 			lower = strings.Replace(lower, `href="https://btc09.org/inbox/"`, "", 1)
 			lower = strings.Replace(lower, `href="https://btc09.org/#mining-guide"`, "", 1)
 		}
+		if name == "assets/app.js" {
+			// Explorer links are user actions, not resources loaded by the interface.
+			lower = strings.Replace(lower, `https://explorer.btc09.org/tx/`, "", 1)
+		}
 		if strings.Contains(lower, "https://") || strings.Contains(lower, "http://") || strings.Contains(lower, "//cdn") {
 			t.Fatalf("%s contains an external resource", name)
 		}
@@ -269,8 +273,8 @@ func TestEmbeddedInterfaceLinksToNineInboxWithoutChangingWalletActions(t *testin
 			t.Errorf("index is missing %q", required)
 		}
 	}
-	if count := strings.Count(html, `data-panel=`); count != 4 {
-		t.Fatalf("wallet action count = %d, want 4", count)
+	if count := strings.Count(html, `data-panel=`); count != 5 {
+		t.Fatalf("wallet action count = %d, want 5", count)
 	}
 	cssBody, err := fs.ReadFile(assetsFS, "assets/app.css")
 	if err != nil {
@@ -278,6 +282,61 @@ func TestEmbeddedInterfaceLinksToNineInboxWithoutChangingWalletActions(t *testin
 	}
 	for _, required := range []string{`.inbox-utility`, `.inbox-utility strong`, `.inbox-utility small`} {
 		if !strings.Contains(string(cssBody), required) {
+			t.Errorf("app stylesheet is missing %q", required)
+		}
+	}
+}
+
+func TestEmbeddedInterfaceIncludesClearWalletActivityMaxAndCleanup(t *testing.T) {
+	htmlBody, err := fs.ReadFile(assetsFS, "assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(htmlBody)
+	for _, required := range []string{
+		`READY TO SEND`, `id="mining-rewards"`,
+		`data-panel="activity-panel"`, `id="activity-panel"`, `id="activity-list"`,
+		`id="send-max"`, `id="review-input-count"`,
+		`id="cleanup-card"`, `id="preview-cleanup"`, `id="review-cleanup"`, `id="confirm-cleanup"`,
+		`Received`, `Sent`, `Mining reward`, `Wallet cleanup`,
+		`id="copy-result-txid"`, `id="open-result-txid"`,
+	} {
+		if !strings.Contains(html, required) {
+			t.Errorf("index is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"PRIVATE KEY", "SEED PHRASE", "SIGNED TRANSACTION", "RAW SCRIPT"} {
+		if strings.Contains(strings.ToUpper(html), forbidden) {
+			t.Errorf("index exposes technical secret label %q", forbidden)
+		}
+	}
+
+	javascriptBody, err := fs.ReadFile(assetsFS, "assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(javascriptBody)
+	for _, required := range []string{
+		`/api/v1/activity`, `/api/v1/send/max-preview`,
+		`/api/v1/maintenance/cleanup/preview`, `/api/v1/maintenance/cleanup/confirm`,
+		`setTimeout(refreshActivity, 30000)`, `cleanup_recommended`, `selected_inputs.length`,
+		`https://explorer.btc09.org/tx/`,
+	} {
+		if !strings.Contains(javascript, required) {
+			t.Errorf("app script is missing %q", required)
+		}
+	}
+
+	cssBody, err := fs.ReadFile(assetsFS, "assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(cssBody)
+	for _, required := range []string{
+		`.activity-list`, `.activity-row`, `.cleanup-card`, `.amount-with-max`, `.result-actions`,
+		`grid-template-columns: repeat(5, minmax(0, 1fr))`,
+	} {
+		if !strings.Contains(css, required) {
 			t.Errorf("app stylesheet is missing %q", required)
 		}
 	}

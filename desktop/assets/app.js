@@ -1,12 +1,16 @@
 "use strict";
 
+const explorerTxBase = "https://explorer.btc09.org/tx/";
+
 const state = {
   csrf: "",
   status: null,
   pending: null,
+  cleanupPending: null,
   toastTimer: null,
   miner: null,
   minerPollTimer: null,
+  activityPollTimer: null,
   recoveryPhrase: null,
 };
 
@@ -36,6 +40,15 @@ function formatCoins(units) {
   const whole = value / 100000000n;
   const fraction = (value % 100000000n).toString().padStart(8, "0");
   return `${whole}.${fraction}`;
+}
+
+function formatSignedCoins(units) {
+  const value = BigInt(units || 0);
+  const magnitude = value < 0n ? -value : value;
+  const whole = magnitude / 100000000n;
+  const fraction = (magnitude % 100000000n).toString().padStart(8, "0");
+  const sign = value > 0n ? "+" : value < 0n ? "−" : "";
+  return `${sign}${whole}.${fraction}`;
 }
 
 function setBusy(button, busy, label) {
@@ -94,6 +107,9 @@ function renderStatus(status) {
 	byId("balance-state").textContent = !balanceAvailable
 	  ? "BALANCE TEMPORARILY UNAVAILABLE"
 	  : (fastMode ? "FAST MODE · SIGNING ON THIS DEVICE" : (status.peer_count > 0 ? "FULL NODE · CONNECTED" : "FULL NODE · OFFLINE"));
+  const immatureUnits = Number(status.immature_units || 0);
+  byId("mining-rewards").hidden = immatureUnits <= 0;
+  byId("mining-rewards-value").textContent = `${formatCoins(immatureUnits)} 09C`;
   const address = status.addresses?.[status.addresses.length - 1] || "";
   byId("receive-address").textContent = address || "No receive address";
   byId("address-chip-text").textContent = address ? `${address.slice(0, 7)}…${address.slice(-5)}` : "No address";
@@ -110,6 +126,7 @@ function renderStatus(status) {
   byId("backup-destination").value ||= suggestedBackupPath(status.wallet_path);
   const canSend = Boolean(status.send_available);
   byId("preview-send").disabled = !canSend;
+  byId("send-max").disabled = !canSend;
   byId("send-availability").textContent = canSend
 	  ? (fastMode
 	    ? "Ready. The payment is built and signed on this computer, then sent for relay."
@@ -117,6 +134,13 @@ function renderStatus(status) {
 	  : (fastMode
 	    ? "Wallet service is temporarily unavailable. Your funds are safe; try again."
 	    : "Sending unlocks after the local chain has data and at least one peer is connected.");
+  const cleanupAvailable = Boolean(status.cleanup_available);
+  const cleanupRecommended = Boolean(status.cleanup_recommended);
+  byId("cleanup-card").hidden = !cleanupAvailable;
+  byId("cleanup-card").classList.toggle("is-recommended", cleanupRecommended);
+  byId("cleanup-summary").textContent = cleanupRecommended
+    ? `${Number(status.spendable_output_count || 0).toLocaleString()} small payments are making sends heavier. Combining them now will help.`
+    : "Combine small payments now to make a future send simpler.";
   refreshMinerStatus({ quiet: true });
 }
 
@@ -345,6 +369,21 @@ function validAmount(value, allowZero = false) {
   return allowZero || !/^0(?:\.0{1,8})?$/.test(value);
 }
 
+function showPaymentReview(preview) {
+  state.pending = preview;
+  byId("review-destination").textContent = preview.destination;
+  byId("review-amount").textContent = `${formatCoins(preview.amount_units)} 09C`;
+  byId("review-fee").textContent = `${formatCoins(preview.fee_units)} 09C`;
+  byId("review-total").textContent = `${formatCoins(preview.total_units)} 09C`;
+  byId("review-height").textContent = Number(preview.chain_height).toLocaleString();
+  byId("review-code").textContent = preview.confirmation_code;
+  const hasSelectedInputs = Array.isArray(preview.selected_inputs);
+  const inputCount = hasSelectedInputs ? preview.selected_inputs.length : 0;
+  byId("review-input-count").hidden = inputCount <= 1;
+  byId("review-input-count-value").textContent = `${inputCount.toLocaleString()} payments`;
+  byId("review-payment").showModal();
+}
+
 async function previewPayment(event) {
   event.preventDefault();
   const destination = byId("send-destination").value.trim();
@@ -357,21 +396,54 @@ async function previewPayment(event) {
   const button = byId("preview-send");
   setBusy(button, true, "Preparing locally…");
   try {
-    state.pending = await api("/api/v1/send/preview", {
+    const preview = await api("/api/v1/send/preview", {
       method: "POST",
       body: JSON.stringify({ destination, amount, fee }),
     });
-    byId("review-destination").textContent = state.pending.destination;
-    byId("review-amount").textContent = `${formatCoins(state.pending.amount_units)} 09C`;
-    byId("review-fee").textContent = `${formatCoins(state.pending.fee_units)} 09C`;
-    byId("review-total").textContent = `${formatCoins(state.pending.total_units)} 09C`;
-    byId("review-height").textContent = Number(state.pending.chain_height).toLocaleString();
-    byId("review-code").textContent = state.pending.confirmation_code;
-    byId("review-payment").showModal();
+    showPaymentReview(preview);
   } catch (error) {
     showToast(error.message, true);
   } finally {
     setBusy(button, false);
+  }
+}
+
+async function previewMaxPayment() {
+  const destination = byId("send-destination").value.trim();
+  const fee = byId("send-fee").value.trim();
+  if (!destination || !validAmount(fee, true)) {
+    showToast("Enter the destination and check the fee first.", true);
+    return;
+  }
+  const button = byId("send-max");
+  setBusy(button, true, "Working…");
+  try {
+    const preview = await api("/api/v1/send/max-preview", {
+      method: "POST",
+      body: JSON.stringify({ destination, fee }),
+    });
+    byId("send-amount").value = formatCoins(preview.amount_units);
+    showPaymentReview(preview);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+function showTransactionResult(txid, title) {
+  byId("result-title").textContent = title;
+  byId("result-txid").textContent = txid;
+  byId("open-result-txid").href = `${explorerTxBase}${encodeURIComponent(txid)}`;
+  byId("send-result").hidden = false;
+}
+
+async function copyText(value, successMessage) {
+  try {
+    await navigator.clipboard.writeText(value);
+    showToast(successMessage);
+  } catch {
+    showToast("Clipboard access is blocked. Select and copy it manually.", true);
   }
 }
 
@@ -386,11 +458,155 @@ async function confirmPayment() {
     });
     state.pending = null;
     byId("review-payment").close();
-    byId("result-txid").textContent = result.txid;
-    byId("send-result").hidden = false;
+    showTransactionResult(result.txid, "Payment submitted");
     byId("send-form").reset();
     byId("send-fee").value = "0.00010000";
     await refreshStatus({ quiet: true });
+    if (!byId("activity-panel").hidden) refreshActivity({ quiet: true });
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+function activityPresentation(item) {
+  const presentations = {
+    received: { label: "Received", mark: "↓" },
+    sent: { label: "Sent", mark: "↑" },
+    mining_reward: { label: "Mining reward", mark: "M" },
+    cleanup: { label: "Wallet cleanup", mark: "↺" },
+  };
+  return presentations[item.kind] || { label: "Transaction", mark: "·" };
+}
+
+function activityStatus(item) {
+  if (item.status === "pending") return "Pending";
+  if (item.kind === "mining_reward" && Number(item.blocks_until_mature || 0) > 0) {
+    return `Ready in ${Number(item.blocks_until_mature).toLocaleString()} blocks`;
+  }
+  const confirmations = Number(item.confirmations || 0);
+  if (confirmations > 0) return `${confirmations.toLocaleString()} confirmation${confirmations === 1 ? "" : "s"}`;
+  if (Number(item.block_height || 0) > 0) return `Block ${Number(item.block_height).toLocaleString()}`;
+  return "Confirmed";
+}
+
+function renderActivity(result) {
+  const list = byId("activity-list");
+  list.replaceChildren();
+  const items = Array.isArray(result?.items) ? result.items : [];
+  if (items.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "activity-empty";
+    empty.textContent = "No wallet activity yet.";
+    list.append(empty);
+    return;
+  }
+
+  items.forEach((item) => {
+    const presentation = activityPresentation(item);
+    const row = document.createElement("article");
+    row.className = "activity-row";
+
+    const main = document.createElement("div");
+    main.className = "activity-main";
+    const mark = document.createElement("span");
+    mark.className = "activity-mark";
+    mark.textContent = presentation.mark;
+    mark.setAttribute("aria-hidden", "true");
+    const copy = document.createElement("div");
+    copy.className = "activity-copy";
+    const label = document.createElement("strong");
+    label.textContent = presentation.label;
+    const txid = document.createElement("code");
+    txid.textContent = item.txid;
+    copy.append(label, txid);
+    main.append(mark, copy);
+
+    const value = document.createElement("div");
+    value.className = "activity-value";
+    const amount = document.createElement("strong");
+    amount.textContent = `${formatSignedCoins(item.net_units)} 09C`;
+    amount.classList.toggle("is-positive", Number(item.net_units || 0) > 0);
+    const status = document.createElement("span");
+    status.textContent = activityStatus(item);
+    value.append(amount, status);
+
+    const actions = document.createElement("div");
+    actions.className = "activity-actions";
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.textContent = "Copy TXID";
+    copyButton.addEventListener("click", () => copyText(item.txid, "TXID copied."));
+    const explorerLink = document.createElement("a");
+    explorerLink.href = `${explorerTxBase}${encodeURIComponent(item.txid)}`;
+    explorerLink.target = "_blank";
+    explorerLink.rel = "noopener noreferrer";
+    explorerLink.textContent = "Open in explorer ↗";
+    actions.append(copyButton, explorerLink);
+
+    row.append(main, value, actions);
+    list.append(row);
+  });
+}
+
+async function refreshActivity({ quiet = false } = {}) {
+  clearTimeout(state.activityPollTimer);
+  state.activityPollTimer = null;
+  const button = byId("refresh-activity");
+  if (!quiet) setBusy(button, true, "Refreshing…");
+  try {
+    renderActivity(await api("/api/v1/activity"));
+  } catch (error) {
+    if (!quiet) showToast(error.message, true);
+  } finally {
+    if (!quiet) setBusy(button, false);
+    if (!byId("activity-panel").hidden) state.activityPollTimer = setTimeout(refreshActivity, 30000);
+  }
+}
+
+async function previewCleanup() {
+  const fee = byId("cleanup-fee").value.trim();
+  if (!validAmount(fee, true)) {
+    showToast("Check the cleanup fee. Use up to eight decimal places.", true);
+    return;
+  }
+  const button = byId("preview-cleanup");
+  setBusy(button, true, "Preparing…");
+  try {
+    state.cleanupPending = await api("/api/v1/maintenance/cleanup/preview", {
+      method: "POST",
+      body: JSON.stringify({ fee }),
+    });
+    byId("cleanup-review-count").textContent = `${Number(state.cleanupPending.input_count).toLocaleString()} payments`;
+    byId("cleanup-review-address").textContent = state.cleanupPending.address;
+    byId("cleanup-review-amount").textContent = `${formatCoins(state.cleanupPending.amount_units)} 09C`;
+    byId("cleanup-review-fee").textContent = `${formatCoins(state.cleanupPending.fee_units)} 09C`;
+    byId("cleanup-review-height").textContent = Number(state.cleanupPending.chain_height).toLocaleString();
+    byId("cleanup-review-code").textContent = state.cleanupPending.confirmation_code;
+    byId("cleanup-more-note").hidden = !state.cleanupPending.more_available;
+    byId("review-cleanup").showModal();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function confirmCleanup() {
+  if (!state.cleanupPending?.pending_id) return;
+  const button = byId("confirm-cleanup");
+  setBusy(button, true, "Broadcasting…");
+  try {
+    const result = await api("/api/v1/maintenance/cleanup/confirm", {
+      method: "POST",
+      body: JSON.stringify({ pending_id: state.cleanupPending.pending_id }),
+    });
+    state.cleanupPending = null;
+    byId("review-cleanup").close();
+    showTransactionResult(result.txid, "Wallet cleanup submitted");
+    await refreshStatus({ quiet: true });
+    await refreshActivity({ quiet: true });
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -568,6 +784,9 @@ function selectPanel(button) {
     tab.classList.toggle("is-active", active);
     byId(tab.dataset.panel).hidden = !active;
   });
+  clearTimeout(state.activityPollTimer);
+  state.activityPollTimer = null;
+  if (button.dataset.panel === "activity-panel") refreshActivity();
   if (button.dataset.panel === "miner-panel") refreshMinerStatus({ quiet: true });
 }
 
@@ -585,6 +804,9 @@ function bindEvents() {
   byId("new-address").addEventListener("click", newAddress);
   byId("backup-wallet").addEventListener("click", backupWallet);
   byId("send-form").addEventListener("submit", previewPayment);
+  byId("send-max").addEventListener("click", previewMaxPayment);
+  byId("refresh-activity").addEventListener("click", () => refreshActivity());
+  byId("preview-cleanup").addEventListener("click", previewCleanup);
   byId("miner-form").addEventListener("submit", startMiner);
   byId("stop-miner").addEventListener("click", stopMiner);
   byId("copy-miner-report").addEventListener("click", copyMinerReport);
@@ -597,10 +819,15 @@ function bindEvents() {
       : `Using every thread may slow this computer. Try ${Math.max(1, Number(event.target.max) - 1)} for everyday use.`;
   });
   byId("confirm-send").addEventListener("click", confirmPayment);
+  byId("confirm-cleanup").addEventListener("click", confirmCleanup);
+  byId("copy-result-txid").addEventListener("click", () => copyText(byId("result-txid").textContent, "TXID copied."));
   byId("dismiss-result").addEventListener("click", () => { byId("send-result").hidden = true; });
   document.querySelectorAll(".ledger-tab").forEach((button) => button.addEventListener("click", () => selectPanel(button)));
   byId("review-payment").addEventListener("close", () => {
     if (byId("review-payment").returnValue === "cancel") state.pending = null;
+  });
+  byId("review-cleanup").addEventListener("close", () => {
+    if (byId("review-cleanup").returnValue === "cancel") state.cleanupPending = null;
   });
 }
 
