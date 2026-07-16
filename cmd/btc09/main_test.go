@@ -777,6 +777,14 @@ func TestWalletDistributionAllowsOnlyTheLockedWalletApp(t *testing.T) {
 	if !slices.Contains(args, "-wallet-only") {
 		t.Fatalf("wallet app did not force wallet-only mode: %v", args)
 	}
+	command, args, err = enforceDistributionEdition("app", []string{"--", "-wallet-only=false"}, true)
+	if err != nil || command != "app" || len(args) == 0 || args[0] != "-wallet-only" {
+		t.Fatalf("wallet safety flag can be hidden behind a flag delimiter: command=%q args=%v err=%v", command, args, err)
+	}
+	options, err := parseAppOptions(args)
+	if err != nil || !options.walletOnly {
+		t.Fatalf("wallet safety flag was not parsed: options=%+v err=%v", options, err)
+	}
 
 	if _, _, err := enforceDistributionEdition("version", nil, true); err != nil {
 		t.Fatalf("wallet edition blocked its safe version command: %v", err)
