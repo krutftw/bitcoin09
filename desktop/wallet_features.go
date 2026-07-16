@@ -100,6 +100,67 @@ func (s *Server) handleConfirmCleanup(w http.ResponseWriter, r *http.Request) {
 		"cleanup_confirm_failed", "BTC09 could not submit the cleanup.")
 }
 
+func (s *Server) handleCancelPreview(w http.ResponseWriter, r *http.Request) {
+	current, ok := s.authorizeMutation(w, r)
+	if !ok {
+		return
+	}
+	service, ok := s.service.(PreviewCancelService)
+	if !ok {
+		s.writeError(w, http.StatusNotImplemented, "preview_cancel_unavailable", "This BTC09 Wallet build cannot cancel transaction previews.")
+		return
+	}
+	var request struct {
+		PendingID string `json:"pending_id"`
+	}
+	if err := decodeJSONRequest(w, r, &request); err != nil || request.PendingID == "" || len(request.PendingID) > 128 {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "That transaction preview was not valid.")
+		return
+	}
+
+	now := s.nowUnix()
+	s.mu.Lock()
+	entries := s.pending[current.token]
+	pending := entries[request.PendingID]
+	if pending == nil || pending.expiresAt <= now {
+		delete(entries, request.PendingID)
+		if len(entries) == 0 {
+			delete(s.pending, current.token)
+		}
+		s.mu.Unlock()
+		s.writeData(w, http.StatusOK, struct {
+			Cancelled bool `json:"cancelled"`
+		}{Cancelled: true})
+		return
+	}
+	if pending.inFlight {
+		s.mu.Unlock()
+		s.writeError(w, http.StatusConflict, "confirmation_in_progress", "That transaction is already being submitted.")
+		return
+	}
+	pending.inFlight = true
+	s.mu.Unlock()
+
+	if err := service.CancelPreview(r.Context(), request.PendingID); err != nil {
+		s.mu.Lock()
+		if existing := s.pending[current.token][request.PendingID]; existing != nil {
+			existing.inFlight = false
+		}
+		s.mu.Unlock()
+		s.writeServiceError(w, err, "preview_cancel_failed", "BTC09 could not cancel that transaction preview.")
+		return
+	}
+	s.mu.Lock()
+	delete(s.pending[current.token], request.PendingID)
+	if len(s.pending[current.token]) == 0 {
+		delete(s.pending, current.token)
+	}
+	s.mu.Unlock()
+	s.writeData(w, http.StatusOK, struct {
+		Cancelled bool `json:"cancelled"`
+	}{Cancelled: true})
+}
+
 func (s *Server) rememberPending(w http.ResponseWriter, current session, pendingID string, expiresAt int64, purpose, errorCode, errorMessage string) bool {
 	now := s.nowUnix()
 	if pendingID == "" || len(pendingID) > 128 || expiresAt <= now || expiresAt > now+3600 ||

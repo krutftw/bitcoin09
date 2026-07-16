@@ -447,6 +447,18 @@ async function copyText(value, successMessage) {
   }
 }
 
+async function cancelPendingPreview(preview) {
+  if (!preview?.pending_id) return;
+  try {
+    await api("/api/v1/preview/cancel", {
+      method: "POST",
+      body: JSON.stringify({ pending_id: preview.pending_id }),
+    });
+  } catch {
+    showToast("That review will expire on its own in a few minutes.", true);
+  }
+}
+
 async function confirmPayment() {
   if (!state.pending?.pending_id) return;
   const button = byId("confirm-send");
@@ -824,10 +836,14 @@ function bindEvents() {
   byId("dismiss-result").addEventListener("click", () => { byId("send-result").hidden = true; });
   document.querySelectorAll(".ledger-tab").forEach((button) => button.addEventListener("click", () => selectPanel(button)));
   byId("review-payment").addEventListener("close", () => {
-    if (byId("review-payment").returnValue === "cancel") state.pending = null;
+    const pending = state.pending;
+    state.pending = null;
+    cancelPendingPreview(pending);
   });
   byId("review-cleanup").addEventListener("close", () => {
-    if (byId("review-cleanup").returnValue === "cancel") state.cleanupPending = null;
+    const pending = state.cleanupPending;
+    state.cleanupPending = null;
+    cancelPendingPreview(pending);
   });
 }
 

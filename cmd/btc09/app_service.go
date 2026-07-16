@@ -866,6 +866,26 @@ func (s *appService) ConfirmCleanup(ctx context.Context, pendingID string) (desk
 	return s.confirmPending(ctx, pendingID, appPendingCleanup)
 }
 
+func (s *appService) CancelPreview(ctx context.Context, pendingID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if pendingID == "" || len(pendingID) > 128 {
+		return publicAppError(http.StatusBadRequest, "invalid_request", "That transaction preview was not valid.", nil)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pending := s.pending[pendingID]
+	if pending == nil {
+		return nil
+	}
+	if pending.inFlight {
+		return publicAppError(http.StatusConflict, "confirmation_in_progress", "That transaction is already being submitted.", nil)
+	}
+	delete(s.pending, pendingID)
+	return nil
+}
+
 func (s *appService) confirmPending(ctx context.Context, pendingID string, purpose appPendingPurpose) (desktop.SendResult, error) {
 	if err := ctx.Err(); err != nil {
 		return desktop.SendResult{}, err

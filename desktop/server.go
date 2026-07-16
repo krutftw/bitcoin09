@@ -168,6 +168,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleConfirmCleanup(w, r)
 		return
 	}
+	if r.URL.Path == "/api/v1/preview/cancel" {
+		s.handleCancelPreview(w, r)
+		return
+	}
 	if r.URL.Path == "/api/v1/miner/status" {
 		s.handleMinerStatus(w, r)
 		return
