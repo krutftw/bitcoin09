@@ -75,6 +75,9 @@ python-contracts:
   variables:
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends shellcheck
+    - rm -rf /var/lib/apt/lists/*
     - python -m pip install --disable-pip-version-check -r bot/requirements.txt
     - python -m pip install --disable-pip-version-check pip-audit==2.10.0
   script:

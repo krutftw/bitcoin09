@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import importlib.util
 import os
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -42,8 +43,11 @@ NGINX_HTTP = ROOT / "deploy" / "nginx" / "bitcoin09-otc-http.conf"
 NGINX_SERVER = ROOT / "deploy" / "nginx" / "bitcoin09-otc-server.conf"
 SEED_UNIT = ROOT / "deploy" / "systemd" / "btc09-seed.service"
 GIT_BASH = Path(r"C:\Program Files\Git\bin\bash.exe")
-SHELLCHECK = Path(
-    r"C:\Users\Administrator\AppData\Local\Microsoft\WinGet\Links\shellcheck.exe"
+SYNTAX_BASH = GIT_BASH if os.name == "nt" else Path(shutil.which("bash") or "/usr/bin/bash")
+SHELLCHECK = (
+    Path(r"C:\Users\Administrator\AppData\Local\Microsoft\WinGet\Links\shellcheck.exe")
+    if os.name == "nt"
+    else Path(shutil.which("shellcheck") or "/usr/bin/shellcheck")
 )
 
 
@@ -277,7 +281,7 @@ class ScriptStaticTests(unittest.TestCase):
                 ).stdout
                 self.assertTrue(index.startswith("100755 "), index)
                 subprocess.run(
-                    [str(GIT_BASH), "-n", str(script)],
+                    [str(SYNTAX_BASH), "-n", str(script)],
                     cwd=ROOT,
                     check=True,
                     capture_output=True,
@@ -416,7 +420,7 @@ class ScriptStaticTests(unittest.TestCase):
                 ).stdout
                 self.assertTrue(index.startswith("100755 "), index)
                 subprocess.run(
-                    [str(GIT_BASH), "-n", str(script)],
+                    [str(SYNTAX_BASH), "-n", str(script)],
                     cwd=ROOT,
                     check=True,
                     capture_output=True,
