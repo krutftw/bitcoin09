@@ -165,8 +165,8 @@ func asertActive(p *Params, height int64) bool {
 // NextBits returns the required difficulty bits for the block at `height`,
 // given accessors for ancestor headers on the same chain.
 //
-// Retarget every RetargetInterval blocks by actual/expected timespan,
-// clamped to 4x per adjustment (Bitcoin-classic behaviour, shorter window).
+// Heights before ASERTActivationHeight use the legacy RetargetInterval rule,
+// clamped to 4x per adjustment. Heights from activation use per-block ASERT.
 func NextBits(p *Params, height int64, bitsAt func(h int64) uint32, timeAt func(h int64) int64) uint32 {
 	if height == 0 {
 		return p.MaxTargetBits

@@ -149,6 +149,11 @@ class DirectDistributionContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, notes)
 
+    def test_current_social_copy_does_not_repeat_the_retired_difficulty_rule(self):
+        posts = pathlib.Path("POSTS.md").read_text(encoding="utf-8")
+        self.assertIn("per-block ASERT from height 12,096", posts)
+        self.assertNotIn("difficulty retarget every 2016 blocks", posts)
+
     def test_appveyor_builds_the_unsigned_windows_artifact_for_signpath(self):
         pipeline_path = pathlib.Path("appveyor.yml")
         self.assertTrue(pipeline_path.exists(), "free AppVeyor pipeline is missing")

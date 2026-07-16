@@ -5,8 +5,8 @@
 Fair-launch CPU proof of work: 21M cap, 10 minute blocks, no premine,
 Argon2id mining.
 
-Bitcoin 09 keeps the Bitcoin shape and changes one thing: proof of work is
-Argon2id instead of SHA-256. Normal CPUs can mine it, and the 64 MiB memory
+Bitcoin 09 keeps Bitcoin's supply and reward shape but uses Argon2id instead
+of SHA-256 for proof of work. Normal CPUs can mine it, and the 64 MiB memory
 cost is meant to reduce the easy ASIC/GPU advantage that took over Bitcoin.
 
 ```text
