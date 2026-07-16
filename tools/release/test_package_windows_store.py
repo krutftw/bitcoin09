@@ -36,6 +36,9 @@ class WindowsStorePackageContractTest(unittest.TestCase):
             "StoreLogo.png",
             "MakeAppx.exe",
             "MakeAppx pack",
+            "function Get-PeMachine",
+            "Assert-X64Pe",
+            "0x8664",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.script)

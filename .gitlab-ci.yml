@@ -1,0 +1,89 @@
+stages:
+  - test
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+default:
+  interruptible: true
+
+variables:
+  GIT_DEPTH: "0"
+  GOMODCACHE: "$CI_PROJECT_DIR/.cache/go-mod"
+  GOCACHE: "$CI_PROJECT_DIR/.cache/go-build"
+
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+  - template: Jobs/Dependency-Scanning.v2.gitlab-ci.yml
+
+.go-cache:
+  image: golang:1.25.12-bookworm
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - .cache/go-mod
+      - .cache/go-build
+  before_script:
+    - mkdir -p "$GOMODCACHE" "$GOCACHE"
+
+go-quality:
+  extends: .go-cache
+  timeout: 20m
+  script:
+    - go vet ./...
+    - go test -race ./...
+
+wallet-edition:
+  extends: .go-cache
+  timeout: 15m
+  before_script:
+    - !reference [.go-cache, before_script]
+    - apt-get update
+    - apt-get install -y --no-install-recommends nodejs
+    - rm -rf /var/lib/apt/lists/*
+  script:
+    - go test -tags walletedition ./desktop ./cmd/btc09
+    - go build -trimpath -tags walletedition -o btc09-wallet-core ./cmd/btc09
+    - node tools/desktop/verify-wallet-edition.mjs btc09-wallet-core
+
+javascript-contracts:
+  image: node:24-bookworm
+  timeout: 10m
+  script:
+    - node --test tools/discord/*.test.mjs
+    - node --test nineinbox/web/*.test.mjs
+    - node --test tools/desktop/*.test.mjs tools/desktop/*.test.cjs
+    - node --test tools/mobile/*.test.mjs
+
+python-contracts:
+  image: python:3.13-bookworm
+  timeout: 15m
+  cache:
+    key:
+      files:
+        - bot/requirements.txt
+    paths:
+      - .cache/pip
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  before_script:
+    - python -m pip install --disable-pip-version-check -r bot/requirements.txt
+  script:
+    - python -m unittest discover -s bot/tests -p 'test_*.py'
+    - >-
+      python -m unittest
+      tools.release.test_package_macos
+      tools.release.test_package_windows_store
+      tools.site.test_index_contract
+      tools.site.test_store_readiness_contract
+      tools.deploy.test_nine_inbox_contract
+      tools.deploy.test_open_miner_contract
+      tools.deploy.test_web_presence_contract
+      tools.exchange.test_btc09_exchange_smoke
+      tools.ci.test_ci_workflow_contract

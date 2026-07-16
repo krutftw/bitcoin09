@@ -18,8 +18,8 @@
 }
 
 * { box-sizing: border-box; }
-html { min-width: 320px; background: #d9d4c9; }
-body { margin: 0; min-width: 320px; min-height: 100vh; color: var(--ink); background: #d9d4c9; font-family: var(--display); -webkit-font-smoothing: antialiased; }
+html { min-width: 320px; height: 100%; overflow: hidden; background: #d9d4c9; }
+body { margin: 0; min-width: 320px; height: 100%; min-height: 100vh; overflow: hidden; color: var(--ink); background: #d9d4c9; font-family: var(--display); -webkit-font-smoothing: antialiased; }
 button, input { font: inherit; }
 button { color: inherit; }
 [hidden] { display: none !important; }
@@ -36,8 +36,10 @@ button { color: inherit; }
 .wallet-frame {
   position: relative;
   width: min(1060px, calc(100% - 40px));
-  min-height: min(780px, calc(100vh - 40px));
+  height: min(780px, calc(100vh - 40px));
   margin: 20px auto;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background: var(--paper-bright);
   border: 1px solid rgba(23, 26, 22, .22);
@@ -46,6 +48,7 @@ button { color: inherit; }
 }
 
 .topbar {
+  flex: 0 0 72px;
   height: 72px;
   padding: 0 24px;
   display: flex;
@@ -64,8 +67,8 @@ button { color: inherit; }
 .status-lamp.is-online { background: #5d936d; box-shadow: 0 0 0 4px rgba(93, 147, 109, .14); }
 .status-lamp.is-ready { background: #b78635; box-shadow: 0 0 0 4px rgba(183, 134, 53, .13); }
 
-.app-shell { min-height: 706px; display: grid; grid-template-columns: 220px minmax(0, 1fr); }
-.status-rail { padding: 28px 22px 22px; display: flex; flex-direction: column; background: var(--ink); color: var(--paper-bright); }
+.app-shell { min-height: 0; flex: 1; display: grid; grid-template-columns: 220px minmax(0, 1fr); overflow: hidden; }
+.status-rail { min-height: 0; padding: 28px 22px 22px; display: flex; flex-direction: column; overflow-y: auto; background: var(--ink); color: var(--paper-bright); }
 .rail-heading { margin: 0 0 25px; color: #b6baad; font: var(--text-xs) var(--mono); letter-spacing: .12em; }
 .rail-readout { margin-bottom: 20px; padding-bottom: 18px; border-bottom: 1px solid rgba(255,255,255,.13); }
 .rail-readout span { display: block; margin-bottom: 6px; color: #b7baaf; font-size: 13px; }
@@ -83,7 +86,7 @@ button { color: inherit; }
 .version-stamp { margin-top: 18px; color: #aeb2a5; font: 11px/1.4 var(--mono); letter-spacing: .05em; }
 .version-stamp strong { float: right; color: var(--paper-bright); }
 
-main { min-width: 0; padding: 18px 28px 28px; background: var(--paper); }
+main { min-width: 0; min-height: 0; padding: 18px 28px 28px; overflow-y: auto; background: var(--paper); }
 .loading-panel { min-height: 550px; display: grid; place-items: center; align-content: center; gap: 16px; color: var(--ink-muted); font: 12px var(--mono); }
 .loader { width: 28px; height: 28px; border: 2px solid var(--line); border-top-color: var(--copper); border-radius: 50%; animation: spin 800ms linear infinite; }
 
@@ -133,6 +136,7 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
 .account-bar > div { display: grid; gap: 3px; }
 .account-label { color: var(--ink-muted); font-size: 11px; }
 .account-bar strong { font-size: 17px; }
+.account-actions { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 9px; }
 .address-chip { max-width: 290px; min-height: 36px; padding: 0 12px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper-bright); color: var(--ink-muted); font: var(--text-xs) var(--mono); }
 .address-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .address-chip b { color: var(--copper); }
@@ -169,41 +173,6 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
 #receive-address { display: block; margin: 9px 0 15px; padding: 12px; border-radius: 9px; background: var(--paper); color: var(--ink); font-size: 14px; line-height: 1.45; }
 .button-row { display: flex; gap: 10px; }
 .field-note { margin: 12px 0 0; color: var(--ink-muted); font-size: 14px; line-height: 1.45; }
-
-.miner-panel { min-height: 0; }
-.miner-state-badge { padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); color: var(--ink-muted); font: 10px var(--mono); text-transform: uppercase; letter-spacing: .05em; }
-.miner-state-badge[data-state="connecting"], .miner-state-badge[data-state="retrying"] { border-color: #b58d4d; color: #775820; }
-.miner-state-badge[data-state="mining"] { border-color: #78937a; color: #365e3d; }
-.miner-state-badge[data-state="error"] { border-color: var(--warning); color: var(--warning); }
-.miner-readiness { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: -4px 0 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); }
-.miner-readiness div { min-width: 0; padding: 8px 10px; border-right: 1px solid var(--line); }
-.miner-readiness div:last-child { border-right: 0; }
-.miner-readiness span { display: block; color: var(--ink-muted); font: 9px var(--mono); letter-spacing: .05em; }
-.miner-readiness strong { display: block; margin-top: 3px; overflow: hidden; color: var(--ink); font: 12px var(--mono); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-#miner-endpoint-check[data-state="mining"] { color: #365e3d; }
-#miner-endpoint-check[data-state="retrying"], #miner-endpoint-check[data-state="error"] { color: var(--warning); }
-.miner-instruments { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--line); }
-.miner-instruments > div { min-width: 0; padding: 13px 12px 12px; border-right: 1px solid var(--line); }
-.miner-instruments > div:first-child { padding-left: 0; }
-.miner-instruments > div:last-child { padding-right: 0; border-right: 0; }
-.miner-instruments span { display: block; margin-bottom: 5px; color: var(--ink-muted); font: 10px var(--mono); letter-spacing: .04em; }
-.miner-instruments strong { display: block; overflow: hidden; color: var(--ink); font: 19px var(--mono); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.miner-state-line { min-height: 20px; margin: 11px 0 16px; color: var(--ink-muted); font-size: 13px; line-height: 1.45; }
-.miner-control-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(190px, .6fr); gap: 14px 18px; align-items: end; }
-.miner-address-field { min-width: 0; grid-column: 1 / -1; }
-.miner-address-field code { display: block; margin-top: 7px; padding: 10px 11px; overflow: hidden; border-radius: 8px; background: var(--paper); color: var(--ink); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.miner-thread-field { display: grid; gap: 8px; }
-.miner-thread-field .field-label { display: flex; justify-content: space-between; gap: 12px; }
-.miner-thread-field output { color: var(--copper-dark); font: inherit; }
-.miner-thread-field input { width: 100%; accent-color: var(--copper); }
-.miner-cpu-guidance { color: var(--ink-muted); font-size: 11px; line-height: 1.4; }
-.miner-actions { margin-top: 16px; display: flex; align-items: center; gap: 10px; }
-.miner-actions button { min-height: 42px; padding-inline: 17px; }
-.miner-actions .miner-copy-action { color: var(--copper-dark); }
-.miner-actions #miner-session-meta { margin-left: auto; color: var(--ink-muted); font: 11px var(--mono); white-space: nowrap; }
-.miner-help-row { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: start; margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--line); }
-.miner-privacy { margin: 0; color: var(--ink-muted); font-size: 12px; line-height: 1.5; }
-.miner-help-row a { color: var(--copper-dark); font: 11px var(--mono); white-space: nowrap; }
 
 #send-form, .backup-copy { max-width: 590px; }
 .field { display: block; }
@@ -276,16 +245,16 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
 
 @media (max-width: 760px) {
   body { background: var(--paper); }
-  .wallet-frame { width: 100%; min-height: 100vh; margin: 0; border: 0; border-radius: 0; }
-  .topbar { height: 66px; padding: 0 16px; }
-  .app-shell { display: block; min-height: 0; }
-  .status-rail { min-height: auto; padding: 10px 16px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; background: var(--ink); }
+  .wallet-frame { width: 100%; height: 100vh; margin: 0; border: 0; border-radius: 0; }
+  .topbar { height: 66px; flex-basis: 66px; padding: 0 16px; }
+  .app-shell { min-height: 0; display: flex; flex-direction: column; }
+  .status-rail { min-height: auto; flex: 0 0 auto; padding: 10px 16px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; overflow: visible; background: var(--ink); }
   .status-rail > div:first-child { display: contents; }
   .rail-heading, .privacy-note, .inbox-utility, .version-stamp { display: none; }
   .rail-readout { margin: 0; padding: 2px 8px; border: 0; }
   .rail-readout span { margin-bottom: 3px; font-size: 10px; }
   .rail-readout strong { font-size: 12px; }
-  main { padding: 20px 16px 30px; }
+  main { min-height: 0; flex: 1; padding: 20px 16px 30px; overflow-y: auto; }
   .first-run { margin: 8px auto; padding: 24px 22px; }
   .setup-mark { display: none; }
   .first-run h1 { font-size: 30px; }
@@ -313,16 +282,6 @@ button:focus-visible, input:focus-visible, code:focus-visible, a:focus-visible {
   .password-stack, .recovery-confirm-grid { grid-template-columns: 1fr; }
   .recovery-access { grid-template-columns: 1fr; }
   .recovery-access .quiet-action { width: 100%; }
-  .miner-instruments { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .miner-instruments > div { padding: 11px 10px; border-bottom: 1px solid var(--line); }
-  .miner-instruments > div:nth-child(2) { border-right: 0; }
-  .miner-instruments > div:nth-child(3), .miner-instruments > div:nth-child(4) { border-bottom: 0; }
-  .miner-instruments > div:first-child, .miner-instruments > div:last-child { padding: 11px 10px; }
-  .miner-control-grid { grid-template-columns: 1fr; }
-  .miner-address-field { grid-column: auto; }
-  .miner-actions { flex-wrap: wrap; }
-  .miner-actions #miner-session-meta { width: 100%; margin: 2px 0 0; }
-  .miner-help-row { grid-template-columns: 1fr; gap: 8px; }
   .cleanup-controls { grid-template-columns: 1fr; }
   .cleanup-controls .quiet-action { width: 100%; }
   .activity-row { gap: 10px; }

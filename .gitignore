@@ -20,3 +20,7 @@ bot/.coverage
 /walletapp/plugins/tauri-plugin-wallet-core/android/libs/*.aar
 /walletapp/plugins/tauri-plugin-wallet-core/android/libs/*-sources.jar
 /walletapp/plugins/tauri-plugin-wallet-core/ios/Frameworks/*.xcframework/
+*.jks
+*.keystore
+*.p12
+*.pfx

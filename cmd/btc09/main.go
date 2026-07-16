@@ -1,3 +1,5 @@
+//go:build !walletedition
+
 // btc09 is the Bitcoin 09 node, miner and wallet in one binary.
 //
 //	btc09 node   [-mine] [-listen :9009] [-seeds host:port,...]
@@ -1116,41 +1118,6 @@ func readBoundedInput(reader io.Reader, maximum int64) ([]byte, error) {
 	return b, nil
 }
 
-func parseCoinAmount(text string, allowZero bool) (int64, error) {
-	if text == "" || len(text) > 32 {
-		return 0, errors.New("invalid decimal length")
-	}
-	for _, c := range []byte(text) {
-		if (c < '0' || c > '9') && c != '.' {
-			return 0, errors.New("amount must be plain ASCII decimal")
-		}
-	}
-	parts := strings.Split(text, ".")
-	if len(parts) > 2 || parts[0] == "" || (len(parts) == 2 && parts[1] == "") || (len(parts) == 2 && len(parts[1]) > 8) {
-		return 0, errors.New("amount must have one to eight fractional digits")
-	}
-	whole, err := strconv.ParseUint(parts[0], 10, 64)
-	if err != nil || whole > 21_000_000 {
-		return 0, errors.New("amount exceeds maximum supply")
-	}
-	var fraction uint64
-	if len(parts) == 2 {
-		fractionText := parts[1] + strings.Repeat("0", 8-len(parts[1]))
-		fraction, err = strconv.ParseUint(fractionText, 10, 64)
-		if err != nil {
-			return 0, errors.New("invalid fractional amount")
-		}
-	}
-	if whole == 21_000_000 && fraction != 0 {
-		return 0, errors.New("amount exceeds maximum supply")
-	}
-	units := whole*uint64(core.UnitsPerCoin) + fraction
-	if units > uint64(core.MaxMoneyUnits) || (!allowZero && units == 0) {
-		return 0, errors.New("amount out of range")
-	}
-	return int64(units), nil
-}
-
 func parseExcludedOutpoints(source string, stdin io.Reader) (map[core.OutPoint]struct{}, error) {
 	if source != "-" {
 		return nil, errors.New("-exclude-outpoints-json must be -")
@@ -1211,10 +1178,6 @@ func parseOutpoint(text string) (core.OutPoint, error) {
 		return outpoint, errors.New("outpoint must be lowercase txid:vout")
 	}
 	return core.OutPoint{TxID: hash, Idx: uint32(index)}, nil
-}
-
-func formatOutpoint(outpoint core.OutPoint) string {
-	return fmt.Sprintf("%x:%d", outpoint.TxID, outpoint.Idx)
 }
 
 func writeMachineJSON(writer io.Writer, value any) error {

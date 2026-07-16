@@ -88,9 +88,15 @@ func (s *walletOnlyAppService) RecoveryPhrase(ctx context.Context, request deskt
 	return s.inner.RecoveryPhrase(ctx, request)
 }
 
+func (s *walletOnlyAppService) LockRecoveryWallet(ctx context.Context) (desktop.Status, error) {
+	status, err := s.inner.LockRecoveryWallet(ctx)
+	return walletOnlyStatus(status), err
+}
+
 var (
-	_ desktop.Service               = (*walletOnlyAppService)(nil)
-	_ desktop.WalletFeaturesService = (*walletOnlyAppService)(nil)
-	_ desktop.PreviewCancelService  = (*walletOnlyAppService)(nil)
-	_ desktop.RecoveryWalletService = (*walletOnlyAppService)(nil)
+	_ desktop.Service                   = (*walletOnlyAppService)(nil)
+	_ desktop.WalletFeaturesService     = (*walletOnlyAppService)(nil)
+	_ desktop.PreviewCancelService      = (*walletOnlyAppService)(nil)
+	_ desktop.RecoveryWalletService     = (*walletOnlyAppService)(nil)
+	_ desktop.RecoveryWalletLockService = (*walletOnlyAppService)(nil)
 )

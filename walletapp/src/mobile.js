@@ -1,7 +1,5 @@
 const invoke = window.__TAURI__?.core?.invoke;
 const barcodeScanner = window.__TAURI__?.barcodeScanner;
-const requestedDemo = new URLSearchParams(window.location.search).get("demo");
-const demoScreen = navigator.webdriver ? requestedDemo : null;
 const pluginPrefix = "plugin:wallet-core|";
 
 const state = {
@@ -13,6 +11,7 @@ const state = {
   locked: false,
   resumeAfterUnlock: null,
   toastTimer: null,
+  backgroundWork: Promise.resolve(),
 };
 
 const byId = (id) => document.getElementById(id);
@@ -21,7 +20,6 @@ const mainTabs = new Set(["home", "activity", "settings"]);
 const routeNames = new Set(screens.map((screen) => screen.dataset.screen));
 
 async function call(command, payload) {
-  if (demoScreen) return demoCall(command, payload);
   if (!invoke) throw new Error("BTC09 Wallet could not start safely.");
   const raw = await invoke(`${pluginPrefix}${command}`, payload ? { payload } : {});
   if (command === "recovery_phrase") return raw;
@@ -322,6 +320,30 @@ function clearRecoveryWords() {
   byId("recovery-words").replaceChildren();
 }
 
+function clearSensitiveInputs() {
+  clearRecoveryWords();
+  byId("restore-words").value = "";
+  byId("restore-count").textContent = "0 of 24 words";
+  byId("send-address").value = "";
+  byId("send-amount").value = "";
+  state.resumeAfterUnlock = null;
+}
+
+function protectForBackground() {
+  clearSensitiveInputs();
+  state.locked = true;
+  showRoute("unlock", "replace");
+  state.backgroundWork = (async () => {
+    await cancelPending();
+    await call("lock").catch(() => null);
+  })();
+}
+
+async function restoreAfterForeground() {
+  await state.backgroundWork.catch(() => null);
+  await refreshWallet({ stay: false });
+}
+
 async function openReceive(mode = "push") {
   const result = await run("Preparing your address…", () => call("receive"));
   if (!result) return;
@@ -464,68 +486,17 @@ function bindEvents() {
   });
 
   window.addEventListener("popstate", handleHistory);
-  document.addEventListener("visibilitychange", async () => {
-    if (document.visibilityState !== "hidden" || demoScreen) return;
-    await cancelPending();
-    clearRecoveryWords();
-    await call("lock").catch(() => null);
-    state.locked = true;
-    showRoute("unlock", "replace");
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      protectForBackground();
+      return;
+    }
+    void restoreAfterForeground();
   });
-}
-
-function mockQR() {
-  const cells = Array.from({ length: 17 }, (_, row) => Array.from({ length: 17 }, (_, column) => {
-    const finder = (row < 5 && column < 5) || (row < 5 && column > 11) || (row > 11 && column < 5);
-    return finder || ((row * 7 + column * 11 + row * column) % 5 < 2)
-      ? `<rect x="${column}" y="${row}" width="1" height="1"/>` : "";
-  }).join("")).join("");
-  return btoa(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 21 21"><rect x="-2" y="-2" width="21" height="21" fill="white"/><g fill="#171713">${cells}</g></svg>`);
-}
-
-const demoAddress = "4d8kwx6xn65W5LwJV4qRJubSkuyHg124kn";
-const demoPhrase = "anchor begin canvas daring elder fabric globe harbor ivory jungle kitten lunar maple noble olive picnic quiet river solar timber uncover velvet willow youth";
-const demoStatus = {
-  wallet_state: "ready", sync_state: "connected", balance_available: true, send_available: true,
-  balance_units: 12845000000, immature_units: 0, height: 8841, address: demoAddress,
-};
-const demoItems = [
-  { txid: "5f0c5bf4201a76f3d8a3b0e870424adb90cc6d03969948128ce233be67891f08", kind: "received", status: "confirmed", net_units: 2500000000, confirmations: 38 },
-  { txid: "0a63171dd9b329012ba3aa31e6b8ce56cd799a16858aa53fd3bab8e46fd603f1", kind: "sent", status: "confirmed", net_units: -420000000, confirmations: 112 },
-  { txid: "d4c7c9a6c2f164849df52db7235c05238baa828a744b97a1c8696139122cfbad", kind: "received", status: "immature", net_units: 5000000000, confirmations: 9, blocks_until_mature: 91 },
-];
-
-function demoCall(command, payload) {
-  if (command === "status") return Promise.resolve(demoStatus);
-  if (command === "activity") return Promise.resolve({ items: demoItems, height: demoStatus.height });
-  if (command === "receive") return Promise.resolve({ address: demoAddress, qr_data_url: `data:image/svg+xml;base64,${mockQR()}` });
-  if (command === "recovery_phrase") return Promise.resolve(demoPhrase);
-  if (command === "create_wallet") return Promise.resolve({ address: demoAddress, recovery_phrase: demoPhrase });
-  if (command === "restore_wallet" || command === "unlock") return Promise.resolve(demoStatus);
-  if (command === "preview_send") return Promise.resolve({
-    pending_id: "preview", destination: payload.destination, amount_units: 125000000,
-    fee_units: 10000, total_units: 125010000, confirmation_code: "09A4C2",
-  });
-  if (command === "confirm_send") return Promise.resolve({ txid: "1".repeat(64), status: "submitted" });
-  return Promise.resolve({});
 }
 
 async function start() {
   bindEvents();
-  if (demoScreen) {
-    renderStatus(demoStatus);
-    renderActivity(demoItems);
-    if (demoScreen === "onboarding") return showRoute("onboarding", "reset");
-    if (demoScreen === "locked") { state.locked = true; return showRoute("unlock", "reset"); }
-    if (demoScreen === "backup") return renderRecoveryWords(demoPhrase);
-    if (demoScreen === "receive") { await openReceive("reset"); return; }
-    if (demoScreen === "send") return showRoute("send", "reset");
-    if (demoScreen === "review") {
-      renderReview({ pending_id: "preview", destination: demoAddress, amount_units: 125000000, fee_units: 10000, total_units: 125010000, confirmation_code: "09A4C2" }, "reset");
-      return;
-    }
-    return showRoute(mainTabs.has(demoScreen) ? demoScreen : "home", "reset");
-  }
   await refreshWallet({ busy: true });
 }
 

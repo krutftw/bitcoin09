@@ -3,7 +3,6 @@ package desktop
 import (
 	"crypto/rand"
 	"crypto/subtle"
-	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -25,9 +24,6 @@ const (
 	maxRequestBytes   = 64 << 10
 	sessionLifetime   = 8 * 60 * 60
 )
-
-//go:embed assets/*
-var assetsFS embed.FS
 
 type Config struct {
 	LaunchToken string
@@ -104,7 +100,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.exchangeLaunchToken(w, r)
 		return
 	}
-	if r.URL.Path == "/" || r.URL.Path == "/assets/app.css" || r.URL.Path == "/assets/network.js" || r.URL.Path == "/assets/app.js" || r.URL.Path == "/assets/icon.svg" {
+	if isAssetPath(r.URL.Path) {
 		s.handleAsset(w, r)
 		return
 	}
@@ -130,6 +126,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/v1/wallet/v2/unlock" {
 		s.handleUnlockRecoveryWallet(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/wallet/v2/lock" {
+		s.handleLockRecoveryWallet(w, r)
 		return
 	}
 	if r.URL.Path == "/api/v1/wallet/v2/recovery" {
@@ -172,16 +172,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleCancelPreview(w, r)
 		return
 	}
-	if r.URL.Path == "/api/v1/miner/status" {
-		s.handleMinerStatus(w, r)
-		return
-	}
-	if r.URL.Path == "/api/v1/miner/start" {
-		s.handleMinerStart(w, r)
-		return
-	}
-	if r.URL.Path == "/api/v1/miner/stop" {
-		s.handleMinerStop(w, r)
+	if s.handleEditionRoute(w, r) {
 		return
 	}
 	s.writeError(w, http.StatusNotFound, "not_found", "That BTC09 Wallet page was not found.")
@@ -191,23 +182,12 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.authorizeRead(w, r); !ok {
 		return
 	}
-	name := "assets/index.html"
-	contentType := "text/html; charset=utf-8"
-	switch r.URL.Path {
-	case "/":
-	case "/assets/app.css":
-		name, contentType = "assets/app.css", "text/css; charset=utf-8"
-	case "/assets/network.js":
-		name, contentType = "assets/network.js", "text/javascript; charset=utf-8"
-	case "/assets/app.js":
-		name, contentType = "assets/app.js", "text/javascript; charset=utf-8"
-	case "/assets/icon.svg":
-		name, contentType = "assets/icon.svg", "image/svg+xml; charset=utf-8"
-	default:
+	name, contentType, ok := assetRouteForPath(r.URL.Path)
+	if !ok {
 		s.writeError(w, http.StatusNotFound, "not_found", "That BTC09 Wallet page was not found.")
 		return
 	}
-	body, err := assetsFS.ReadFile(name)
+	body, err := readAsset(name)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "interface_unavailable", "The wallet interface is unavailable.")
 		return
@@ -462,6 +442,31 @@ func (s *Server) handleUnlockRecoveryWallet(w http.ResponseWriter, r *http.Reque
 	s.writeData(w, http.StatusOK, status)
 }
 
+func (s *Server) handleLockRecoveryWallet(w http.ResponseWriter, r *http.Request) {
+	current, ok := s.authorizeMutation(w, r)
+	if !ok {
+		return
+	}
+	service, ok := s.service.(RecoveryWalletLockService)
+	if !ok {
+		s.writeError(w, http.StatusNotImplemented, "wallet_lock_unavailable", "This BTC09 Wallet build cannot lock recovery wallets safely.")
+		return
+	}
+	if err := decodeJSONRequest(w, r, &struct{}{}); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid_request", "The request was not valid.")
+		return
+	}
+	status, err := service.LockRecoveryWallet(r.Context())
+	if err != nil {
+		s.writeServiceError(w, err, "wallet_lock_failed", "BTC09 could not lock that wallet.")
+		return
+	}
+	s.mu.Lock()
+	delete(s.pending, current.token)
+	s.mu.Unlock()
+	s.writeData(w, http.StatusOK, status)
+}
+
 func (s *Server) handleRecoveryPhrase(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.authorizeMutation(w, r); !ok {
 		return
@@ -553,72 +558,6 @@ func (s *Server) handleConfirmSend(w http.ResponseWriter, r *http.Request) {
 	}
 	s.confirmRememberedPending(w, r, current, request.PendingID, pendingPurposeSend, s.service.ConfirmSend,
 		"send_confirm_failed", "BTC09 could not submit that transaction.")
-}
-
-func (s *Server) minerService(w http.ResponseWriter) (MinerService, bool) {
-	service, ok := s.service.(MinerService)
-	if !ok {
-		s.writeError(w, http.StatusNotImplemented, "miner_unavailable", "This BTC09 build does not include the official miner.")
-		return nil, false
-	}
-	return service, true
-}
-
-func (s *Server) handleMinerStatus(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.authorizeRead(w, r); !ok {
-		return
-	}
-	service, ok := s.minerService(w)
-	if !ok {
-		return
-	}
-	status, err := service.MinerStatus(r.Context())
-	if err != nil {
-		s.writeServiceError(w, err, "miner_status_failed", "BTC09 could not read the miner status.")
-		return
-	}
-	s.writeData(w, http.StatusOK, status)
-}
-
-func (s *Server) handleMinerStart(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.authorizeMutation(w, r); !ok {
-		return
-	}
-	var request MinerStartRequest
-	if err := decodeJSONRequest(w, r, &request); err != nil {
-		s.writeError(w, http.StatusBadRequest, "miner_start_invalid", "Choose a valid worker name and CPU thread count.")
-		return
-	}
-	service, ok := s.minerService(w)
-	if !ok {
-		return
-	}
-	status, err := service.StartMiner(r.Context(), request)
-	if err != nil {
-		s.writeServiceError(w, err, "miner_start_failed", "BTC09 could not start the miner.")
-		return
-	}
-	s.writeData(w, http.StatusOK, status)
-}
-
-func (s *Server) handleMinerStop(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.authorizeMutation(w, r); !ok {
-		return
-	}
-	if err := decodeJSONRequest(w, r, &struct{}{}); err != nil {
-		s.writeError(w, http.StatusBadRequest, "miner_stop_invalid", "The stop request was not valid.")
-		return
-	}
-	service, ok := s.minerService(w)
-	if !ok {
-		return
-	}
-	status, err := service.StopMiner(r.Context())
-	if err != nil {
-		s.writeServiceError(w, err, "miner_stop_failed", "BTC09 could not stop the miner.")
-		return
-	}
-	s.writeData(w, http.StatusOK, status)
 }
 
 func decodeJSONRequest(w http.ResponseWriter, r *http.Request, destination any) error {

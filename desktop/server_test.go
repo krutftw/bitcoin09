@@ -1,3 +1,5 @@
+//go:build !walletedition
+
 package desktop
 
 import (
@@ -48,6 +50,7 @@ type fakeRecoveryService struct {
 	restoreCalls        int
 	unlockCalls         int
 	recoveryCalls       int
+	lockCalls           int
 }
 
 func (f *fakeRecoveryService) CreateRecoveryWallet(_ context.Context, request RecoveryWalletCreateRequest) (RecoveryWalletCreateResult, error) {
@@ -72,6 +75,15 @@ func (f *fakeRecoveryService) RecoveryPhrase(_ context.Context, request Recovery
 	f.recoveryCalls++
 	f.recoveryInput = request
 	return RecoveryPhraseResult{RecoveryPhrase: strings.TrimSpace(strings.Repeat("abandon ", 23)) + " art"}, f.err
+}
+
+func (f *fakeRecoveryService) LockRecoveryWallet(context.Context) (Status, error) {
+	f.lockCalls++
+	status := f.status
+	status.NeedsUnlock = true
+	status.SendAvailable = false
+	status.Addresses = nil
+	return status, f.err
 }
 
 func (f *fakeMinerService) MinerStatus(context.Context) (MinerStatus, error) {
@@ -420,6 +432,10 @@ func TestRecoveryWalletActionsUseStrictTypedAPI(t *testing.T) {
 	recovery := authenticatedPost(t, server, cookie, csrf, "/api/v1/wallet/v2/recovery", `{"password":"long local password"}`)
 	if recovery.Code != http.StatusOK || service.recoveryCalls != 1 || service.recoveryInput.Password != "long local password" || !strings.Contains(recovery.Body.String(), phrase) {
 		t.Fatalf("recovery status=%d calls=%d input=%+v body=%s", recovery.Code, service.recoveryCalls, service.recoveryInput, recovery.Body.String())
+	}
+	lock := authenticatedPost(t, server, cookie, csrf, "/api/v1/wallet/v2/lock", `{}`)
+	if lock.Code != http.StatusOK || service.lockCalls != 1 || !strings.Contains(lock.Body.String(), `"needs_unlock":true`) {
+		t.Fatalf("lock status=%d calls=%d body=%s", lock.Code, service.lockCalls, lock.Body.String())
 	}
 
 	invalid := authenticatedPost(t, server, cookie, csrf, "/api/v1/wallet/v2/create", `{"password":"secret","unknown":true}`)

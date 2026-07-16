@@ -1,7 +1,8 @@
+//go:build !walletedition
+
 package desktop
 
 import (
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,10 +10,10 @@ import (
 )
 
 func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
-	files := []string{"assets/index.html", "assets/app.css", "assets/network.js", "assets/app.js", "assets/icon.svg"}
+	files := []string{"assets/index.html", "assets/app.css", "assets/network.js", "assets/app.js", "assets/icon.svg", "assets/miner.css", "assets/miner.js"}
 	contents := make(map[string]string, len(files))
 	for _, name := range files {
-		body, err := fs.ReadFile(assetsFS, name)
+		body, err := readAsset(name)
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -41,6 +42,7 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 		`id="create-wallet"`, `id="receive-address"`, `id="copy-address"`,
 		`id="new-address"`, `id="backup-wallet"`, `id="send-form"`,
 		`id="review-payment"`, `id="confirm-send"`, `id="send-result"`,
+		`id="lock-wallet"`,
 		`class="wallet-frame"`, `class="account-summary"`, `class="quick-actions"`,
 	} {
 		if !strings.Contains(html, required) {
@@ -58,6 +60,7 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 	for _, required := range []string{
 		`/api/v1/status`, `/api/v1/wallet/v2/create`, `/api/v1/wallet/address`,
 		`/api/v1/wallet/backup`, `/api/v1/send/preview`, `/api/v1/send/confirm`,
+		`/api/v1/wallet/v2/lock`, `visibilitychange`, `resetLockTimer`,
 		`BTC09Network.request`, `navigator.clipboard`, `pending_id`, `formatCoins`, `address-chip-text`,
 	} {
 		if !strings.Contains(javascript, required) {
@@ -88,8 +91,8 @@ func TestEmbeddedInterfaceIsOfflineAndComplete(t *testing.T) {
 	}
 }
 
-func TestFirstRunKeepsThePrimaryActionInACommonLaptopViewport(t *testing.T) {
-	htmlBody, err := fs.ReadFile(assetsFS, "assets/index.html")
+func TestFirstRunAndAppShellFitACommonLaptopViewport(t *testing.T) {
+	htmlBody, err := readAsset("assets/index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,13 +107,18 @@ func TestFirstRunKeepsThePrimaryActionInACommonLaptopViewport(t *testing.T) {
 		}
 	}
 
-	cssBody, err := fs.ReadFile(assetsFS, "assets/app.css")
+	cssBody, err := readAsset("assets/app.css")
 	if err != nil {
 		t.Fatal(err)
 	}
 	css := string(cssBody)
 	for _, required := range []string{
-		`main { min-width: 0; padding: 18px 28px 28px;`,
+		`html { min-width: 320px; height: 100%; overflow: hidden;`,
+		`height: min(780px, calc(100vh - 40px));`,
+		`.topbar {`,
+		`flex: 0 0 72px;`,
+		`.app-shell { min-height: 0; flex: 1;`,
+		`main { min-width: 0; min-height: 0; padding: 18px 28px 28px; overflow-y: auto;`,
 		`.first-run { width: min(540px, 100%); margin: 6px auto 12px; padding: 24px 32px;`,
 		`width: 48px; height: 48px; margin-bottom: 14px;`,
 		`.file-location { margin: 14px 0 12px; padding: 12px;`,
@@ -135,7 +143,7 @@ func TestEmbeddedInterfaceExplainsFastAndFullWalletModes(t *testing.T) {
 		{name: "assets/app.js", required: []string{`status.mode`, `status.balance_available`, `FAST MODE`, `FULL NODE`, `Wallet service`}},
 		{name: "assets/app.css", required: []string{`.mode-value`, `.status-lamp.is-ready`}},
 	} {
-		body, err := fs.ReadFile(assetsFS, test.name)
+		body, err := readAsset(test.name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -147,8 +155,56 @@ func TestEmbeddedInterfaceExplainsFastAndFullWalletModes(t *testing.T) {
 	}
 }
 
+func TestDesktopPollingDoesNotPostponeIdleLock(t *testing.T) {
+	body, err := readAsset("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(body)
+	start := strings.Index(javascript, "function renderStatus(status)")
+	end := strings.Index(javascript, "async function refreshStatus")
+	if start < 0 || end <= start {
+		t.Fatal("could not isolate desktop status rendering")
+	}
+	renderStatus := javascript[start:end]
+	if strings.Contains(renderStatus, "resetLockTimer()") {
+		t.Fatal("background status polling must not restart the inactivity timer")
+	}
+	for _, required := range []string{
+		"function ensureLockTimer()",
+		"state.lockTimer !== null",
+		"ensureLockTimer();",
+	} {
+		if !strings.Contains(javascript, required) {
+			t.Errorf("desktop idle lock is missing %q", required)
+		}
+	}
+}
+
+func TestDesktopBackgroundingClearsFirstRunSecretsBeforeLockChecks(t *testing.T) {
+	body, err := readAsset("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(body)
+	start := strings.Index(javascript, "async function lockWallet")
+	end := strings.Index(javascript, "function switchSetup")
+	if start < 0 || end <= start {
+		t.Fatal("could not isolate desktop lock function")
+	}
+	lockWallet := javascript[start:end]
+	clearIndex := strings.Index(lockWallet, "clearSensitiveDesktopState();")
+	guardIndex := strings.Index(lockWallet, "if (state.locking")
+	if clearIndex < 0 || guardIndex < 0 || clearIndex > guardIndex {
+		t.Fatal("desktop secrets must be cleared before checking whether an existing wallet can lock")
+	}
+	if !strings.Contains(javascript, `byId("create-wallet-form").reset();`) {
+		t.Fatal("desktop background protection must clear first-run passwords")
+	}
+}
+
 func TestEmbeddedInterfaceSupportsEncryptedRecoveryWalletLifecycle(t *testing.T) {
-	htmlBody, err := fs.ReadFile(assetsFS, "assets/index.html")
+	htmlBody, err := readAsset("assets/index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +221,7 @@ func TestEmbeddedInterfaceSupportsEncryptedRecoveryWalletLifecycle(t *testing.T)
 		}
 	}
 
-	javascriptBody, err := fs.ReadFile(assetsFS, "assets/app.js")
+	javascriptBody, err := readAsset("assets/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +240,7 @@ func TestEmbeddedInterfaceSupportsEncryptedRecoveryWalletLifecycle(t *testing.T)
 		}
 	}
 
-	cssBody, err := fs.ReadFile(assetsFS, "assets/app.css")
+	cssBody, err := readAsset("assets/app.css")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +269,7 @@ func TestEmbeddedInterfaceIncludesVerifiedPPLNSMiner(t *testing.T) {
 			forbidden: []string{`guaranteed profit`, `GPU mining`, `pool balance`, `Open solo`},
 		},
 		{
-			name: "assets/app.js",
+			name: "assets/miner.js",
 			required: []string{
 				`/api/v1/miner/status`, `/api/v1/miner/start`, `/api/v1/miner/stop`,
 				`logical_cpus`, `current_hashrate`, `average_hashrate`, `shares_accepted`, `blocks_accepted`, `pool_fee_bps`,
@@ -221,7 +277,7 @@ func TestEmbeddedInterfaceIncludesVerifiedPPLNSMiner(t *testing.T) {
 			},
 		},
 		{
-			name: "assets/app.css",
+			name: "assets/miner.css",
 			required: []string{
 				`.miner-instruments`, `.miner-control-grid`, `.miner-state-line`, `.miner-actions`,
 				`grid-template-columns: repeat(2, minmax(0, 1fr))`,
@@ -229,7 +285,7 @@ func TestEmbeddedInterfaceIncludesVerifiedPPLNSMiner(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		body, err := fs.ReadFile(assetsFS, test.name)
+		body, err := readAsset(test.name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -248,7 +304,7 @@ func TestEmbeddedInterfaceIncludesVerifiedPPLNSMiner(t *testing.T) {
 }
 
 func TestEmbeddedMinerSupportDiagnosticsAreUsefulAndPrivate(t *testing.T) {
-	htmlBody, err := fs.ReadFile(assetsFS, "assets/index.html")
+	htmlBody, err := readAsset("assets/index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +320,7 @@ func TestEmbeddedMinerSupportDiagnosticsAreUsefulAndPrivate(t *testing.T) {
 		}
 	}
 
-	javascriptBody, err := fs.ReadFile(assetsFS, "assets/app.js")
+	javascriptBody, err := readAsset("assets/miner.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +350,7 @@ func TestEmbeddedMinerSupportDiagnosticsAreUsefulAndPrivate(t *testing.T) {
 		}
 	}
 
-	cssBody, err := fs.ReadFile(assetsFS, "assets/app.css")
+	cssBody, err := readAsset("assets/miner.css")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +362,7 @@ func TestEmbeddedMinerSupportDiagnosticsAreUsefulAndPrivate(t *testing.T) {
 }
 
 func TestEmbeddedInterfaceLinksToNineInboxWithoutChangingWalletActions(t *testing.T) {
-	htmlBody, err := fs.ReadFile(assetsFS, "assets/index.html")
+	htmlBody, err := readAsset("assets/index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +379,7 @@ func TestEmbeddedInterfaceLinksToNineInboxWithoutChangingWalletActions(t *testin
 	if count := strings.Count(html, `data-panel=`); count != 5 {
 		t.Fatalf("wallet action count = %d, want 5", count)
 	}
-	cssBody, err := fs.ReadFile(assetsFS, "assets/app.css")
+	cssBody, err := readAsset("assets/app.css")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +391,7 @@ func TestEmbeddedInterfaceLinksToNineInboxWithoutChangingWalletActions(t *testin
 }
 
 func TestEmbeddedInterfaceIncludesClearWalletActivityMaxAndCleanup(t *testing.T) {
-	htmlBody, err := fs.ReadFile(assetsFS, "assets/index.html")
+	htmlBody, err := readAsset("assets/index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +414,7 @@ func TestEmbeddedInterfaceIncludesClearWalletActivityMaxAndCleanup(t *testing.T)
 		}
 	}
 
-	javascriptBody, err := fs.ReadFile(assetsFS, "assets/app.js")
+	javascriptBody, err := readAsset("assets/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +431,7 @@ func TestEmbeddedInterfaceIncludesClearWalletActivityMaxAndCleanup(t *testing.T)
 		}
 	}
 
-	cssBody, err := fs.ReadFile(assetsFS, "assets/app.css")
+	cssBody, err := readAsset("assets/app.css")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,20 +446,16 @@ func TestEmbeddedInterfaceIncludesClearWalletActivityMaxAndCleanup(t *testing.T)
 	}
 }
 
-func TestWalletOnlyBuildRemovesMiningFromNavigation(t *testing.T) {
-	javascriptBody, err := fs.ReadFile(assetsFS, "assets/app.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	javascript := string(javascriptBody)
-	for _, required := range []string{
-		`function setMinerAvailable(available)`,
-		`minerTab.hidden = !available`,
-		`status.mining_available !== false`,
-		`error.code === "miner_unavailable"`,
-	} {
-		if !strings.Contains(javascript, required) {
-			t.Errorf("wallet-only navigation is missing %q", required)
+func TestCommonWalletAssetsContainNoMiningImplementation(t *testing.T) {
+	for _, name := range []string{"assets/index.html", "assets/app.css", "assets/app.js"} {
+		body, err := commonAssets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"/api/v1/miner/", "Start mining", "BTC09 miner help report", "miner-panel"} {
+			if strings.Contains(string(body), forbidden) {
+				t.Errorf("wallet asset %s contains %q", name, forbidden)
+			}
 		}
 	}
 }

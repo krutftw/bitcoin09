@@ -7,6 +7,7 @@
   <title>BTC09 Wallet</title>
   <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/app.css">
+  <!-- edition-head -->
 </head>
 <body>
   <div class="signal-field" aria-hidden="true"></div>
@@ -126,9 +127,12 @@
               <span class="account-label">MAIN WALLET</span>
               <strong>Account 1</strong>
             </div>
-            <button id="copy-address" class="address-chip" type="button" aria-label="Copy receive address">
-              <span id="address-chip-text">Loading address…</span><b aria-hidden="true">▣</b>
-            </button>
+            <span class="account-actions">
+              <button id="copy-address" class="address-chip" type="button" aria-label="Copy receive address">
+                <span id="address-chip-text">Loading address…</span><b aria-hidden="true">▣</b>
+              </button>
+              <button id="lock-wallet" class="quiet-action" type="button">Lock</button>
+            </span>
           </header>
 
           <section class="account-summary">
@@ -142,7 +146,7 @@
             <button class="ledger-tab is-active" type="button" data-panel="receive-panel"><span aria-hidden="true">↓</span><b>Receive</b></button>
             <button class="ledger-tab" type="button" data-panel="send-panel"><span aria-hidden="true">↑</span><b>Send</b></button>
             <button class="ledger-tab" type="button" data-panel="activity-panel"><span aria-hidden="true">≡</span><b>Activity</b></button>
-            <button class="ledger-tab" type="button" data-panel="miner-panel"><span aria-hidden="true">M</span><b>Mine</b></button>
+            <!-- edition-tab -->
             <button class="ledger-tab" type="button" data-panel="safety-panel"><span aria-hidden="true">◇</span><b>Backup</b></button>
           </nav>
 
@@ -215,57 +219,7 @@
               </div>
             </section>
 
-            <section id="miner-panel" class="ledger-panel miner-panel" hidden>
-              <div class="panel-heading">
-                <div><p class="kicker">OFFICIAL MINER</p><h2>PPLNS pool</h2></div>
-                <span id="miner-state" class="miner-state-badge">Stopped</span>
-              </div>
-              <p class="panel-intro">Direct payouts from each block, split by accepted shares. 0% pool fee.</p>
-
-              <div class="miner-readiness" aria-label="Mining readiness">
-                <div><span>WALLET</span><strong id="miner-wallet-check">Checking</strong></div>
-                <div><span>POOL</span><strong id="miner-endpoint-check">Not tested</strong></div>
-                <div><span>CPU</span><strong id="miner-cpu-check">1 of 1</strong></div>
-              </div>
-
-              <div class="miner-instruments" aria-label="Mining session statistics">
-                <div><span>NOW</span><strong id="miner-current-hashrate">0.00 H/s</strong></div>
-                <div><span>SESSION AVG</span><strong id="miner-average-hashrate">0.00 H/s</strong></div>
-                <div><span>SHARES</span><strong id="miner-shares">0</strong></div>
-                <div><span>BLOCKS</span><strong id="miner-blocks">0</strong></div>
-              </div>
-
-              <p id="miner-state-line" class="miner-state-line" role="status" aria-live="polite">Ready when you are.</p>
-
-              <form id="miner-form" novalidate>
-                <div class="miner-control-grid">
-                  <div class="miner-address-field">
-                    <span class="field-label">PAYOUT ADDRESS</span>
-                    <code id="miner-address">Wallet address loads here</code>
-                  </div>
-                  <label class="field miner-worker-field">
-                    <span class="field-label">WORKER NAME <small>OPTIONAL</small></span>
-                    <input id="miner-worker" maxlength="64" autocomplete="off" spellcheck="false" placeholder="home-pc">
-                  </label>
-                  <label class="miner-thread-field">
-                    <span class="field-label">CPU THREADS <output id="miner-workers-value" for="miner-workers">1 of 1</output></span>
-                    <input id="miner-workers" type="range" min="1" max="1" value="1" step="1">
-                    <small id="miner-cpu-guidance" class="miner-cpu-guidance">Leave one thread free by default so this computer stays responsive.</small>
-                  </label>
-                </div>
-                <div class="miner-actions">
-                  <button id="start-miner" class="primary-action" type="submit">Start mining</button>
-                  <button id="stop-miner" class="quiet-action" type="button" disabled>Stop</button>
-                  <button id="copy-miner-report" class="quiet-action miner-copy-action" type="button">Copy help report</button>
-                  <span id="miner-session-meta">0 jobs · 0 reconnects · 0s</span>
-                </div>
-              </form>
-
-              <div class="miner-help-row">
-                <p class="miner-privacy">Only your public payout address and optional worker name leave this computer. Wallet keys stay here. The app verifies the share window and direct-payout coinbase before it starts hashing.</p>
-                <a href="https://btc09.org/#mining-guide" target="_blank" rel="noopener noreferrer">Mining guide ↗</a>
-              </div>
-            </section>
+            <!-- edition-panel -->
           </div>
         </section>
       </main>
@@ -316,5 +270,6 @@
   </section>
   <script src="/assets/network.js" defer></script>
   <script src="/assets/app.js" defer></script>
+  <!-- edition-script -->
 </body>
 </html>

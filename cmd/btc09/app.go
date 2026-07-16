@@ -54,7 +54,7 @@ func parseAppOptions(args []string) (appOptions, error) {
 	seedsText := fs.String("seeds", "", "comma-separated seed peers")
 	fs.StringVar(&options.mode, "mode", "", "wallet mode: fast or full")
 	fs.StringVar(&options.gatewayURL, "gateway", "", "Fast mode HTTPS wallet gateway")
-	fs.StringVar(&options.miningURL, "miner", "", "Open solo mining coordinator URL")
+	configureAppMiningFlag(fs, &options)
 	fs.BoolVar(&options.noBrowser, "no-browser", false, "do not open the system browser")
 	fs.BoolVar(&options.desktopHost, "desktop-host", false, "run inside the BTC09 desktop host")
 	fs.BoolVar(&options.walletOnly, "wallet-only", false, "disable on-device mining")
@@ -98,14 +98,7 @@ func parseAppOptions(args []string) (appOptions, error) {
 			return appOptions{}, clientErr
 		}
 	}
-	if options.miningURL == "" {
-		if params.Name == "mainnet" {
-			options.miningURL = defaultMainnetMiningEndpoint
-		} else {
-			options.miningURL = "http://127.0.0.1:9010"
-		}
-	}
-	if err := validateAppMiningURL(options.miningURL, params.Name != "mainnet"); err != nil {
+	if err := resolveAppMiningOptions(&options, params.Name); err != nil {
 		return appOptions{}, err
 	}
 	if *seedsText == "" {
@@ -117,25 +110,6 @@ func parseAppOptions(args []string) (appOptions, error) {
 		}
 	}
 	return options, nil
-}
-
-func validateAppMiningURL(value string, allowLoopbackHTTP bool) error {
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-		return errors.New("invalid Open solo mining coordinator URL")
-	}
-	if parsed.Scheme == "https" {
-		return nil
-	}
-	if parsed.Scheme != "http" || !allowLoopbackHTTP {
-		return errors.New("Open solo mining coordinator must use HTTPS")
-	}
-	host := parsed.Hostname()
-	ip := net.ParseIP(host)
-	if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
-		return errors.New("plain HTTP Open solo coordinator must use loopback")
-	}
-	return nil
 }
 
 func parseAppSeeds(value string) ([]string, error) {
