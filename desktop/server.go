@@ -45,7 +45,13 @@ type session struct {
 type pendingSend struct {
 	expiresAt int64
 	inFlight  bool
+	purpose   string
 }
+
+const (
+	pendingPurposeSend    = "send"
+	pendingPurposeCleanup = "cleanup"
+)
 
 type Server struct {
 	origin      string
@@ -142,8 +148,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handlePreviewSend(w, r)
 		return
 	}
+	if r.URL.Path == "/api/v1/send/max-preview" {
+		s.handlePreviewMaxSend(w, r)
+		return
+	}
 	if r.URL.Path == "/api/v1/send/confirm" {
 		s.handleConfirmSend(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/activity" {
+		s.handleActivity(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/maintenance/cleanup/preview" {
+		s.handlePreviewCleanup(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/maintenance/cleanup/confirm" {
+		s.handleConfirmCleanup(w, r)
 		return
 	}
 	if r.URL.Path == "/api/v1/miner/status" {
@@ -505,27 +527,9 @@ func (s *Server) handlePreviewSend(w http.ResponseWriter, r *http.Request) {
 		s.writeServiceError(w, err, "send_preview_failed", "BTC09 could not prepare that transaction.")
 		return
 	}
-	now := s.nowUnix()
-	if preview.PendingID == "" || len(preview.PendingID) > 128 || preview.ExpiresAtUnix <= now || preview.ExpiresAtUnix > now+3600 {
-		s.writeError(w, http.StatusInternalServerError, "send_preview_failed", "BTC09 could not prepare that transaction.")
+	if !s.rememberPending(w, current, preview.PendingID, preview.ExpiresAtUnix, pendingPurposeSend, "send_preview_failed", "BTC09 could not prepare that transaction.") {
 		return
 	}
-	s.mu.Lock()
-	if s.pending[current.token] == nil {
-		s.pending[current.token] = make(map[string]*pendingSend)
-	}
-	for id, pending := range s.pending[current.token] {
-		if pending.expiresAt <= now {
-			delete(s.pending[current.token], id)
-		}
-	}
-	if _, duplicate := s.pending[current.token][preview.PendingID]; duplicate {
-		s.mu.Unlock()
-		s.writeError(w, http.StatusInternalServerError, "send_preview_failed", "BTC09 could not prepare that transaction.")
-		return
-	}
-	s.pending[current.token][preview.PendingID] = &pendingSend{expiresAt: preview.ExpiresAtUnix}
-	s.mu.Unlock()
 	s.writeData(w, http.StatusOK, preview)
 }
 
@@ -541,42 +545,8 @@ func (s *Server) handleConfirmSend(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "invalid_request", "The transaction preview was not valid.")
 		return
 	}
-	now := s.nowUnix()
-	s.mu.Lock()
-	pending := s.pending[current.token][request.PendingID]
-	if pending == nil {
-		s.mu.Unlock()
-		s.writeError(w, http.StatusConflict, "preview_unavailable", "That transaction preview is no longer available. Review the payment again.")
-		return
-	}
-	if pending.expiresAt <= now {
-		delete(s.pending[current.token], request.PendingID)
-		s.mu.Unlock()
-		s.writeError(w, http.StatusConflict, "preview_expired", "That transaction preview expired. Review the payment again.")
-		return
-	}
-	if pending.inFlight {
-		s.mu.Unlock()
-		s.writeError(w, http.StatusConflict, "confirmation_in_progress", "That transaction is already being submitted.")
-		return
-	}
-	pending.inFlight = true
-	s.mu.Unlock()
-
-	result, err := s.service.ConfirmSend(r.Context(), request.PendingID)
-	if err != nil {
-		s.mu.Lock()
-		if existing := s.pending[current.token][request.PendingID]; existing != nil {
-			existing.inFlight = false
-		}
-		s.mu.Unlock()
-		s.writeServiceError(w, err, "send_confirm_failed", "BTC09 could not submit that transaction.")
-		return
-	}
-	s.mu.Lock()
-	delete(s.pending[current.token], request.PendingID)
-	s.mu.Unlock()
-	s.writeData(w, http.StatusOK, result)
+	s.confirmRememberedPending(w, r, current, request.PendingID, pendingPurposeSend, s.service.ConfirmSend,
+		"send_confirm_failed", "BTC09 could not submit that transaction.")
 }
 
 func (s *Server) minerService(w http.ResponseWriter) (MinerService, bool) {
