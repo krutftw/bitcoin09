@@ -38,7 +38,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if r.URL.Path != SnapshotPath && r.URL.Path != BroadcastPath {
+	if r.URL.Path != SnapshotPath && r.URL.Path != ViewPath && r.URL.Path != BroadcastPath {
 		g.writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
@@ -59,9 +59,167 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case SnapshotPath:
 		g.handleSnapshot(w, r)
+	case ViewPath:
+		g.handleView(w, r)
 	case BroadcastPath:
 		g.handleBroadcast(w, r)
 	}
+}
+
+func (g *Gateway) handleView(w http.ResponseWriter, r *http.Request) {
+	var request ViewRequest
+	if err := decodeStrictJSON(r.Body, &request); err != nil {
+		status := http.StatusBadRequest
+		code := "bad_request"
+		if errors.Is(err, errRequestTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+			code = "request_too_large"
+		}
+		g.writeError(w, status, code)
+		return
+	}
+	if len(request.Addresses) > MaxSnapshotAddresses {
+		g.writeError(w, http.StatusRequestEntityTooLarge, "too_many_addresses")
+		return
+	}
+	if request.ActivityLimit < 0 || request.ActivityLimit > MaxWalletActivityLimit {
+		g.writeError(w, http.StatusBadRequest, "invalid_activity_limit")
+		return
+	}
+	pkhs, err := canonicalPKHs(request.Addresses)
+	if err != nil {
+		g.writeError(w, http.StatusBadRequest, "invalid_addresses")
+		return
+	}
+	view, err := g.chain.WalletViewForPKHs(pkhs, request.ActivityLimit)
+	if err != nil || !view.Complete || view.Network != g.network || view.Tip.Network != g.network ||
+		view.Tip.Height < 0 || len(view.SpendableOutputs) > MaxSnapshotOutputs ||
+		len(view.ImmatureOutputs) > MaxSnapshotOutputs || len(view.Activity) > request.ActivityLimit {
+		g.writeError(w, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	response := ViewResponse{
+		SchemaVersion:        SchemaVersion,
+		Network:              g.network,
+		Tip:                  Tip{Hash: hex.EncodeToString(view.Tip.Hash[:]), Height: view.Tip.Height},
+		Addresses:            append([]string(nil), request.Addresses...),
+		Outputs:              make([]SnapshotOutput, 0, len(view.SpendableOutputs)),
+		SpendableUnits:       view.SpendableUnits,
+		SpendableOutputCount: len(view.SpendableOutputs),
+		ImmatureOutputs:      make([]ViewImmatureOutput, 0, len(view.ImmatureOutputs)),
+		ImmatureUnits:        view.ImmatureUnits,
+		Activity:             make([]ViewActivityItem, 0, len(view.Activity)),
+	}
+	var spendableTotal int64
+	var previous core.OutPoint
+	for index, output := range view.SpendableOutputs {
+		if int(output.OwnerIndex) >= len(request.Addresses) || output.OwnerPKH != pkhs[output.OwnerIndex] ||
+			output.AmountUnits <= 0 || !core.MoneyRange(output.AmountUnits) {
+			g.writeError(w, http.StatusServiceUnavailable, "chain_unavailable")
+			return
+		}
+		if index > 0 {
+			comparison := bytes.Compare(previous.TxID[:], output.OutPoint.TxID[:])
+			if comparison > 0 || (comparison == 0 && previous.Idx >= output.OutPoint.Idx) {
+				g.writeError(w, http.StatusServiceUnavailable, "chain_unavailable")
+				return
+			}
+		}
+		if spendableTotal > core.MaxMoneyUnits-output.AmountUnits {
+			g.writeError(w, http.StatusServiceUnavailable, "chain_unavailable")
+			return
+		}
+		spendableTotal += output.AmountUnits
+		response.Outputs = append(response.Outputs, SnapshotOutput{
+			TxID: hex.EncodeToString(output.OutPoint.TxID[:]), Vout: output.OutPoint.Idx,
+			AmountUnits: output.AmountUnits, Address: request.Addresses[output.OwnerIndex],
+		})
+		previous = output.OutPoint
+	}
+	if spendableTotal != view.SpendableUnits {
+		g.writeError(w, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	var immatureTotal int64
+	var previousImmature core.OutPoint
+	for index, output := range view.ImmatureOutputs {
+		if int(output.OwnerIndex) >= len(request.Addresses) || output.OwnerPKH != pkhs[output.OwnerIndex] ||
+			output.AmountUnits <= 0 || !core.MoneyRange(output.AmountUnits) || output.BlockHeight < 0 ||
+			output.BlockHeight > view.Tip.Height || output.Confirmations != view.Tip.Height-output.BlockHeight+1 ||
+			output.Confirmations >= g.chain.Params().CoinbaseMaturity {
+			g.writeError(w, http.StatusServiceUnavailable, "chain_unavailable")
+			return
+		}
+		if index > 0 {
+			comparison := bytes.Compare(previousImmature.TxID[:], output.OutPoint.TxID[:])
+			if comparison > 0 || (comparison == 0 && previousImmature.Idx >= output.OutPoint.Idx) {
+				g.writeError(w, http.StatusServiceUnavailable, "chain_unavailable")
+				return
+			}
+		}
+		if immatureTotal > core.MaxMoneyUnits-output.AmountUnits {
+			g.writeError(w, http.StatusServiceUnavailable, "chain_unavailable")
+			return
+		}
+		immatureTotal += output.AmountUnits
+		response.ImmatureOutputs = append(response.ImmatureOutputs, ViewImmatureOutput{
+			TxID: hex.EncodeToString(output.OutPoint.TxID[:]), Vout: output.OutPoint.Idx,
+			AmountUnits: output.AmountUnits, Address: request.Addresses[output.OwnerIndex],
+			BlockHeight: output.BlockHeight, Confirmations: output.Confirmations,
+		})
+		previousImmature = output.OutPoint
+	}
+	if immatureTotal != view.ImmatureUnits {
+		g.writeError(w, http.StatusServiceUnavailable, "chain_unavailable")
+		return
+	}
+	for _, item := range view.Activity {
+		if !validGatewayActivity(item, view.Tip.Height, g.chain.Params().CoinbaseMaturity) {
+			g.writeError(w, http.StatusServiceUnavailable, "chain_unavailable")
+			return
+		}
+		response.Activity = append(response.Activity, ViewActivityItem{
+			TxID: hex.EncodeToString(item.TxID[:]), Kind: item.Kind, Status: item.Status,
+			NetUnits: item.NetUnits, BlockHeight: item.BlockHeight, Confirmations: item.Confirmations,
+			BlocksUntilMature: item.BlocksUntilMature,
+		})
+	}
+	g.writeJSON(w, http.StatusOK, response)
+}
+
+func validGatewayActivity(item core.WalletActivityItem, tipHeight, maturity int64) bool {
+	if item.NetUnits < -core.MaxMoneyUnits || item.NetUnits > core.MaxMoneyUnits {
+		return false
+	}
+	switch item.Kind {
+	case core.WalletActivityReceived, core.WalletActivityMiningReward:
+		if item.NetUnits <= 0 {
+			return false
+		}
+	case core.WalletActivitySent:
+		if item.NetUnits >= 0 {
+			return false
+		}
+	case core.WalletActivityCleanup:
+		if item.NetUnits > 0 {
+			return false
+		}
+	default:
+		return false
+	}
+	if item.Status == core.WalletActivityMempool {
+		return item.Kind != core.WalletActivityMiningReward && item.BlockHeight == -1 &&
+			item.Confirmations == 0 && item.BlockHash == (core.Hash32{}) && item.BlocksUntilMature == 0
+	}
+	if item.Status != core.WalletActivityConfirmed || item.BlockHeight < 0 || item.BlockHeight > tipHeight ||
+		item.Confirmations != tipHeight-item.BlockHeight+1 || item.BlockHash == (core.Hash32{}) {
+		return false
+	}
+	wantBlocks := int64(0)
+	if item.Kind == core.WalletActivityMiningReward && item.Confirmations < maturity {
+		wantBlocks = maturity - item.Confirmations
+	}
+	return item.BlocksUntilMature == wantBlocks
 }
 
 func (g *Gateway) handleSnapshot(w http.ResponseWriter, r *http.Request) {
