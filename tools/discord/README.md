@@ -121,15 +121,15 @@ Print the current stats locally:
 node tools/discord/stats-bot.mjs
 ```
 
-The Node watcher handles `/stats`, `/rank`, and `/leaderboard` on the live
+The Node watcher handles `/stats`, `/rank`, `/leaderboard`, `/wallet`, and `/mine` on the live
 server. Register those guild slash commands before running it by itself:
 
 ```powershell
 node tools/discord/stats-bot.mjs --register-commands
 ```
 
-This upserts `/stats`, `/rank`, and `/leaderboard` without replacing other guild
-commands. The Python OTC bot mirrors those three definitions when it bulk-syncs
+This upserts those five commands without replacing other guild commands. The
+Python OTC bot mirrors all five definitions when it bulk-syncs
 the guild, so an OTC restart cannot remove them. Production guild commands are
 guild-only; the OTC sync also removes retired global commands. Self-serve roles
 are handled by the clickable buttons in `#🎭-roles`, so the watch process must
