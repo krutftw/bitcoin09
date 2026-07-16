@@ -13,7 +13,9 @@ from bot.otc.explorer import (
     BlockAnchor,
     ConfirmedOutput,
     ConfirmedSpend,
+    ExplorerProtocolError,
     ExplorerTransportError,
+    TipMismatch,
     TransactionStatus,
 )
 from bot.otc.service import AuthorizationError, OrderConflict, TradeService
@@ -223,6 +225,48 @@ class TradeServiceRecoveryTests(unittest.TestCase):
 
         self.assertEqual(self.service.reconcile_transfers(), ())
         self.assertEqual(snapshot_calls, [])
+
+    def test_deposit_reconciliation_retries_only_bounded_tip_mismatches(self) -> None:
+        real_batch = self.explorer.batch_outputs
+        attempts = 0
+
+        def changing_tip(read_watched_addresses: object):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                tip = type(self.explorer.current_tip)(h(900 + attempts), 100 + attempts)
+                raise TipMismatch(tip)
+            return real_batch(read_watched_addresses)
+
+        self.explorer.batch_outputs = changing_tip  # type: ignore[method-assign]
+        batch, _ = self.service._reconcile_all_deposits()
+        self.assertEqual(batch.tip, self.explorer.current_tip)
+        self.assertEqual(attempts, 3)
+
+        attempts = 0
+
+        def never_stable(_read_watched_addresses: object):
+            nonlocal attempts
+            attempts += 1
+            tip = type(self.explorer.current_tip)(h(910 + attempts), 110 + attempts)
+            raise TipMismatch(tip)
+
+        self.explorer.batch_outputs = never_stable  # type: ignore[method-assign]
+        with self.assertRaises(TipMismatch):
+            self.service._reconcile_all_deposits()
+        self.assertEqual(attempts, 3)
+
+        attempts = 0
+
+        def bad_protocol(_read_watched_addresses: object):
+            nonlocal attempts
+            attempts += 1
+            raise ExplorerProtocolError("malformed explorer response")
+
+        self.explorer.batch_outputs = bad_protocol  # type: ignore[method-assign]
+        with self.assertRaises(ExplorerProtocolError):
+            self.service._reconcile_all_deposits()
+        self.assertEqual(attempts, 1)
 
     def create_sell(self, *, seller_id: int = 1):
         return self.service.create_sell(
