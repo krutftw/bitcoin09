@@ -7,6 +7,8 @@ class CIWorkflowContractTest(unittest.TestCase):
     def setUpClass(cls):
         cls.workflow_path = pathlib.Path(".github/workflows/ci.yml")
         cls.workflow = cls.workflow_path.read_text(encoding="utf-8")
+        cls.gitlab_path = pathlib.Path(".gitlab-ci.yml")
+        cls.gitlab = cls.gitlab_path.read_text(encoding="utf-8")
 
     def test_ci_runs_for_changes_and_manual_recovery(self):
         for token in ("push:", "pull_request:", "workflow_dispatch:"):
@@ -32,6 +34,9 @@ class CIWorkflowContractTest(unittest.TestCase):
             "go-package: ./...",
             "go vet ./...",
             "go test -race ./...",
+            "go test -race -tags walletedition ./desktop ./cmd/btc09",
+            "go build -trimpath -tags walletedition -o btc09-wallet-core ./cmd/btc09",
+            "node tools/desktop/verify-wallet-edition.mjs btc09-wallet-core",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.workflow)
@@ -57,6 +62,26 @@ class CIWorkflowContractTest(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.workflow)
+
+    def test_gitlab_mirror_runs_core_contracts_and_security_scanners(self):
+        for token in (
+            'GIT_DEPTH: "0"',
+            "Jobs/SAST.gitlab-ci.yml",
+            "Jobs/Secret-Detection.gitlab-ci.yml",
+            "Jobs/Dependency-Scanning.v2.gitlab-ci.yml",
+            "go vet ./...",
+            "go test -race ./...",
+            "go test -tags walletedition ./desktop ./cmd/btc09",
+            "node tools/desktop/verify-wallet-edition.mjs btc09-wallet-core",
+            "node --test tools/mobile/*.test.mjs",
+            "python -m unittest discover -s bot/tests -p 'test_*.py'",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.gitlab)
+
+        for forbidden in ("PRIVATE_KEY", "KEYSTORE_PASSWORD", "codesign", "signtool"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, self.gitlab)
 
     def test_native_wallet_is_checked_on_each_desktop_platform(self):
         for token in (

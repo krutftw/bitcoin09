@@ -3,6 +3,8 @@ import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { verifyWalletEditionBinary } from "./verify-wallet-edition.mjs";
+
 const targets = new Map([
   ["x86_64-pc-windows-msvc", { goos: "windows", goarch: "amd64", extension: ".exe" }],
   ["aarch64-pc-windows-msvc", { goos: "windows", goarch: "arm64", extension: ".exe" }],
@@ -94,6 +96,7 @@ export function buildSidecar(root, edition = "full") {
   if (result.status !== 0) {
     throw new Error("BTC09 Core could not be built for the desktop app.");
   }
+  if (edition === "wallet") verifyWalletEditionBinary(output);
   return { output, target, version: shellVersion, edition };
 }
 

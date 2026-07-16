@@ -43,6 +43,16 @@ test("mobile adapter uses only the wallet plugin and locks on background", async
   assert.doesNotMatch(script, /innerHTML/);
 });
 
+test("production mobile source contains no hidden demo wallet or recovery phrase", async () => {
+  const script = await readFile(path.join(source, "mobile.js"), "utf8");
+  for (const forbidden of [
+    "navigator.webdriver", "demoScreen", "demoCall", "demoPhrase", "?demo=",
+    "anchor begin canvas daring elder fabric", "4d8kwx6xn65W5LwJV4qRJubSkuyHg124kn",
+  ]) {
+    assert.doesNotMatch(script, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
 test("mobile styling keeps controls touch sized and headings restrained", async () => {
   const css = await readFile(path.join(source, "mobile.css"), "utf8");
   assert.match(css, /min-height:\s*48px/);

@@ -59,6 +59,44 @@ function Find-MakeAppx {
     throw 'MakeAppx.exe is missing. Install the Windows SDK before packaging the Store build.'
 }
 
+function Get-PeMachine([string]$Path) {
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+        if ($stream.Length -lt 64) {
+            throw "$Path is too small to be a Windows executable."
+        }
+        $reader = [System.IO.BinaryReader]::new($stream)
+        try {
+            if ($reader.ReadUInt16() -ne 0x5A4D) {
+                throw "$Path does not have a valid DOS executable header."
+            }
+            $stream.Position = 0x3C
+            $peOffset = $reader.ReadUInt32()
+            if ($peOffset -gt ($stream.Length - 6)) {
+                throw "$Path has an invalid PE header offset."
+            }
+            $stream.Position = $peOffset
+            if ($reader.ReadUInt32() -ne 0x00004550) {
+                throw "$Path does not have a valid PE signature."
+            }
+            return $reader.ReadUInt16()
+        }
+        finally {
+            $reader.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+function Assert-X64Pe([string]$Path) {
+    $machine = Get-PeMachine $Path
+    if ($machine -ne 0x8664) {
+        throw ("{0} targets PE machine 0x{1:X4}; the x64 Store package requires 0x8664." -f $Path, $machine)
+    }
+}
+
 if (-not $SkipBuild) {
     Push-Location $walletRoot
     try {
@@ -107,6 +145,7 @@ foreach ($required in ($walletExecutable, $coreExecutable)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Missing wallet-only build output: $required"
     }
+    Assert-X64Pe $required
 }
 $editionOutput = (& $coreExecutable version 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $editionOutput -notmatch 'wallet edition') {
@@ -115,6 +154,10 @@ if ($LASTEXITCODE -ne 0 -or $editionOutput -notmatch 'wallet edition') {
 $blockedOutput = (& $coreExecutable mine-pool 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 2 -or $blockedOutput -notmatch 'not available in the BTC09 Wallet edition') {
     throw 'The Microsoft Store BTC09 Core still accepts non-wallet commands.'
+}
+& node (Join-Path $repoRoot 'tools\desktop\verify-wallet-edition.mjs') $coreExecutable
+if ($LASTEXITCODE -ne 0) {
+    throw 'The Microsoft Store BTC09 Core contains code or interface content outside the wallet edition.'
 }
 Copy-Item -LiteralPath $walletExecutable -Destination (Join-Path $stageRoot 'btc09-wallet.exe')
 Copy-Item -LiteralPath $coreExecutable -Destination (Join-Path $stageRoot 'btc09-core.exe')
@@ -182,6 +225,8 @@ foreach ($required in ('AppxManifest.xml', 'btc09-wallet.exe', 'btc09-core.exe',
         throw "The Microsoft Store package is missing $required"
     }
 }
+Assert-X64Pe (Join-Path $verifyRoot 'btc09-wallet.exe')
+Assert-X64Pe (Join-Path $verifyRoot 'btc09-core.exe')
 if (Test-Path -LiteralPath (Join-Path $verifyRoot 'AppxSignature.p7x')) {
     throw 'The preflight package unexpectedly contains a signature.'
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -10,6 +10,9 @@ const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace
 const defaultCore = path.join(root, "walletapp", "src-tauri", "target", "release", "btc09-core.exe");
 const corePath = path.resolve(process.argv[2] || defaultCore);
 const walletOnly = process.env.BTC09_SMOKE_WALLET_ONLY === "1";
+const screenshotDirectory = process.env.BTC09_SMOKE_SCREENSHOT_DIR
+  ? path.resolve(process.env.BTC09_SMOKE_SCREENSHOT_DIR)
+  : "";
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "btc09-native-smoke-"));
 const walletPath = path.join(temporaryRoot, "wallet-mainnet.json");
 let backend;
@@ -49,6 +52,13 @@ async function assertPrimaryActionFits(page, width, height) {
   assert.ok(bounds.y + bounds.height <= height, `Create wallet falls below ${width}x${height}.`);
 }
 
+async function assertDesktopShellVisible(page) {
+  assert.equal(await page.evaluate(() => window.scrollY), 0, "Desktop navigation scrolled the whole app shell.");
+  const topbar = await page.locator(".topbar").boundingBox();
+  assert.ok(topbar, "Desktop header is not visible.");
+  assert.ok(topbar.y >= 0 && topbar.y + topbar.height <= 100, "Desktop header moved outside the viewport.");
+}
+
 try {
   const coreArguments = ["app", "-desktop-host"];
   if (walletOnly) coreArguments.push("-wallet-only");
@@ -76,7 +86,13 @@ try {
   await page.goto(launch.launch_url, { waitUntil: "networkidle" });
   await page.locator("#first-run").waitFor({ state: "visible" });
   await assertPrimaryActionFits(page, 1180, 790);
+  if (screenshotDirectory) {
+    await mkdir(screenshotDirectory, { recursive: true });
+    await page.screenshot({ path: path.join(screenshotDirectory, walletOnly ? "store-onboarding.png" : "desktop-onboarding.png") });
+  }
   await assertPrimaryActionFits(page, 760, 700);
+  await page.setViewportSize({ width: 1180, height: 790 });
+  await page.evaluate(() => scrollTo(0, 0));
 
   const password = "temporary-test-wallet";
   await page.locator("#create-password").fill(password);
@@ -98,10 +114,11 @@ try {
   await page.locator("#activity-list").waitFor({ state: "visible" });
   await page.waitForFunction(() => !document.querySelector("#activity-list")?.textContent?.includes("load wallet history"));
   assert.ok(!/networkerror|failed to fetch/i.test(await page.locator("body").innerText()));
+  await assertDesktopShellVisible(page);
 
   if (walletOnly) {
-    await page.waitForFunction(() => document.querySelector('[data-panel="miner-panel"]')?.hidden === true);
-    assert.equal(await page.locator('[data-panel="miner-panel"]').isHidden(), true);
+    assert.equal(await page.locator('[data-panel="miner-panel"]').count(), 0);
+    assert.equal(await page.locator("#miner-panel").count(), 0);
   } else {
     await page.locator('[data-panel="miner-panel"]').click();
     await page.locator("#miner-workers").fill("1");
@@ -110,6 +127,11 @@ try {
     await page.waitForTimeout(2000);
     await page.locator("#stop-miner").click();
     await page.waitForFunction(() => document.querySelector("#miner-state")?.textContent?.trim() === "Stopped");
+    await assertDesktopShellVisible(page);
+  }
+
+  if (screenshotDirectory) {
+    await page.screenshot({ path: path.join(screenshotDirectory, walletOnly ? "store-wallet.png" : "desktop-wallet.png") });
   }
 
   assert.deepEqual(runtimeErrors, [], `Browser errors: ${runtimeErrors.join(" | ")}`);

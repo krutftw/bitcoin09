@@ -16,13 +16,26 @@ final class WalletCorePlugin: Plugin {
   private let deviceKeys = DeviceKeyStore()
   private let walletQueue = DispatchQueue(label: "org.bitcoin09.wallet-core", qos: .userInitiated)
   private lazy var engine: MobilewalletEngine? = makeEngine()
+  private var privacyOverlay: UIView?
 
   override init() {
     super.init()
     NotificationCenter.default.addObserver(
       self,
+      selector: #selector(protectForSnapshot),
+      name: UIApplication.willResignActiveNotification,
+      object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self,
       selector: #selector(lockForBackground),
       name: UIApplication.didEnterBackgroundNotification,
+      object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(removePrivacyOverlay),
+      name: UIApplication.didBecomeActiveNotification,
       object: nil
     )
     NotificationCenter.default.addObserver(
@@ -35,11 +48,48 @@ final class WalletCorePlugin: Plugin {
 
   deinit {
     engine?.close()
+    privacyOverlay?.removeFromSuperview()
     NotificationCenter.default.removeObserver(self)
   }
 
   @objc private func lockForBackground() {
     walletQueue.async { self.engine?.lock() }
+  }
+
+  @objc private func protectForSnapshot() {
+    lockForBackground()
+    guard privacyOverlay == nil else { return }
+    guard let window = UIApplication.shared.connectedScenes
+      .compactMap({ $0 as? UIWindowScene })
+      .flatMap({ $0.windows })
+      .first(where: { $0.isKeyWindow }) else { return }
+
+    let overlay = UIView(frame: window.bounds)
+    overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    overlay.backgroundColor = UIColor(red: 23 / 255, green: 26 / 255, blue: 22 / 255, alpha: 1)
+    overlay.accessibilityViewIsModal = true
+    overlay.accessibilityLabel = "BTC09 Wallet locked"
+
+    let label = UILabel()
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.numberOfLines = 2
+    label.textAlignment = .center
+    label.textColor = UIColor(red: 245 / 255, green: 241 / 255, blue: 232 / 255, alpha: 1)
+    label.font = .systemFont(ofSize: 20, weight: .semibold)
+    label.text = "BTC09 Wallet\nLocked"
+    overlay.addSubview(label)
+    NSLayoutConstraint.activate([
+      label.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+      label.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
+    ])
+
+    window.addSubview(overlay)
+    privacyOverlay = overlay
+  }
+
+  @objc private func removePrivacyOverlay() {
+    privacyOverlay?.removeFromSuperview()
+    privacyOverlay = nil
   }
 
   @objc func status(_ invoke: Invoke) throws {

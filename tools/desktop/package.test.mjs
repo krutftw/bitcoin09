@@ -29,6 +29,7 @@ test("Android release builds both the test APK and Play Store bundle", async () 
   assert.match(command, /--aab/);
   assert.match(command, /--target aarch64/);
   assert.match(command, /--ci/);
+  assert.match(command, /mobile:android:verify/);
 });
 
 test("the native startup error can close the real app window", async () => {

@@ -1,3 +1,5 @@
+//go:build !walletedition
+
 package main
 
 import (
@@ -45,6 +47,9 @@ func TestWalletOnlyServiceKeepsWalletFeaturesWithoutExposingTheMiner(t *testing.
 	}
 	if _, ok := service.(desktop.RecoveryWalletService); !ok {
 		t.Fatal("wallet-only service lost recovery wallets")
+	}
+	if _, ok := service.(desktop.RecoveryWalletLockService); !ok {
+		t.Fatal("wallet-only service lost explicit wallet locking")
 	}
 	if _, ok := service.(desktop.PreviewCancelService); !ok {
 		t.Fatal("wallet-only service lost preview cancellation")
@@ -249,6 +254,16 @@ func TestAppServiceRecoveryWalletCreateRestartUnlockAndRestore(t *testing.T) {
 	shown, err := restarted.RecoveryPhrase(context.Background(), desktop.RecoveryWalletUnlockRequest{Password: "correct horse battery staple"})
 	if err != nil || shown.RecoveryPhrase != created.RecoveryPhrase {
 		t.Fatalf("recovery phrase = %q, %v", shown.RecoveryPhrase, err)
+	}
+	restarted.mu.Lock()
+	restarted.pending["discard-on-lock"] = &appPendingPayment{tx: &core.Tx{}, expiresAt: time.Now().Add(time.Minute)}
+	restarted.mu.Unlock()
+	lockedAgain, err := restarted.LockRecoveryWallet(context.Background())
+	if err != nil || !lockedAgain.NeedsUnlock || lockedAgain.SendAvailable || len(lockedAgain.Addresses) != 0 {
+		t.Fatalf("manual lock status = %+v, %v", lockedAgain, err)
+	}
+	if restarted.unlockedWallet != nil || len(restarted.pending) != 0 {
+		t.Fatalf("manual lock retained wallet=%v pending=%d", restarted.unlockedWallet != nil, len(restarted.pending))
 	}
 
 	restorePath := filepath.Join(t.TempDir(), "restored-regtest.json")

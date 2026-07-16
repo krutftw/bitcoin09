@@ -10,7 +10,7 @@ const plugin = path.join(root, "walletapp", "plugins", "tauri-plugin-wallet-core
 const load = (relative) => readFile(path.join(plugin, relative), "utf8");
 
 test("Android keeps the device key out of the web view and locks in the background", async () => {
-  const [bridge, keyStore, gradle, manifest, appManifest, backupRules, extractionRules, appGradle, theme, nightTheme, filePaths] = await Promise.all([
+  const [bridge, keyStore, gradle, manifest, appManifest, backupRules, extractionRules, appGradle, theme, nightTheme, filePaths, activity] = await Promise.all([
     load("android/src/main/java/WalletCorePlugin.kt"),
     load("android/src/main/java/DeviceKeyStore.kt"),
     load("android/build.gradle.kts"),
@@ -22,6 +22,7 @@ test("Android keeps the device key out of the web view and locks in the backgrou
     readFile(path.join(root, "walletapp", "src-tauri", "gen", "android", "app", "src", "main", "res", "values", "themes.xml"), "utf8"),
     readFile(path.join(root, "walletapp", "src-tauri", "gen", "android", "app", "src", "main", "res", "values-night", "themes.xml"), "utf8"),
     readFile(path.join(root, "walletapp", "src-tauri", "gen", "android", "app", "src", "main", "res", "xml", "file_paths.xml"), "utf8"),
+    readFile(path.join(root, "walletapp", "src-tauri", "gen", "android", "app", "src", "main", "java", "org", "bitcoin09", "wallet", "MainActivity.kt"), "utf8"),
   ]);
 
   assert.match(bridge, /override fun onPause\(\)[\s\S]*engineInstance\?\.lock\(\)/);
@@ -40,6 +41,10 @@ test("Android keeps the device key out of the web view and locks in the backgrou
   assert.match(keyStore, /AndroidKeyStore/);
   assert.match(keyStore, /AES\/GCM\/NoPadding/);
   assert.match(keyStore, /setUnlockedDeviceRequired\(true\)/);
+  assert.match(keyStore, /setUserAuthenticationRequired\(true\)/);
+  assert.match(keyStore, /setUserAuthenticationParameters/);
+  assert.match(keyStore, /KeyProperties\.AUTH_BIOMETRIC_STRONG/);
+  assert.match(keyStore, /KeyProperties\.AUTH_DEVICE_CREDENTIAL/);
   assert.match(keyStore, /SecureRandom\(\)\.nextBytes/);
   assert.match(keyStore, /hasCiphertext != hasIV/);
   assert.match(gradle, /libs\/mobilewallet\.aar/);
@@ -76,6 +81,7 @@ test("Android keeps the device key out of the web view and locks in the backgrou
   }
   assert.match(filePaths, /<cache-path name="shared_cache" path="shared\/"/);
   assert.doesNotMatch(filePaths, /external-path|external-cache-path|path="\."/);
+  assert.match(activity, /WindowManager\.LayoutParams\.FLAG_SECURE/);
 });
 
 test("iPhone uses a this-device-only user-presence key and locks in the background", async () => {
@@ -86,6 +92,9 @@ test("iPhone uses a this-device-only user-presence key and locks in the backgrou
   ]);
 
   assert.match(bridge, /UIApplication\.didEnterBackgroundNotification/);
+  assert.match(bridge, /UIApplication\.willResignActiveNotification/);
+  assert.match(bridge, /UIApplication\.didBecomeActiveNotification/);
+  assert.match(bridge, /privacyOverlay/);
   assert.match(bridge, /UIApplication\.protectedDataWillBecomeUnavailableNotification/);
   assert.match(bridge, /engine\?\.lock\(\)/);
   assert.match(bridge, /DispatchQueue\(label: "org\.bitcoin09\.wallet-core"/);

@@ -1,3 +1,5 @@
+//go:build !walletedition
+
 package main
 
 import (

@@ -188,6 +188,12 @@ type RecoveryWalletService interface {
 	RecoveryPhrase(context.Context, RecoveryWalletUnlockRequest) (RecoveryPhraseResult, error)
 }
 
+// RecoveryWalletLockService lets a native shell explicitly wipe the cached
+// unlock secret without closing the whole application.
+type RecoveryWalletLockService interface {
+	LockRecoveryWallet(context.Context) (Status, error)
+}
+
 type PublicError struct {
 	HTTPStatus int
 	Code       string
