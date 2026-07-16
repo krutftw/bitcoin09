@@ -72,6 +72,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "govulncheck ./...",
             "pip-audit==2.10.0",
             "pip-audit -r bot/requirements.txt",
+            "apt-get install -y --no-install-recommends shellcheck",
             "npm --prefix walletapp audit --omit=dev --audit-level=high",
             "go vet ./...",
             "go test -race ./...",
