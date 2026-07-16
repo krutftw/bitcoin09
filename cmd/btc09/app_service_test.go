@@ -719,6 +719,19 @@ func TestAppServiceMaximumPreviewUsesBackendAmountAndSendPurpose(t *testing.T) {
 		len(preview.SelectedInputs) != status.SpendableOutputCount {
 		t.Fatalf("maximum preview = %+v status=%+v", preview, status)
 	}
+	if err := service.CancelPreview(context.Background(), preview.PendingID); err != nil {
+		t.Fatalf("cancel maximum preview: %v", err)
+	}
+	if len(service.pending) != 0 {
+		t.Fatalf("pending previews after cancel = %d", len(service.pending))
+	}
+	if _, err := service.ConfirmSend(context.Background(), preview.PendingID); err == nil {
+		t.Fatal("cancelled maximum preview remained confirmable")
+	}
+	preview, err = service.PreviewMaxSend(context.Background(), desktop.MaxSendRequest{Destination: destination, Fee: "0.00010000"})
+	if err != nil {
+		t.Fatalf("maximum preview after cancel: %v", err)
+	}
 	if _, err := service.ConfirmCleanup(context.Background(), preview.PendingID); err == nil {
 		t.Fatal("cleanup confirmation accepted a maximum-send preview")
 	}

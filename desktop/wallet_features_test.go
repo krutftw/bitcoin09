@@ -21,6 +21,8 @@ type fakeWalletFeaturesService struct {
 	maxCalls            int
 	cleanupPreviewCalls int
 	cleanupConfirmCalls int
+	cancelCalls         int
+	cancelledID         string
 	featureErr          error
 	confirmStarted      chan struct{}
 	confirmRelease      chan struct{}
@@ -51,6 +53,12 @@ func (f *fakeWalletFeaturesService) ConfirmCleanup(_ context.Context, pendingID 
 		<-f.confirmRelease
 	}
 	return f.cleanupResult, f.featureErr
+}
+
+func (f *fakeWalletFeaturesService) CancelPreview(_ context.Context, pendingID string) error {
+	f.cancelCalls++
+	f.cancelledID = pendingID
+	return f.featureErr
 }
 
 func TestWalletFeatureRoutesAreAuthenticatedTypedAndOneTime(t *testing.T) {
@@ -101,6 +109,23 @@ func TestWalletFeatureRoutesAreAuthenticatedTypedAndOneTime(t *testing.T) {
 	if replay.Code != http.StatusConflict || service.cleanupConfirmCalls != 1 {
 		t.Fatalf("cleanup replay status=%d calls=%d body=%s", replay.Code, service.cleanupConfirmCalls, replay.Body.String())
 	}
+
+	maxResponse = authenticatedPost(t, server, cookie, csrf, "/api/v1/send/max-preview", `{"destination":"09destination","fee":"0.0001"}`)
+	if maxResponse.Code != http.StatusOK {
+		t.Fatalf("second max preview status=%d body=%s", maxResponse.Code, maxResponse.Body.String())
+	}
+	cancel := authenticatedPost(t, server, cookie, csrf, "/api/v1/preview/cancel", `{"pending_id":"max-1"}`)
+	if cancel.Code != http.StatusOK || service.cancelCalls != 1 || service.cancelledID != "max-1" || !strings.Contains(cancel.Body.String(), `"cancelled":true`) {
+		t.Fatalf("cancel status=%d calls=%d id=%q body=%s", cancel.Code, service.cancelCalls, service.cancelledID, cancel.Body.String())
+	}
+	cancelledConfirm := authenticatedPost(t, server, cookie, csrf, "/api/v1/send/confirm", `{"pending_id":"max-1"}`)
+	if cancelledConfirm.Code != http.StatusConflict || service.confirmCalls != 1 {
+		t.Fatalf("cancelled confirm status=%d calls=%d body=%s", cancelledConfirm.Code, service.confirmCalls, cancelledConfirm.Body.String())
+	}
+	repeatedCancel := authenticatedPost(t, server, cookie, csrf, "/api/v1/preview/cancel", `{"pending_id":"max-1"}`)
+	if repeatedCancel.Code != http.StatusOK || service.cancelCalls != 1 {
+		t.Fatalf("repeated cancel status=%d calls=%d body=%s", repeatedCancel.Code, service.cancelCalls, repeatedCancel.Body.String())
+	}
 }
 
 func TestWalletFeatureRoutesRejectMissingServiceMethodsAndBadRequests(t *testing.T) {
@@ -125,6 +150,10 @@ func TestWalletFeatureRoutesRejectMissingServiceMethodsAndBadRequests(t *testing
 	badJSON := authenticatedPost(t, featureServer, featureCookie, featureCSRF, "/api/v1/maintenance/cleanup/preview", `{"fee":"0","unknown":true}`)
 	if badJSON.Code != http.StatusBadRequest || featureService.cleanupPreviewCalls != 0 {
 		t.Fatalf("bad cleanup status=%d calls=%d body=%s", badJSON.Code, featureService.cleanupPreviewCalls, badJSON.Body.String())
+	}
+	badCancel := authenticatedPost(t, featureServer, featureCookie, featureCSRF, "/api/v1/preview/cancel", `{"pending_id":"x","unknown":true}`)
+	if badCancel.Code != http.StatusBadRequest || featureService.cancelCalls != 0 {
+		t.Fatalf("bad cancel status=%d calls=%d body=%s", badCancel.Code, featureService.cancelCalls, badCancel.Body.String())
 	}
 	missingCSRF := httptest.NewRequest(http.MethodPost, "/api/v1/send/max-preview", strings.NewReader(`{"destination":"09destination","fee":"0"}`))
 	missingCSRF.Host = "127.0.0.1:49152"

@@ -171,6 +171,12 @@ type WalletFeaturesService interface {
 	ConfirmCleanup(context.Context, string) (SendResult, error)
 }
 
+// PreviewCancelService releases the inputs held by a payment or cleanup review
+// when the user goes back without broadcasting it.
+type PreviewCancelService interface {
+	CancelPreview(context.Context, string) error
+}
+
 // RecoveryWalletService is implemented by desktop services that support the
 // encrypted deterministic Wallet V2 format. Keeping it optional preserves
 // compatibility with minimal wallet-only service implementations.

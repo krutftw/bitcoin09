@@ -319,6 +319,7 @@ func TestEmbeddedInterfaceIncludesClearWalletActivityMaxAndCleanup(t *testing.T)
 	for _, required := range []string{
 		`/api/v1/activity`, `/api/v1/send/max-preview`,
 		`/api/v1/maintenance/cleanup/preview`, `/api/v1/maintenance/cleanup/confirm`,
+		`/api/v1/preview/cancel`, `cancelPendingPreview`,
 		`setTimeout(refreshActivity, 30000)`, `cleanup_recommended`, `selected_inputs.length`,
 		`https://explorer.btc09.org/tx/`,
 	} {
