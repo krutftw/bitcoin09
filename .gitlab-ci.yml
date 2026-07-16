@@ -1,6 +1,7 @@
 stages:
   - test
   - package
+  - verify
 
 workflow:
   rules:
@@ -194,3 +195,64 @@ package-android-apk:
       - walletapp/src-tauri/target/direct/btc09-wallet-android-arm64.apk
       - walletapp/src-tauri/target/direct/ANDROID-CERT-SHA256.txt
       - walletapp/src-tauri/target/direct/SHA256SUMS
+
+verify-linux-appimage:
+  stage: verify
+  image: debian:12-slim
+  timeout: 15m
+  interruptible: false
+  rules:
+    - if: '$BTC09_LINUX_ARTIFACT_JOB_ID'
+    - when: never
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends ca-certificates curl unzip xvfb x11-utils dbus-x11 libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 librsvg2-2
+    - rm -rf /var/lib/apt/lists/*
+  script:
+    - |
+      set -eu
+      case "$BTC09_LINUX_ARTIFACT_JOB_ID" in
+        ''|*[!0-9]*) echo "BTC09_LINUX_ARTIFACT_JOB_ID must be numeric" >&2; exit 1 ;;
+      esac
+      curl --fail --location --silent --show-error \
+        --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/jobs/$BTC09_LINUX_ARTIFACT_JOB_ID/artifacts" \
+        --output /tmp/linux-artifact.zip
+      mkdir -p /tmp/linux-artifact /tmp/xdg-runtime
+      chmod 700 /tmp/xdg-runtime
+      unzip -q /tmp/linux-artifact.zip -d /tmp/linux-artifact
+      direct=/tmp/linux-artifact/walletapp/src-tauri/target/direct
+      appimage="$direct/btc09-wallet-linux-x64.AppImage"
+      test -s "$appimage"
+      (cd "$direct" && sha256sum -c SHA256SUMS)
+      chmod +x "$appimage"
+      Xvfb :99 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
+      echo $! >/tmp/xvfb.pid
+      ready=0
+      for _ in $(seq 1 30); do
+        if DISPLAY=:99 xdpyinfo >/dev/null 2>&1; then ready=1; break; fi
+        sleep 0.5
+      done
+      test "$ready" = 1
+      DISPLAY=:99 XDG_RUNTIME_DIR=/tmp/xdg-runtime \
+        dbus-run-session -- env APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" \
+        >/tmp/btc09-wallet.log 2>&1 &
+      echo $! >/tmp/btc09-wallet.pid
+      found=0
+      for _ in $(seq 1 40); do
+        if ! kill -0 "$(cat /tmp/btc09-wallet.pid)" 2>/dev/null; then
+          cat /tmp/btc09-wallet.log >&2
+          exit 1
+        fi
+        if DISPLAY=:99 xwininfo -root -tree >/tmp/windows.txt 2>&1 &&
+          grep -F "BTC09 Wallet" /tmp/windows.txt; then
+          found=1
+          break
+        fi
+        sleep 0.5
+      done
+      test "$found" = 1
+      echo "Verified clean Linux launch: BTC09 Wallet"
+  after_script:
+    - test ! -f /tmp/btc09-wallet.pid || kill "$(cat /tmp/btc09-wallet.pid)" 2>/dev/null || true
+    - test ! -f /tmp/xvfb.pid || kill "$(cat /tmp/xvfb.pid)" 2>/dev/null || true

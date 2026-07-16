@@ -92,6 +92,19 @@ class DirectDistributionContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, pipeline)
 
+    def test_gitlab_can_launch_check_an_exact_linux_release_artifact(self):
+        pipeline = pathlib.Path(".gitlab-ci.yml").read_text(encoding="utf-8")
+        for token in (
+            "verify-linux-appimage:",
+            "BTC09_LINUX_ARTIFACT_JOB_ID",
+            "$CI_API_V4_URL/projects/$CI_PROJECT_ID/jobs/",
+            "APPIMAGE_EXTRACT_AND_RUN=1",
+            "xwininfo -root -tree",
+            "BTC09 Wallet",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, pipeline)
+
 
 if __name__ == "__main__":
     unittest.main()
