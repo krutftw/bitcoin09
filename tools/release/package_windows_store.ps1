@@ -24,6 +24,7 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $walletRoot = Join-Path $repoRoot 'walletapp'
 $targetRoot = [System.IO.Path]::GetFullPath((Join-Path $walletRoot 'src-tauri\target'))
 $releaseRoot = Join-Path $targetRoot 'release'
+. (Join-Path $PSScriptRoot 'invoke_process_capture.ps1')
 
 function Assert-InTargetRoot([string]$Path) {
     $fullPath = [System.IO.Path]::GetFullPath($Path)
@@ -147,12 +148,12 @@ foreach ($required in ($walletExecutable, $coreExecutable)) {
     }
     Assert-X64Pe $required
 }
-$editionOutput = (& $coreExecutable version 2>&1 | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or $editionOutput -notmatch 'wallet edition') {
+$editionProbe = Invoke-CapturedProcess -FilePath $coreExecutable -ArgumentList @('version')
+if ($editionProbe.ExitCode -ne 0 -or $editionProbe.Output -notmatch 'wallet edition') {
     throw 'The Microsoft Store package requires the compile-time wallet edition of BTC09 Core.'
 }
-$blockedOutput = (& $coreExecutable mine-pool 2>&1 | Out-String).Trim()
-if ($LASTEXITCODE -ne 2 -or $blockedOutput -notmatch 'not available in the BTC09 Wallet edition') {
+$blockedProbe = Invoke-CapturedProcess -FilePath $coreExecutable -ArgumentList @('mine-pool')
+if ($blockedProbe.ExitCode -ne 2 -or $blockedProbe.Output -notmatch 'not available in the BTC09 Wallet edition') {
     throw 'The Microsoft Store BTC09 Core still accepts non-wallet commands.'
 }
 & node (Join-Path $repoRoot 'tools\desktop\verify-wallet-edition.mjs') $coreExecutable

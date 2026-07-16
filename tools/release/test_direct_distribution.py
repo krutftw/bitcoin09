@@ -253,6 +253,28 @@ class DirectDistributionContractTest(unittest.TestCase):
             "the pinned toolchain must be installed before the Windows build starts",
         )
 
+    def test_windows_packagers_capture_expected_native_failures_without_stderr_exceptions(self):
+        helper_path = pathlib.Path("tools/release/invoke_process_capture.ps1")
+        self.assertTrue(helper_path.exists(), "native process capture helper is missing")
+        helper = helper_path.read_text(encoding="utf-8") if helper_path.exists() else ""
+        for token in (
+            "Start-Process",
+            "-Wait",
+            "-PassThru",
+            "-RedirectStandardOutput",
+            "-RedirectStandardError",
+            "ExitCode",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, helper)
+
+        for script_name in ("package_windows_direct.ps1", "package_windows_store.ps1"):
+            script = pathlib.Path("tools/release", script_name).read_text(encoding="utf-8")
+            with self.subTest(script=script_name):
+                self.assertIn("invoke_process_capture.ps1", script)
+                self.assertIn("Invoke-CapturedProcess", script)
+                self.assertNotIn("(& $coreExecutable mine-pool 2>&1", script)
+
     def test_appveyor_normalizes_tauri_ci_environment(self):
         wrapper = pathlib.Path(
             "tools/release/run_windows_appveyor.ps1"
