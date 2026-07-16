@@ -268,7 +268,7 @@ function renderActivity(items) {
 
 async function loadActivity(silent = false) {
   const action = async () => {
-    const result = await call("activity", { limit: 100 });
+    const result = await call("activity", { limit: 50 });
     renderActivity(result.items || []);
     return result;
   };
