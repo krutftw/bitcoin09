@@ -165,7 +165,9 @@ test("the free iPhone gate stops after a native simulator build", async () => {
   assert.match(script, /-sdk iphonesimulator/);
   assert.match(script, /generic\/platform=iOS Simulator/);
   assert.match(script, /CODE_SIGNING_ALLOWED=NO/);
-  assert.match(script, /nm -gU[\s\S]*_MobilewalletNewEngine/);
+  assert.match(script, /symbols="\$DERIVED_DATA\/app-symbols\.txt"/);
+  assert.match(script, /nm -gU "\$APP_BINARY" > "\$symbols"/);
+  assert.match(script, /grep -q ' _MobilewalletNewEngine\$' "\$symbols"/);
   assert.match(script, /CFBundleShortVersionString/);
   assert.doesNotMatch(script, /xcodebuild[\s\S]*\barchive\b/);
   assert.doesNotMatch(script, /APPLE_DEVELOPMENT_TEAM|APPLE_API_KEY/);

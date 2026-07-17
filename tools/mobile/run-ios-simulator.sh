@@ -39,5 +39,7 @@ case " $actual_archs " in
 esac
 
 test "$(plutil -extract CFBundleShortVersionString raw "$APP/Info.plist")" = "0.1.34"
-nm -gU "$APP_BINARY" | grep -q ' _MobilewalletNewEngine$'
+symbols="$DERIVED_DATA/app-symbols.txt"
+nm -gU "$APP_BINARY" > "$symbols"
+grep -q ' _MobilewalletNewEngine$' "$symbols"
 echo "Verified native BTC09 iPhone simulator app ($expected_arch, wallet core linked)."
