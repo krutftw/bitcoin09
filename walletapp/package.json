@@ -16,7 +16,7 @@
     "mobile:core:ios": "node ../tools/mobile/prepare-core.mjs ios",
     "mobile:android:build": "tauri android build --apk --aab --target aarch64 --ci && npm run mobile:android:verify",
     "mobile:android:verify": "node ../tools/mobile/verify-artifact.mjs src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab",
-    "mobile:ios:simulator": "tauri ios build --debug --target aarch64-sim --ci"
+    "mobile:ios:simulator": "bash ../tools/mobile/run-ios-simulator.sh"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",

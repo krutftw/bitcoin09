@@ -152,6 +152,25 @@ test("the Tauri bridge exposes only the bounded wallet command set", async () =>
   ]);
 });
 
+test("the free iPhone gate stops after a native simulator build", async () => {
+  const [packageText, script] = await Promise.all([
+    readFile(path.join(root, "walletapp", "package.json"), "utf8"),
+    readFile(path.join(root, "tools", "mobile", "run-ios-simulator.sh"), "utf8"),
+  ]);
+  assert.equal(
+    JSON.parse(packageText).scripts["mobile:ios:simulator"],
+    "bash ../tools/mobile/run-ios-simulator.sh",
+  );
+  assert.match(script, /xcodebuild/);
+  assert.match(script, /-sdk iphonesimulator/);
+  assert.match(script, /generic\/platform=iOS Simulator/);
+  assert.match(script, /CODE_SIGNING_ALLOWED=NO/);
+  assert.match(script, /nm -gU[\s\S]*_MobilewalletNewEngine/);
+  assert.match(script, /CFBundleShortVersionString/);
+  assert.doesNotMatch(script, /xcodebuild[\s\S]*\barchive\b/);
+  assert.doesNotMatch(script, /APPLE_DEVELOPMENT_TEAM|APPLE_API_KEY/);
+});
+
 test("the Android host uses BTC09 launcher artwork rather than template icons", async () => {
   const host = path.join(root, "walletapp", "src-tauri", "gen", "android", "app", "src", "main", "res");
   const sourceIcons = path.join(root, "walletapp", "src-tauri", "icons", "android");
