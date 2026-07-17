@@ -11,7 +11,17 @@ const targets = new Map([
   ["x86_64-pc-windows-gnu", { goos: "windows", goarch: "amd64", extension: ".exe" }],
   ["x86_64-apple-darwin", { goos: "darwin", goarch: "amd64", extension: "" }],
   ["aarch64-apple-darwin", { goos: "darwin", goarch: "arm64", extension: "" }],
-  ["universal-apple-darwin", { goos: "darwin", goarches: ["arm64", "amd64"], extension: "" }],
+  [
+    "universal-apple-darwin",
+    {
+      goos: "darwin",
+      goarches: [
+        { goarch: "arm64", target: "aarch64-apple-darwin" },
+        { goarch: "amd64", target: "x86_64-apple-darwin" },
+      ],
+      extension: "",
+    },
+  ],
   ["x86_64-unknown-linux-gnu", { goos: "linux", goarch: "amd64", extension: "" }],
   ["aarch64-unknown-linux-gnu", { goos: "linux", goarch: "arm64", extension: "" }],
   ["x86_64-unknown-linux-musl", { goos: "linux", goarch: "amd64", extension: "" }],
@@ -117,30 +127,31 @@ export function buildSidecar(root, edition = "full") {
   };
 
   if (platform.goarches) {
-    const inputs = platform.goarches.map((goarch) => `${output}.${goarch}.thin`);
-    try {
-      platform.goarches.forEach((goarch, index) => build(goarch, inputs[index]));
-      rmSync(output, { force: true });
-      const result = spawnSync("lipo", lipoArguments(inputs, output), {
-        cwd: root,
-        encoding: "utf8",
-        windowsHide: true,
-      });
-      if (result.error || result.status !== 0) {
-        throw new Error(result.stderr?.trim() || result.error?.message || "Universal macOS sidecar creation failed.");
-      }
-      const verify = spawnSync("lipo", lipoVerifyArguments(output, ["arm64", "x86_64"]), {
-        cwd: root,
-        encoding: "utf8",
-        windowsHide: true,
-      });
-      if (verify.error || verify.status !== 0) {
-        throw new Error(verify.stderr?.trim() || verify.error?.message || "Universal macOS sidecar is missing an architecture.");
-      }
-      chmodSync(output, 0o755);
-    } finally {
-      for (const input of inputs) rmSync(input, { force: true });
+    // Tauri's universal build first compiles each Rust architecture and looks up
+    // the matching externalBin name before it creates the universal app. Keep
+    // both thin sidecars as well as the combined one so all three lookups work.
+    const inputs = platform.goarches.map(({ target: sliceTarget }) =>
+      path.join(binaryDirectory, `btc09-core-${sliceTarget}${platform.extension}`),
+    );
+    platform.goarches.forEach(({ goarch }, index) => build(goarch, inputs[index]));
+    rmSync(output, { force: true });
+    const result = spawnSync("lipo", lipoArguments(inputs, output), {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    if (result.error || result.status !== 0) {
+      throw new Error(result.stderr?.trim() || result.error?.message || "Universal macOS sidecar creation failed.");
     }
+    const verify = spawnSync("lipo", lipoVerifyArguments(output, ["arm64", "x86_64"]), {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    if (verify.error || verify.status !== 0) {
+      throw new Error(verify.stderr?.trim() || verify.error?.message || "Universal macOS sidecar is missing an architecture.");
+    }
+    for (const binary of [...inputs, output]) chmodSync(binary, 0o755);
   } else {
     build(platform.goarch, output);
   }

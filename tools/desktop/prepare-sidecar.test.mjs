@@ -63,7 +63,10 @@ test("store sidecars compile the restricted wallet edition", () => {
 test("universal macOS sidecars build both native architectures", () => {
   assert.deepEqual(targetToGo("universal-apple-darwin"), {
     goos: "darwin",
-    goarches: ["arm64", "amd64"],
+    goarches: [
+      { goarch: "arm64", target: "aarch64-apple-darwin" },
+      { goarch: "amd64", target: "x86_64-apple-darwin" },
+    ],
     extension: "",
   });
   assert.deepEqual(
