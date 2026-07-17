@@ -108,6 +108,10 @@ test("iPhone uses a this-device-only user-presence key and locks in the backgrou
   assert.match(keyStore, /SecRandomCopyBytes/);
   assert.match(keyStore, /errSecDuplicateItem/);
   assert.match(manifest, /Mobilewallet\.xcframework/);
+  assert.match(manifest, /ProcessInfo\.processInfo\.environment\["TARGET"\]/);
+  assert.match(manifest, /ios-arm64_x86_64-simulator/);
+  assert.match(manifest, /unsafeFlags\(\["-F", mobilewalletFrameworkPath\]\)/);
+  assert.doesNotMatch(manifest, /\.binaryTarget\(/);
 });
 
 test("the Tauri bridge exposes only the bounded wallet command set", async () => {
@@ -122,6 +126,9 @@ test("the Tauri bridge exposes only the bounded wallet command set", async () =>
   ]) {
     assert.match(build, new RegExp(`"${command}"`));
   }
+  assert.match(build, /cargo:rustc-link-search=framework=/);
+  assert.match(build, /cargo:rustc-link-lib=framework=Mobilewallet/);
+  assert.match(build, /ios-arm64_x86_64-simulator/);
   assert.match(mobile, /org\.bitcoin09\.walletcore/);
   assert.doesNotMatch(mobile, /shell|process|filesystem|http/);
   const parsed = JSON.parse(capability);

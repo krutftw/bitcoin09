@@ -210,7 +210,8 @@ class DirectDistributionContractTest(unittest.TestCase):
             "macos-sonoma",
             "bash tools/release/run_macos_appveyor.sh",
             "brew install go node@24 cocoapods",
-            "rustup target add x86_64-apple-darwin aarch64-apple-darwin aarch64-apple-ios-sim",
+            "x86_64-apple-ios",
+            "aarch64-apple-ios-sim",
             "go test ./...",
             "cargo test --manifest-path walletapp/src-tauri/Cargo.toml",
             "APPLE_SIGNING_IDENTITY=- npm --prefix walletapp run macos:universal:build",
@@ -224,6 +225,11 @@ class DirectDistributionContractTest(unittest.TestCase):
         self.assertNotIn("appveyor PushArtifact", runner)
         self.assertNotIn("APPLE_PASSWORD", runner)
         self.assertNotIn("APPLE_TEAM_ID", runner)
+        self.assertLess(
+            runner.index("npm run mobile:ios:simulator"),
+            runner.index("npm --prefix walletapp run macos:universal:build"),
+            "the unproven iPhone gate should fail before the expensive macOS release build",
+        )
 
     def test_appveyor_reuses_preinstalled_rustup_before_bootstrap(self):
         script = pathlib.Path(

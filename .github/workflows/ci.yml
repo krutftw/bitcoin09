@@ -186,7 +186,7 @@ jobs:
           cache-dependency-path: walletapp/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios-sim
+          targets: aarch64-apple-ios-sim,x86_64-apple-ios
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: walletapp/src-tauri -> target

@@ -39,6 +39,14 @@ export function bindingPlan(target, platform = process.platform, root = defaultR
   };
 }
 
+export function iosFrameworkFiles(output) {
+  const framework = "Mobilewallet.framework";
+  return ["ios-arm64", "ios-arm64_x86_64-simulator"].flatMap((slice) => {
+    const root = path.join(output, slice, framework);
+    return [path.join(root, "Mobilewallet"), path.join(root, "Modules", "module.modulemap")];
+  });
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: defaultRoot,
@@ -99,6 +107,13 @@ function build(target) {
   });
   if (!existsSync(plan.output)) {
     throw new Error(`Mobile core output was not created at ${plan.output}.`);
+  }
+  if (target === "ios") {
+    for (const required of iosFrameworkFiles(plan.output)) {
+      if (!existsSync(required)) {
+        throw new Error(`The iPhone wallet core is missing a required slice: ${required}`);
+      }
+    }
   }
   process.stdout.write(`Built ${plan.output}\n`);
 }

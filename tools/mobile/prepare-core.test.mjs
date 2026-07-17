@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 
-import { bindingPlan } from "./prepare-core.mjs";
+import { bindingPlan, iosFrameworkFiles } from "./prepare-core.mjs";
 
 test("Android binding is a pinned, app-private AAR with a modern minimum API", () => {
   const plan = bindingPlan("android", "win32", "C:/repo");
@@ -25,6 +26,15 @@ test("Apple binding produces one iPhone and simulator XCFramework on macOS", () 
   assert.ok(plan.args.includes("-target=ios"));
   assert.ok(plan.args.includes("-iosversion=13.0"));
   assert.match(plan.output, /ios[\\/]Frameworks[\\/]Mobilewallet\.xcframework$/);
+  assert.deepEqual(
+    iosFrameworkFiles("/tmp/Mobilewallet.xcframework"),
+    [
+      "/tmp/Mobilewallet.xcframework/ios-arm64/Mobilewallet.framework/Mobilewallet",
+      "/tmp/Mobilewallet.xcframework/ios-arm64/Mobilewallet.framework/Modules/module.modulemap",
+      "/tmp/Mobilewallet.xcframework/ios-arm64_x86_64-simulator/Mobilewallet.framework/Mobilewallet",
+      "/tmp/Mobilewallet.xcframework/ios-arm64_x86_64-simulator/Mobilewallet.framework/Modules/module.modulemap",
+    ].map((file) => file.replaceAll("/", path.sep)),
+  );
 });
 
 test("Apple binding refuses to pretend it can build on Windows", () => {
