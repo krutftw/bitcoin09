@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -11,6 +11,7 @@ const targets = new Map([
   ["x86_64-pc-windows-gnu", { goos: "windows", goarch: "amd64", extension: ".exe" }],
   ["x86_64-apple-darwin", { goos: "darwin", goarch: "amd64", extension: "" }],
   ["aarch64-apple-darwin", { goos: "darwin", goarch: "arm64", extension: "" }],
+  ["universal-apple-darwin", { goos: "darwin", goarches: ["arm64", "amd64"], extension: "" }],
   ["x86_64-unknown-linux-gnu", { goos: "linux", goarch: "amd64", extension: "" }],
   ["aarch64-unknown-linux-gnu", { goos: "linux", goarch: "arm64", extension: "" }],
   ["x86_64-unknown-linux-musl", { goos: "linux", goarch: "amd64", extension: "" }],
@@ -43,6 +44,13 @@ export function goBuildArguments(output, edition = "full") {
   if (edition === "wallet") args.push("-tags", "walletedition");
   args.push("-o", output, "./cmd/btc09");
   return args;
+}
+
+export function lipoArguments(inputs, output) {
+  if (!Array.isArray(inputs) || inputs.length < 2 || !output) {
+    throw new Error("Universal macOS sidecars require at least two input binaries and an output path.");
+  }
+  return ["-create", ...inputs, "-output", output];
 }
 
 function commandOutput(command, args, cwd) {
@@ -83,20 +91,52 @@ export function buildSidecar(root, edition = "full") {
   const binaryDirectory = path.join(root, "walletapp", "src-tauri", "binaries");
   mkdirSync(binaryDirectory, { recursive: true });
   const output = path.join(binaryDirectory, `btc09-core-${target}${platform.extension}`);
-  const result = spawnSync(
-    "go",
-    goBuildArguments(output, edition),
-    {
-      cwd: root,
-      env: { ...process.env, GOOS: platform.goos, GOARCH: platform.goarch, CGO_ENABLED: "0" },
-      stdio: "inherit",
-      windowsHide: true,
-    },
-  );
-  if (result.status !== 0) {
-    throw new Error("BTC09 Core could not be built for the desktop app.");
+
+  const build = (goarch, destination) => {
+    const result = spawnSync(
+      "go",
+      goBuildArguments(destination, edition),
+      {
+        cwd: root,
+        env: { ...process.env, GOOS: platform.goos, GOARCH: goarch, CGO_ENABLED: "0" },
+        stdio: "inherit",
+        windowsHide: true,
+      },
+    );
+    if (result.error || result.status !== 0) {
+      throw new Error(result.error?.message || "BTC09 Core could not be built for the desktop app.");
+    }
+    if (edition === "wallet") verifyWalletEditionBinary(destination);
+  };
+
+  if (platform.goarches) {
+    const inputs = platform.goarches.map((goarch) => `${output}.${goarch}.thin`);
+    try {
+      platform.goarches.forEach((goarch, index) => build(goarch, inputs[index]));
+      rmSync(output, { force: true });
+      const result = spawnSync("lipo", lipoArguments(inputs, output), {
+        cwd: root,
+        encoding: "utf8",
+        windowsHide: true,
+      });
+      if (result.error || result.status !== 0) {
+        throw new Error(result.stderr?.trim() || result.error?.message || "Universal macOS sidecar creation failed.");
+      }
+      const verify = spawnSync("lipo", ["-verify_arch", "arm64", "x86_64", output], {
+        cwd: root,
+        encoding: "utf8",
+        windowsHide: true,
+      });
+      if (verify.error || verify.status !== 0) {
+        throw new Error(verify.stderr?.trim() || verify.error?.message || "Universal macOS sidecar is missing an architecture.");
+      }
+      chmodSync(output, 0o755);
+    } finally {
+      for (const input of inputs) rmSync(input, { force: true });
+    }
+  } else {
+    build(platform.goarch, output);
   }
-  if (edition === "wallet") verifyWalletEditionBinary(output);
   return { output, target, version: shellVersion, edition };
 }
 

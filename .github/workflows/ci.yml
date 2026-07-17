@@ -236,6 +236,8 @@ jobs:
       - name: Install native wallet dependencies
         working-directory: walletapp
         run: npm ci
+      - name: Prepare wallet core for native shell tests
+        run: node tools/desktop/prepare-sidecar.mjs wallet
       - name: Check Rust formatting
         run: cargo fmt --manifest-path walletapp/src-tauri/Cargo.toml -- --check
       - name: Test native shell

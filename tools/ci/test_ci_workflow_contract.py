@@ -9,6 +9,8 @@ class CIWorkflowContractTest(unittest.TestCase):
         cls.workflow = cls.workflow_path.read_text(encoding="utf-8")
         cls.gitlab_path = pathlib.Path(".gitlab-ci.yml")
         cls.gitlab = cls.gitlab_path.read_text(encoding="utf-8")
+        cls.cirrus_path = pathlib.Path(".cirrus.yml")
+        cls.cirrus = cls.cirrus_path.read_text(encoding="utf-8")
 
     def test_ci_runs_for_changes_and_manual_recovery(self):
         for token in ("push:", "pull_request:", "workflow_dispatch:"):
@@ -111,6 +113,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "libwebkit2gtk-4.1-dev",
             "libayatana-appindicator3-dev",
             "dtolnay/rust-toolchain@stable",
+            "node tools/desktop/prepare-sidecar.mjs wallet",
             "cargo fmt --manifest-path walletapp/src-tauri/Cargo.toml -- --check",
             "cargo test --manifest-path walletapp/src-tauri/Cargo.toml",
             "npm run desktop:build -- --no-bundle",
@@ -118,6 +121,11 @@ class CIWorkflowContractTest(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.workflow)
+
+        self.assertLess(
+            self.workflow.index("node tools/desktop/prepare-sidecar.mjs wallet"),
+            self.workflow.index("cargo test --manifest-path walletapp/src-tauri/Cargo.toml"),
+        )
 
     def test_mobile_wallet_contracts_and_visual_flow_are_gated(self):
         for token in (
@@ -177,6 +185,43 @@ class CIWorkflowContractTest(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.workflow)
+
+    def test_free_macos_ci_builds_universal_and_iphone_wallets(self):
+        for token in (
+            "macos_instance:",
+            "ghcr.io/cirruslabs/macos-runner:sonoma",
+            "name: macOS and iPhone wallets",
+            "brew install go node@24",
+            "rustup target add x86_64-apple-darwin aarch64-apple-ios-sim",
+            "npm ci --prefix walletapp",
+            "go test ./...",
+            "node tools/desktop/prepare-sidecar.mjs wallet",
+            "cargo test --manifest-path walletapp/src-tauri/Cargo.toml",
+            "APPLE_SIGNING_IDENTITY=- npm --prefix walletapp run macos:universal:build",
+            "npm --prefix walletapp run macos:universal:build",
+            "node tools/desktop/verify-macos-bundle.mjs",
+            "npm --prefix walletapp run mobile:core:ios",
+            "tauri -- ios init --ci --skip-targets-install",
+            "npm run mobile:ios:simulator",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.cirrus)
+
+        self.assertLess(
+            self.cirrus.index("node tools/desktop/prepare-sidecar.mjs wallet"),
+            self.cirrus.index("cargo test --manifest-path walletapp/src-tauri/Cargo.toml"),
+        )
+
+        self.assertNotIn("artifacts:", self.cirrus)
+        self.assertNotIn("use_compute_credits", self.cirrus)
+        for forbidden in (
+            "APPLE_PASSWORD",
+            "APPLE_TEAM_ID",
+            "APPLE_API_KEY",
+            "BEGIN PRIVATE KEY",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, self.cirrus)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assertMatchingVersions, goBuildArguments, targetToGo } from "./prepare-sidecar.mjs";
+import {
+  assertMatchingVersions,
+  goBuildArguments,
+  lipoArguments,
+  targetToGo,
+} from "./prepare-sidecar.mjs";
 
 test("desktop targets map to the matching Go sidecar", () => {
   assert.deepEqual(targetToGo("x86_64-pc-windows-msvc"), {
@@ -52,4 +57,22 @@ test("store sidecars compile the restricted wallet edition", () => {
     "C:\\build\\btc09-core.exe",
     "./cmd/btc09",
   ]);
+});
+
+test("universal macOS sidecars build both native architectures", () => {
+  assert.deepEqual(targetToGo("universal-apple-darwin"), {
+    goos: "darwin",
+    goarches: ["arm64", "amd64"],
+    extension: "",
+  });
+  assert.deepEqual(
+    lipoArguments(["/tmp/btc09-arm64", "/tmp/btc09-amd64"], "/tmp/btc09-universal"),
+    [
+      "-create",
+      "/tmp/btc09-arm64",
+      "/tmp/btc09-amd64",
+      "-output",
+      "/tmp/btc09-universal",
+    ],
+  );
 });

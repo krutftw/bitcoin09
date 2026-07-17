@@ -9,6 +9,7 @@
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "store:build": "tauri build --features wallet-only --config src-tauri/tauri.store.conf.json",
+    "macos:universal:build": "tauri build --features wallet-only --config src-tauri/tauri.store.conf.json --target universal-apple-darwin --bundles app",
     "mobile:check": "node ../tools/mobile/prepare-core.mjs check",
     "mobile:ui-smoke": "node ../tools/mobile/ui-smoke.mjs",
     "mobile:core:android": "node ../tools/mobile/prepare-core.mjs android",

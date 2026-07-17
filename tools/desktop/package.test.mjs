@@ -32,6 +32,16 @@ test("Android release builds both the test APK and Play Store bundle", async () 
   assert.match(command, /mobile:android:verify/);
 });
 
+test("macOS release builds one wallet-only app for Intel and Apple Silicon", async () => {
+  const packageJSON = JSON.parse(await readFile(path.join(root, "walletapp", "package.json"), "utf8"));
+  const command = packageJSON.scripts["macos:universal:build"];
+
+  assert.match(command, /--features wallet-only/);
+  assert.match(command, /tauri\.store\.conf\.json/);
+  assert.match(command, /--target universal-apple-darwin/);
+  assert.match(command, /--bundles app/);
+});
+
 test("the native startup error can close the real app window", async () => {
   const startup = await readFile(path.join(root, "walletapp", "src", "startup.js"), "utf8");
   assert.match(startup, /window\.__TAURI__\.core\.invoke\("close_wallet"\)/);
