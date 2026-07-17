@@ -5,6 +5,7 @@ import {
   assertMatchingVersions,
   goBuildArguments,
   lipoArguments,
+  lipoVerifyArguments,
   targetToGo,
 } from "./prepare-sidecar.mjs";
 
@@ -74,5 +75,9 @@ test("universal macOS sidecars build both native architectures", () => {
       "-output",
       "/tmp/btc09-universal",
     ],
+  );
+  assert.deepEqual(
+    lipoVerifyArguments("/tmp/btc09-universal", ["arm64", "x86_64"]),
+    ["/tmp/btc09-universal", "-verify_arch", "arm64", "x86_64"],
   );
 });

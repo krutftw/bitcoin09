@@ -53,6 +53,13 @@ export function lipoArguments(inputs, output) {
   return ["-create", ...inputs, "-output", output];
 }
 
+export function lipoVerifyArguments(input, architectures) {
+  if (!input || !Array.isArray(architectures) || architectures.length === 0) {
+    throw new Error("Universal macOS verification requires an input and at least one architecture.");
+  }
+  return [input, "-verify_arch", ...architectures];
+}
+
 function commandOutput(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: "utf8", windowsHide: true });
   if (result.status !== 0) {
@@ -122,7 +129,7 @@ export function buildSidecar(root, edition = "full") {
       if (result.error || result.status !== 0) {
         throw new Error(result.stderr?.trim() || result.error?.message || "Universal macOS sidecar creation failed.");
       }
-      const verify = spawnSync("lipo", ["-verify_arch", "arm64", "x86_64", output], {
+      const verify = spawnSync("lipo", lipoVerifyArguments(output, ["arm64", "x86_64"]), {
         cwd: root,
         encoding: "utf8",
         windowsHide: true,

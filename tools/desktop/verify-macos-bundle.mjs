@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { verifyWalletEditionBinary } from "./verify-wallet-edition.mjs";
+import { lipoVerifyArguments } from "./prepare-sidecar.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDirectory, "..", "..");
@@ -79,7 +80,7 @@ export function verifyMacOSBundle(appPath, expectedVersion) {
   }
 
   for (const binary of [paths.shell, paths.sidecar]) {
-    checked("lipo", ["-verify_arch", "arm64", "x86_64", binary]);
+    checked("lipo", lipoVerifyArguments(binary, ["arm64", "x86_64"]));
     assertNoBuildPathLeaks(readFileSync(binary), [process.cwd(), process.env.CIRRUS_WORKING_DIR]);
   }
 
