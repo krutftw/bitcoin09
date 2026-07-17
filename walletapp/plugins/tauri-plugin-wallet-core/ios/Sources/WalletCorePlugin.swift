@@ -4,7 +4,7 @@ import Tauri
 import UIKit
 
 final class RestoreArgs: Decodable { let recoveryPhrase: String }
-final class ActivityArgs: Decodable { let limit: Int64 }
+final class ActivityArgs: Decodable { let limit: Int }
 final class PreviewSendArgs: Decodable {
   let destination: String
   let amount: String
@@ -148,7 +148,7 @@ final class WalletCorePlugin: Plugin {
   @objc func cancelSend(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(PendingArgs.self)
     complete(invoke) {
-      try self.engineVoidCall { $0.cancelSend(args.pendingId, error: $1) }
+      try self.engineVoidCall { try $0.cancelSend(args.pendingId) }
       return "{}"
     }
   }
@@ -220,7 +220,7 @@ final class WalletCorePlugin: Plugin {
   }
 
   private func engineCall(
-    _ operation: (MobilewalletEngine, UnsafeMutablePointer<NSError?>) -> String?
+    _ operation: (MobilewalletEngine, NSErrorPointer) -> String?
   ) throws -> String {
     guard let engine else { throw WalletCoreError.message("BTC09 Wallet could not start safely.") }
     var error: NSError?
@@ -231,12 +231,10 @@ final class WalletCorePlugin: Plugin {
   }
 
   private func engineVoidCall(
-    _ operation: (MobilewalletEngine, UnsafeMutablePointer<NSError?>) -> Bool
+    _ operation: (MobilewalletEngine) throws -> Void
   ) throws {
     guard let engine else { throw WalletCoreError.message("BTC09 Wallet could not start safely.") }
-    var error: NSError?
-    _ = operation(engine, &error)
-    if let error { throw error }
+    try operation(engine)
   }
 
   private func publicMessage(_ error: Error) -> String {

@@ -101,6 +101,11 @@ test("iPhone uses a this-device-only user-presence key and locks in the backgrou
   assert.match(bridge, /isExcludedFromBackup/);
   assert.match(bridge, /FileProtectionType\.complete/);
   assert.match(bridge, /resetBytes/);
+  assert.match(bridge, /ActivityArgs: Decodable \{ let limit: Int \}/);
+  assert.match(bridge, /\(MobilewalletEngine, NSErrorPointer\) -> String\?/);
+  assert.match(bridge, /try \$0\.cancelSend\(args\.pendingId\)/);
+  assert.doesNotMatch(bridge, /UnsafeMutablePointer<NSError\?>/);
+  assert.doesNotMatch(bridge, /cancelSend\(args\.pendingId, error:/);
   assert.doesNotMatch(bridge, /print\(|NSLog/);
   assert.match(keyStore, /kSecAttrAccessibleWhenUnlockedThisDeviceOnly/);
   assert.match(keyStore, /\.userPresence/);
