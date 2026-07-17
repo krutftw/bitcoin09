@@ -3,10 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 APPLE_DIR="$ROOT/walletapp/src-tauri/gen/apple"
-PROJECT="$APPLE_DIR/btc09-wallet.xcodeproj"
-DERIVED_DATA="$APPLE_DIR/build/ci-simulator-derived-data"
-APP="$DERIVED_DATA/Build/Products/debug-iphonesimulator/BTC09 Wallet.app"
-APP_BINARY="$APP/BTC09 Wallet"
+BUILD_LOG="$APPLE_DIR/build/ci-simulator-build.log"
 
 case "$(uname -m)" in
   arm64) expected_arch="arm64" ;;
@@ -14,22 +11,37 @@ case "$(uname -m)" in
   *) echo "Unsupported macOS CI architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-test -d "$PROJECT"
-rm -rf "$DERIVED_DATA"
+mkdir -p "$(dirname "$BUILD_LOG")"
 
-# `tauri ios build` always continues into an archive, which requires an Apple
-# development team. The free gate needs the real simulator app and native link,
-# not a distributable archive.
-xcodebuild \
-  -project "$PROJECT" \
-  -scheme btc09-wallet_iOS \
-  -configuration debug \
-  -sdk iphonesimulator \
-  -destination "generic/platform=iOS Simulator" \
-  -derivedDataPath "$DERIVED_DATA" \
-  ARCHS="$expected_arch" \
-  CODE_SIGNING_ALLOWED=NO \
-  build
+# Tauri owns the short-lived settings server used by its Xcode build phase.
+# It currently continues from a successful simulator build into an archive,
+# which needs a paid Apple development team. Accept only that exact boundary.
+set +e
+(
+  cd "$ROOT/walletapp"
+  npm run tauri -- ios build --debug --target aarch64-sim --ci
+) > "$BUILD_LOG" 2>&1
+tauri_status=$?
+set -e
+
+if ! grep -q '\*\* BUILD SUCCEEDED \*\*' "$BUILD_LOG"; then
+  cat "$BUILD_LOG" >&2
+  if (( tauri_status == 0 )); then exit 1; fi
+  exit "$tauri_status"
+fi
+if (( tauri_status != 0 )); then
+  if ! grep -q 'Signing for "btc09-wallet_iOS" requires a development team' "$BUILD_LOG" \
+    || ! grep -q '\*\* ARCHIVE FAILED \*\*' "$BUILD_LOG"; then
+    cat "$BUILD_LOG" >&2
+    exit "$tauri_status"
+  fi
+  echo "Simulator build passed; Apple distribution archive is unavailable in the free CI gate."
+fi
+
+APP="$(find "$HOME/Library/Developer/Xcode/DerivedData" "$APPLE_DIR/build" \
+  -type d -path '*/debug-iphonesimulator/BTC09 Wallet.app' -print -quit 2>/dev/null || true)"
+test -n "$APP"
+APP_BINARY="$APP/BTC09 Wallet"
 
 test -x "$APP_BINARY"
 actual_archs="$(lipo -archs "$APP_BINARY")"
@@ -39,7 +51,7 @@ case " $actual_archs " in
 esac
 
 test "$(plutil -extract CFBundleShortVersionString raw "$APP/Info.plist")" = "0.1.34"
-symbols="$DERIVED_DATA/app-symbols.txt"
+symbols="$APPLE_DIR/build/app-symbols.txt"
 nm -gU "$APP_BINARY" > "$symbols"
 grep -q ' _MobilewalletNewEngine$' "$symbols"
 echo "Verified native BTC09 iPhone simulator app ($expected_arch, wallet core linked)."

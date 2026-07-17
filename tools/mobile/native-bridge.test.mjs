@@ -152,7 +152,7 @@ test("the Tauri bridge exposes only the bounded wallet command set", async () =>
   ]);
 });
 
-test("the free iPhone gate stops after a native simulator build", async () => {
+test("the free iPhone gate accepts only the expected unsigned archive boundary", async () => {
   const [packageText, script] = await Promise.all([
     readFile(path.join(root, "walletapp", "package.json"), "utf8"),
     readFile(path.join(root, "tools", "mobile", "run-ios-simulator.sh"), "utf8"),
@@ -161,15 +161,15 @@ test("the free iPhone gate stops after a native simulator build", async () => {
     JSON.parse(packageText).scripts["mobile:ios:simulator"],
     "bash ../tools/mobile/run-ios-simulator.sh",
   );
-  assert.match(script, /xcodebuild/);
-  assert.match(script, /-sdk iphonesimulator/);
-  assert.match(script, /generic\/platform=iOS Simulator/);
-  assert.match(script, /CODE_SIGNING_ALLOWED=NO/);
-  assert.match(script, /symbols="\$DERIVED_DATA\/app-symbols\.txt"/);
+  assert.match(script, /tauri -- ios build --debug --target aarch64-sim --ci/);
+  assert.match(script, /\*\\\* BUILD SUCCEEDED/);
+  assert.match(script, /requires a development team/);
+  assert.match(script, /\*\\\* ARCHIVE FAILED/);
+  assert.match(script, /DerivedData/);
+  assert.match(script, /symbols="\$APPLE_DIR\/build\/app-symbols\.txt"/);
   assert.match(script, /nm -gU "\$APP_BINARY" > "\$symbols"/);
   assert.match(script, /grep -q ' _MobilewalletNewEngine\$' "\$symbols"/);
   assert.match(script, /CFBundleShortVersionString/);
-  assert.doesNotMatch(script, /xcodebuild[\s\S]*\barchive\b/);
   assert.doesNotMatch(script, /APPLE_DEVELOPMENT_TEAM|APPLE_API_KEY/);
 });
 
