@@ -7,7 +7,7 @@ cd "$repo_root"
 export CI=true
 export GOTOOLCHAIN=auto
 
-brew install go node@24
+brew install go node@24 cocoapods
 export PATH="$(brew --prefix node@24)/bin:$HOME/.cargo/bin:$PATH"
 
 if ! command -v rustup >/dev/null 2>&1; then

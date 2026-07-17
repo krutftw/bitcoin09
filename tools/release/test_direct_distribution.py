@@ -209,7 +209,7 @@ class DirectDistributionContractTest(unittest.TestCase):
         for token in (
             "macos-sonoma",
             "bash tools/release/run_macos_appveyor.sh",
-            "brew install go node@24",
+            "brew install go node@24 cocoapods",
             "rustup target add x86_64-apple-darwin aarch64-apple-darwin aarch64-apple-ios-sim",
             "go test ./...",
             "cargo test --manifest-path walletapp/src-tauri/Cargo.toml",
