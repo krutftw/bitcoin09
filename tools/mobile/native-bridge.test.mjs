@@ -85,10 +85,11 @@ test("Android keeps the device key out of the web view and locks in the backgrou
 });
 
 test("iPhone uses a this-device-only user-presence key and locks in the background", async () => {
-  const [bridge, keyStore, manifest] = await Promise.all([
+  const [bridge, keyStore, manifest, tauriConfigText] = await Promise.all([
     load("ios/Sources/WalletCorePlugin.swift"),
     load("ios/Sources/DeviceKeyStore.swift"),
     load("ios/Package.swift"),
+    readFile(path.join(root, "walletapp", "src-tauri", "tauri.conf.json"), "utf8"),
   ]);
 
   assert.match(bridge, /UIApplication\.didEnterBackgroundNotification/);
@@ -117,6 +118,10 @@ test("iPhone uses a this-device-only user-presence key and locks in the backgrou
   assert.match(manifest, /ios-arm64_x86_64-simulator/);
   assert.match(manifest, /unsafeFlags\(\["-F", mobilewalletFrameworkPath\]\)/);
   assert.doesNotMatch(manifest, /\.binaryTarget\(/);
+  const tauriConfig = JSON.parse(tauriConfigText);
+  assert.deepEqual(tauriConfig.bundle.iOS.frameworks, [
+    "../plugins/tauri-plugin-wallet-core/ios/Frameworks/Mobilewallet.xcframework",
+  ]);
 });
 
 test("the Tauri bridge exposes only the bounded wallet command set", async () => {
