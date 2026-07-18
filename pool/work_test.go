@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"math/big"
 	"testing"
 	"time"
 
@@ -41,9 +42,10 @@ func hardRegtestWork(t *testing.T) Work {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary.LittleEndian.PutUint32(raw[76:80], core.MainNet.MaxTargetBits)
+	bits := core.TargetToCompact(big.NewInt(1))
+	binary.LittleEndian.PutUint32(raw[76:80], bits)
 	work.HeaderHex = hex.EncodeToString(raw)
-	work.TargetHex = fmt.Sprintf("%064x", core.CompactToTarget(core.MainNet.MaxTargetBits))
+	work.TargetHex = fmt.Sprintf("%064x", core.CompactToTarget(bits))
 	work.ExpiresAt = time.Now().Add(120 * time.Millisecond).UTC()
 	return work
 }

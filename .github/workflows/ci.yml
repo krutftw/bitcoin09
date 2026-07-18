@@ -186,7 +186,7 @@ jobs:
           cache-dependency-path: walletapp/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios-sim
+          targets: aarch64-apple-ios-sim,x86_64-apple-ios
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: walletapp/src-tauri -> target
@@ -236,6 +236,8 @@ jobs:
       - name: Install native wallet dependencies
         working-directory: walletapp
         run: npm ci
+      - name: Prepare wallet core for native shell tests
+        run: node tools/desktop/prepare-sidecar.mjs wallet
       - name: Check Rust formatting
         run: cargo fmt --manifest-path walletapp/src-tauri/Cargo.toml -- --check
       - name: Test native shell

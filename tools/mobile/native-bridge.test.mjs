@@ -85,10 +85,11 @@ test("Android keeps the device key out of the web view and locks in the backgrou
 });
 
 test("iPhone uses a this-device-only user-presence key and locks in the background", async () => {
-  const [bridge, keyStore, manifest] = await Promise.all([
+  const [bridge, keyStore, manifest, tauriConfigText] = await Promise.all([
     load("ios/Sources/WalletCorePlugin.swift"),
     load("ios/Sources/DeviceKeyStore.swift"),
     load("ios/Package.swift"),
+    readFile(path.join(root, "walletapp", "src-tauri", "tauri.conf.json"), "utf8"),
   ]);
 
   assert.match(bridge, /UIApplication\.didEnterBackgroundNotification/);
@@ -101,6 +102,11 @@ test("iPhone uses a this-device-only user-presence key and locks in the backgrou
   assert.match(bridge, /isExcludedFromBackup/);
   assert.match(bridge, /FileProtectionType\.complete/);
   assert.match(bridge, /resetBytes/);
+  assert.match(bridge, /ActivityArgs: Decodable \{ let limit: Int \}/);
+  assert.match(bridge, /\(MobilewalletEngine, NSErrorPointer\) -> String\?/);
+  assert.match(bridge, /try \$0\.cancelSend\(args\.pendingId\)/);
+  assert.doesNotMatch(bridge, /UnsafeMutablePointer<NSError\?>/);
+  assert.doesNotMatch(bridge, /cancelSend\(args\.pendingId, error:/);
   assert.doesNotMatch(bridge, /print\(|NSLog/);
   assert.match(keyStore, /kSecAttrAccessibleWhenUnlockedThisDeviceOnly/);
   assert.match(keyStore, /\.userPresence/);
@@ -108,6 +114,14 @@ test("iPhone uses a this-device-only user-presence key and locks in the backgrou
   assert.match(keyStore, /SecRandomCopyBytes/);
   assert.match(keyStore, /errSecDuplicateItem/);
   assert.match(manifest, /Mobilewallet\.xcframework/);
+  assert.match(manifest, /ProcessInfo\.processInfo\.environment\["TARGET"\]/);
+  assert.match(manifest, /ios-arm64_x86_64-simulator/);
+  assert.match(manifest, /unsafeFlags\(\["-F", mobilewalletFrameworkPath\]\)/);
+  assert.doesNotMatch(manifest, /\.binaryTarget\(/);
+  const tauriConfig = JSON.parse(tauriConfigText);
+  assert.deepEqual(tauriConfig.bundle.iOS.frameworks, [
+    "../plugins/tauri-plugin-wallet-core/ios/Frameworks/Mobilewallet.xcframework",
+  ]);
 });
 
 test("the Tauri bridge exposes only the bounded wallet command set", async () => {
@@ -122,6 +136,9 @@ test("the Tauri bridge exposes only the bounded wallet command set", async () =>
   ]) {
     assert.match(build, new RegExp(`"${command}"`));
   }
+  assert.match(build, /cargo:rustc-link-search=framework=/);
+  assert.match(build, /cargo:rustc-link-lib=framework=Mobilewallet/);
+  assert.match(build, /ios-arm64_x86_64-simulator/);
   assert.match(mobile, /org\.bitcoin09\.walletcore/);
   assert.doesNotMatch(mobile, /shell|process|filesystem|http/);
   const parsed = JSON.parse(capability);
@@ -133,6 +150,27 @@ test("the Tauri bridge exposes only the bounded wallet command set", async () =>
     "barcode-scanner:allow-request-permissions",
     "barcode-scanner:allow-scan",
   ]);
+});
+
+test("the free iPhone gate accepts only the expected unsigned archive boundary", async () => {
+  const [packageText, script] = await Promise.all([
+    readFile(path.join(root, "walletapp", "package.json"), "utf8"),
+    readFile(path.join(root, "tools", "mobile", "run-ios-simulator.sh"), "utf8"),
+  ]);
+  assert.equal(
+    JSON.parse(packageText).scripts["mobile:ios:simulator"],
+    "bash ../tools/mobile/run-ios-simulator.sh",
+  );
+  assert.match(script, /tauri -- ios build --debug --target aarch64-sim --ci/);
+  assert.match(script, /\*\\\* BUILD SUCCEEDED/);
+  assert.match(script, /requires a development team/);
+  assert.match(script, /\*\\\* ARCHIVE FAILED/);
+  assert.match(script, /DerivedData/);
+  assert.match(script, /symbols="\$APPLE_DIR\/build\/app-symbols\.txt"/);
+  assert.match(script, /nm -gU "\$APP_BINARY" > "\$symbols"/);
+  assert.match(script, /grep -q ' _MobilewalletNewEngine\$' "\$symbols"/);
+  assert.match(script, /CFBundleShortVersionString/);
+  assert.doesNotMatch(script, /APPLE_DEVELOPMENT_TEAM|APPLE_API_KEY/);
 });
 
 test("the Android host uses BTC09 launcher artwork rather than template icons", async () => {

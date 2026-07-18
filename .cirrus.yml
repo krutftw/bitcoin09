@@ -1,0 +1,36 @@
+macos_wallet_task:
+  name: macOS and iPhone wallets
+  macos_instance:
+    image: ghcr.io/cirruslabs/macos-runner:sonoma
+  timeout_in: 60m
+  env:
+    HOMEBREW_NO_AUTO_UPDATE: "1"
+    GOTOOLCHAIN: auto
+    CARGO_TERM_COLOR: always
+    PATH: /opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:${HOME}/.cargo/bin:${PATH}
+  toolchain_script:
+    - brew install go node@24 cocoapods
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+    - rustup component add rustfmt
+    - rustup target add x86_64-apple-darwin x86_64-apple-ios aarch64-apple-ios-sim
+    - go version
+    - node --version
+    - rustc --version
+    - xcodebuild -version
+  dependencies_script:
+    - npm ci --prefix walletapp
+  go_quality_script:
+    - go vet ./...
+    - go test ./...
+  native_shell_script:
+    - node tools/desktop/prepare-sidecar.mjs wallet
+    - cargo fmt --manifest-path walletapp/src-tauri/Cargo.toml -- --check
+    - cargo test --manifest-path walletapp/src-tauri/Cargo.toml
+  universal_macos_wallet_script:
+    - APPLE_SIGNING_IDENTITY=- npm --prefix walletapp run macos:universal:build
+    - node tools/desktop/verify-macos-bundle.mjs "walletapp/src-tauri/target/universal-apple-darwin/release/bundle/macos/BTC09 Wallet.app"
+  iphone_simulator_script:
+    - npm --prefix walletapp run mobile:core:ios
+    - cd walletapp
+    - npm run tauri -- ios init --ci --skip-targets-install
+    - npm run mobile:ios:simulator

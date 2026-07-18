@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -11,6 +11,17 @@ const targets = new Map([
   ["x86_64-pc-windows-gnu", { goos: "windows", goarch: "amd64", extension: ".exe" }],
   ["x86_64-apple-darwin", { goos: "darwin", goarch: "amd64", extension: "" }],
   ["aarch64-apple-darwin", { goos: "darwin", goarch: "arm64", extension: "" }],
+  [
+    "universal-apple-darwin",
+    {
+      goos: "darwin",
+      goarches: [
+        { goarch: "arm64", target: "aarch64-apple-darwin" },
+        { goarch: "amd64", target: "x86_64-apple-darwin" },
+      ],
+      extension: "",
+    },
+  ],
   ["x86_64-unknown-linux-gnu", { goos: "linux", goarch: "amd64", extension: "" }],
   ["aarch64-unknown-linux-gnu", { goos: "linux", goarch: "arm64", extension: "" }],
   ["x86_64-unknown-linux-musl", { goos: "linux", goarch: "amd64", extension: "" }],
@@ -43,6 +54,20 @@ export function goBuildArguments(output, edition = "full") {
   if (edition === "wallet") args.push("-tags", "walletedition");
   args.push("-o", output, "./cmd/btc09");
   return args;
+}
+
+export function lipoArguments(inputs, output) {
+  if (!Array.isArray(inputs) || inputs.length < 2 || !output) {
+    throw new Error("Universal macOS sidecars require at least two input binaries and an output path.");
+  }
+  return ["-create", ...inputs, "-output", output];
+}
+
+export function lipoVerifyArguments(input, architectures) {
+  if (!input || !Array.isArray(architectures) || architectures.length === 0) {
+    throw new Error("Universal macOS verification requires an input and at least one architecture.");
+  }
+  return [input, "-verify_arch", ...architectures];
 }
 
 function commandOutput(command, args, cwd) {
@@ -83,20 +108,53 @@ export function buildSidecar(root, edition = "full") {
   const binaryDirectory = path.join(root, "walletapp", "src-tauri", "binaries");
   mkdirSync(binaryDirectory, { recursive: true });
   const output = path.join(binaryDirectory, `btc09-core-${target}${platform.extension}`);
-  const result = spawnSync(
-    "go",
-    goBuildArguments(output, edition),
-    {
+
+  const build = (goarch, destination) => {
+    const result = spawnSync(
+      "go",
+      goBuildArguments(destination, edition),
+      {
+        cwd: root,
+        env: { ...process.env, GOOS: platform.goos, GOARCH: goarch, CGO_ENABLED: "0" },
+        stdio: "inherit",
+        windowsHide: true,
+      },
+    );
+    if (result.error || result.status !== 0) {
+      throw new Error(result.error?.message || "BTC09 Core could not be built for the desktop app.");
+    }
+    if (edition === "wallet") verifyWalletEditionBinary(destination);
+  };
+
+  if (platform.goarches) {
+    // Tauri's universal build first compiles each Rust architecture and looks up
+    // the matching externalBin name before it creates the universal app. Keep
+    // both thin sidecars as well as the combined one so all three lookups work.
+    const inputs = platform.goarches.map(({ target: sliceTarget }) =>
+      path.join(binaryDirectory, `btc09-core-${sliceTarget}${platform.extension}`),
+    );
+    platform.goarches.forEach(({ goarch }, index) => build(goarch, inputs[index]));
+    rmSync(output, { force: true });
+    const result = spawnSync("lipo", lipoArguments(inputs, output), {
       cwd: root,
-      env: { ...process.env, GOOS: platform.goos, GOARCH: platform.goarch, CGO_ENABLED: "0" },
-      stdio: "inherit",
+      encoding: "utf8",
       windowsHide: true,
-    },
-  );
-  if (result.status !== 0) {
-    throw new Error("BTC09 Core could not be built for the desktop app.");
+    });
+    if (result.error || result.status !== 0) {
+      throw new Error(result.stderr?.trim() || result.error?.message || "Universal macOS sidecar creation failed.");
+    }
+    const verify = spawnSync("lipo", lipoVerifyArguments(output, ["arm64", "x86_64"]), {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    if (verify.error || verify.status !== 0) {
+      throw new Error(verify.stderr?.trim() || verify.error?.message || "Universal macOS sidecar is missing an architecture.");
+    }
+    for (const binary of [...inputs, output]) chmodSync(binary, 0o755);
+  } else {
+    build(platform.goarch, output);
   }
-  if (edition === "wallet") verifyWalletEditionBinary(output);
   return { output, target, version: shellVersion, edition };
 }
 

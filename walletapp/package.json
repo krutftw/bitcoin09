@@ -9,13 +9,14 @@
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "store:build": "tauri build --features wallet-only --config src-tauri/tauri.store.conf.json",
+    "macos:universal:build": "tauri build --features wallet-only --config src-tauri/tauri.store.conf.json --target universal-apple-darwin --bundles app",
     "mobile:check": "node ../tools/mobile/prepare-core.mjs check",
     "mobile:ui-smoke": "node ../tools/mobile/ui-smoke.mjs",
     "mobile:core:android": "node ../tools/mobile/prepare-core.mjs android",
     "mobile:core:ios": "node ../tools/mobile/prepare-core.mjs ios",
     "mobile:android:build": "tauri android build --apk --aab --target aarch64 --ci && npm run mobile:android:verify",
     "mobile:android:verify": "node ../tools/mobile/verify-artifact.mjs src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab",
-    "mobile:ios:simulator": "tauri ios build --debug --target aarch64-sim --ci"
+    "mobile:ios:simulator": "bash ../tools/mobile/run-ios-simulator.sh"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",

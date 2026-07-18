@@ -66,6 +66,11 @@
     },
     "macOS": {
       "minimumSystemVersion": "10.15"
+    },
+    "iOS": {
+      "frameworks": [
+        "../plugins/tauri-plugin-wallet-core/ios/Frameworks/Mobilewallet.xcframework"
+      ]
     }
   }
 }
