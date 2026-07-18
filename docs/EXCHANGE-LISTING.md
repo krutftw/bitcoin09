@@ -5,35 +5,37 @@ and current release again when submitting.
 
 ## Listing route
 
-The first target is SafeTrade. Its official public route is the
-[SafeTrade support request form](https://support.safetrade.com/hc/en-us/requests/new).
-The trading API key on a user account is for that user's orders and balances;
-it does not create a coin listing request.
-
-Other small exchanges should be approached only after confirming that their
-current listing route is active and that BTC09 can meet their technical and
-commercial requirements. Do not spam several exchanges with stale form links.
+Use only an exchange's official listing form, helpdesk, or published listing
+address. SafeTrade and CoinEx already have applications under review. The next
+no-fee target is FreiExchange through its official **Add Coin** helpdesk form.
+The trading API key on an exchange account is for that user's orders and
+balances; it does not create a coin listing request.
 
 ## Outreach status
 
-Reviewed 13 July 2026. Prices and requirements can change, so obtain written
+Reviewed 18 July 2026. Prices and requirements can change, so obtain written
 terms from the exchange before paying or supplying liquidity.
 
 | Venue | Current status | Decision |
 | --- | --- | --- |
-| SafeTrade | Application `#39826` for an initial `09C/USDT` market was received on 11 July and remains under review. | First priority. Do not describe it as a listing until SafeTrade confirms one. |
-| CoinEx | The native-chain package was sent to the official `listing@coinex.com` address on 13 July. No public upfront application fee was shown and no fee was paid. | Await review and answer any request for formal team or legal documents honestly. This is not a confirmed listing. |
+| SafeTrade | Applications `#39826` and `#39837` were acknowledged on 11 and 12 July. No human response had arrived by 18 July. | Follow up once on `#39826`, identify `#39837` as a duplicate, then wait. Do not describe this as a listing until SafeTrade confirms one. |
+| CoinEx | The native-chain package was sent to the official `listing@coinex.com` address on 13 July. No reply had arrived by 18 July and no fee was paid. | Await review and answer requests for team or legal documents honestly. This is not a confirmed listing. |
+| FreiExchange | Its official helpdesk accepts native-coin applications under **Add Coin** and states that there is no listing fee. Reviews can take several weeks. | Submit the current v0.1.34 package now through the official form. |
 | NonKYC | The official listing page quotes native-chain integration from **$3,499**, plus locked liquidity of **$400 in 09C and $400 in the paired asset per market**. Its verifier recognized an unsolicited Discord contact as a listing promoter, but the listing page names `@Nonkycadmin` as its only listing manager and says that manager never contacts projects first. NonKYC also requires an active community and an X account; BTC09 does not currently have an official X account. | Use only the authenticated site application and official support path. Do not negotiate or pay through DMs. Do not pay now. One market starts at $4,299 before any other costs. |
 | XeggeX | The official listing page displays the integration fee as **`5.000$`** and requires at least **$400 total liquidity per spot market**. | Treat that as a $5,000 quote unless XeggeX confirms otherwise in writing. Do not pay now. |
 | TradeOgre | No current official public application route or written terms were verified. | Do not contact brokers or unofficial accounts claiming they can arrange a listing. |
+| BasicSwap DEX | Its open-source integration route has no exchange listing fee, but the standard path expects CLTV or CSV, SegWit, and watch-only address support. BTC09 does not currently implement those features. | Not a quick listing route. Ask about a custom integration only after the no-fee CEX applications are submitted. |
 
 Official routes checked:
 
 - https://support.safetrade.com/hc/en-us/requests/new
 - https://www.coinex.com/en/apply/create
 - https://www.coinex.com/en/help/sections/articles/900004236303
+- https://helpdesk.freiexchange.com/open.php
+- https://helpdesk.freiexchange.com/kb/faq.php?id=3
 - https://nonkyc.io/listing
 - https://xeggex.com/listing
+- https://academy.particl.io/en/latest/basicswap-guides/basicswapguides_apply.html
 
 ## Funding decision
 
@@ -96,8 +98,9 @@ curl -fsS https://explorer.btc09.org/api/status
 curl -fsS https://explorer.btc09.org/api/circulating_supply
 ```
 
-At the 12 July 2026 review, mainnet was above height 7,370 with more than
-368,000 09C circulating. These numbers change with every block.
+Do not copy a height, difficulty, hashrate, peer count, or circulating supply
+from this document into an application. Read the live API immediately before
+submitting because these values change with the chain.
 
 ## Network
 
@@ -151,7 +154,7 @@ young. Each exchange should set and review its own risk policy.
 - CPU-accessible Argon2id mining gives ordinary hardware a direct way to join.
 - The implementation and integration tests are small enough to audit in full.
 - The project has public releases, checksums, an active Discord, a Bitcointalk
-  ANN, multiple public peers, and a working community OTC path.
+  ANN, multiple public peers, and public wallet and transaction tooling.
 
 There are no price, volume, or return promises. A listing would give miners and
 new users a safer public transfer path than informal Discord settlement.
