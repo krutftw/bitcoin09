@@ -20,6 +20,7 @@ class DirectDistributionContractTest(unittest.TestCase):
             "SHA256SUMS",
             "Available beta files",
             "releases/tag/v0.1.34",
+            "v0.1.34-wallet-linux.1",
             "btc09-wallet-android-arm64.apk",
             "btc09-wallet-linux-x64.AppImage",
             "v0.1.34-wallet-preview.1",
@@ -31,6 +32,22 @@ class DirectDistributionContractTest(unittest.TestCase):
                 self.assertIn(token, guide)
 
         self.assertNotIn("will use GitHub Releases", guide)
+
+    def test_linux_wallet_maintenance_release_is_documented(self):
+        notes_path = pathlib.Path("docs/RELEASE-v0.1.34-wallet-linux.1.md")
+        self.assertTrue(notes_path.exists(), "Linux wallet maintenance notes are missing")
+        notes = notes_path.read_text(encoding="utf-8")
+
+        for token in (
+            "GHSA-wrw7-89jp-8q8g",
+            "btc09-wallet-linux-x64.AppImage",
+            "SHA256SUMS",
+            "glib 0.18.5",
+            "Wallet files, addresses, balances, transactions",
+            "do not need an update for this issue",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, notes)
 
     def test_code_signing_policy_is_public_and_excludes_mining(self):
         policy_path = pathlib.Path("CODE_SIGNING.md")
@@ -81,7 +98,8 @@ class DirectDistributionContractTest(unittest.TestCase):
             "Linux AppImage",
             "no public install yet",
             "releases/download/v0.1.34/btc09-wallet-android-arm64.apk",
-            "releases/download/v0.1.34/btc09-wallet-linux-x64.AppImage",
+            "releases/download/v0.1.34-wallet-linux.1/btc09-wallet-linux-x64.AppImage",
+            "releases/download/v0.1.34-wallet-linux.1/SHA256SUMS",
             "releases/download/v0.1.34-wallet-preview.1/btc09-wallet-windows-x64-setup.exe",
             "releases/download/v0.1.34-wallet-preview.1/btc09-wallet-macos-universal-preview.zip",
         ):

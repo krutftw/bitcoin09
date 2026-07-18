@@ -44,8 +44,12 @@ more than 30 minutes ahead of network time.
 | macOS Apple silicon full app | `btc09-macos-apple.zip` |
 | macOS Intel full app | `btc09-macos-intel.zip` |
 | Android arm64 wallet | `btc09-wallet-android-arm64.apk` |
-| Linux x64 native wallet | `btc09-wallet-linux-x64.AppImage` |
+| Linux x64 native wallet | `btc09-wallet-linux-x64.AppImage` (superseded) |
 | Checksums | `SHA256SUMS` |
+
+Linux native-wallet users should use the current
+[maintenance build](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34-wallet-linux.1),
+which replaces the AppImage originally attached to this release.
 
 The installable wallet-only previews for Windows x64 and macOS 13+ are in the
 [native preview release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34-wallet-preview.1).

@@ -351,8 +351,9 @@ window to per-block ASERT with a two-hour half-life. Wallet files, addresses,
 transactions, supply, rewards, and proof of work are unchanged. Pool miners
 receive the current consensus work from the upgraded coordinator.
 
-The wallet-only v0.1.34 beta is available as a signed Android APK and a Linux
-AppImage from [GitHub Releases](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34).
+The wallet-only v0.1.34 beta is available as a signed Android APK from the
+[main release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34) and a
+Linux AppImage from the [current maintenance release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34-wallet-linux.1).
 Installable Windows and universal Mac wallet previews are available in the
 [native preview release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34-wallet-preview.1).
 They are wallet-only public-CI builds and still show the platform's

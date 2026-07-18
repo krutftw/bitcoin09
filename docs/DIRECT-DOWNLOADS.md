@@ -5,10 +5,10 @@ BTC09 Wallet is distributed directly through GitHub Releases. No app-store accou
 ## Available beta files
 
 - **Android ARM64 signed APK:** [btc09-wallet-android-arm64.apk](https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-wallet-android-arm64.apk)
-- **Linux x64:** [btc09-wallet-linux-x64.AppImage](https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-wallet-linux-x64.AppImage)
-- **Checksums:** [SHA256SUMS](https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/SHA256SUMS)
+- **Linux x64:** [btc09-wallet-linux-x64.AppImage](https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-linux.1/btc09-wallet-linux-x64.AppImage)
+- **Checksums:** [Android](https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/SHA256SUMS) · [Linux](https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-linux.1/SHA256SUMS)
 
-[Open the v0.1.34 release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34). Android shows its standard sideload permission when an APK is installed from a browser or file manager. The APK is signed with the project release key.
+[Open the v0.1.34 release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34) or the [Linux wallet maintenance release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34-wallet-linux.1). Android shows its standard sideload permission when an APK is installed from a browser or file manager. The APK is signed with the project release key.
 
 ## Windows and Mac preview
 
