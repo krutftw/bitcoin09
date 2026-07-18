@@ -90,6 +90,7 @@ python-contracts:
       tools.release.test_package_macos
       tools.release.test_direct_distribution
       tools.release.test_package_windows_store
+      tools.release.test_rust_dependency_security
       tools.site.test_index_contract
       tools.site.test_store_readiness_contract
       tools.deploy.test_nine_inbox_contract
