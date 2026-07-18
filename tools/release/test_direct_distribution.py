@@ -22,6 +22,10 @@ class DirectDistributionContractTest(unittest.TestCase):
             "releases/tag/v0.1.34",
             "btc09-wallet-android-arm64.apk",
             "btc09-wallet-linux-x64.AppImage",
+            "v0.1.34-wallet-preview.1",
+            "btc09-wallet-windows-x64-setup.exe",
+            "btc09-wallet-macos-universal-preview.zip",
+            "Do not disable system security",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, guide)
@@ -71,13 +75,15 @@ class DirectDistributionContractTest(unittest.TestCase):
         homepage = pathlib.Path("docs/index.html").read_text(encoding="utf-8")
         for token in (
             "Native wallet beta",
-            "Windows signing",
+            "Windows preview",
+            "macOS preview",
             "Android signed APK",
             "Linux AppImage",
-            "Not in this beta",
+            "no public install yet",
             "releases/download/v0.1.34/btc09-wallet-android-arm64.apk",
             "releases/download/v0.1.34/btc09-wallet-linux-x64.AppImage",
-            "releases/download/v0.1.34/SHA256SUMS",
+            "releases/download/v0.1.34-wallet-preview.1/btc09-wallet-windows-x64-setup.exe",
+            "releases/download/v0.1.34-wallet-preview.1/btc09-wallet-macos-universal-preview.zip",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, homepage)
