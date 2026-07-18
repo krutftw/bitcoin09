@@ -55,6 +55,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "python -m unittest discover -s bot/tests -p 'test_*.py'",
             "python -m unittest \\",
             "tools.release.test_package_macos",
+            "tools.release.test_rust_dependency_security",
             "tools.site.test_index_contract",
             "tools.deploy.test_nine_inbox_contract",
             "tools.deploy.test_open_miner_contract",
@@ -82,6 +83,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "node tools/desktop/verify-wallet-edition.mjs btc09-wallet-core",
             "node --test tools/mobile/*.test.mjs",
             "python -m unittest discover -s bot/tests -p 'test_*.py'",
+            "tools.release.test_rust_dependency_security",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.gitlab)
