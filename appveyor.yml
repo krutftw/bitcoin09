@@ -31,3 +31,7 @@ for:
         - image: macos-sonoma
     build_script:
       - sh: bash tools/release/run_macos_appveyor.sh
+    artifacts:
+      - path: walletapp/src-tauri/target/direct/btc09-wallet-macos-universal-preview.zip
+        name: btc09-wallet-macos-universal-preview.zip
+        type: File

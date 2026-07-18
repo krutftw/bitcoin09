@@ -201,7 +201,7 @@ class DirectDistributionContractTest(unittest.TestCase):
             "Tauri tests need the wallet-only sidecar before Cargo starts",
         )
 
-    def test_appveyor_verifies_macos_and_iphone_without_publishing_artifacts(self):
+    def test_appveyor_verifies_macos_and_iphone_and_keeps_macos_preview(self):
         pipeline = pathlib.Path("appveyor.yml").read_text(encoding="utf-8")
         runner = pathlib.Path("tools/release/run_macos_appveyor.sh").read_text(
             encoding="utf-8"
@@ -216,6 +216,8 @@ class DirectDistributionContractTest(unittest.TestCase):
             "cargo test --manifest-path walletapp/src-tauri/Cargo.toml",
             "APPLE_SIGNING_IDENTITY=- npm --prefix walletapp run macos:universal:build",
             "node tools/desktop/verify-macos-bundle.mjs",
+            "btc09-wallet-macos-universal-preview.zip",
+            "ditto -c -k --keepParent",
             "npm --prefix walletapp run mobile:core:ios",
             "npm run mobile:ios:simulator",
         ):
