@@ -47,8 +47,11 @@ more than 30 minutes ahead of network time.
 | Linux x64 native wallet | `btc09-wallet-linux-x64.AppImage` |
 | Checksums | `SHA256SUMS` |
 
-The wallet-only Windows installer will be added after its free SignPath signing
-request completes. It will not contain node or mining features.
+The installable wallet-only previews for Windows x64 and macOS 13+ are in the
+[native preview release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34-wallet-preview.1).
+They do not contain node or mining features. Windows and macOS show an
+unverified-publisher warning until trusted signing is complete; the preview
+release includes the normal one-app install steps and separate checksums.
 
 Windows PowerShell:
 

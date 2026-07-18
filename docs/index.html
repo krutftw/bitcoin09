@@ -889,6 +889,7 @@ h1 {
 
 .native-status-links {
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   margin-top: 8px;
   font-size: 13px;
@@ -1648,15 +1649,16 @@ h1 {
 <div>
 <span class="platform">Native wallet beta</span>
 <h3 id="native-wallet-status">Direct downloads, no app store</h3>
-<p>Android and Linux are ready. v0.1.34 is the current full app for mining and node use.</p>
-<div class="native-status-links"><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-wallet-android-arm64.apk">Download Android</a><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-wallet-linux-x64.AppImage">Download Linux</a><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/SHA256SUMS">SHA256SUMS</a></div>
+<p>Android and Linux are ready. Windows and Mac previews are also installable now, with an unverified-publisher warning until trusted signing is complete.</p>
+<div class="native-status-links"><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-preview.1/btc09-wallet-windows-x64-setup.exe">Windows preview</a><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-preview.1/btc09-wallet-macos-universal-preview.zip">Mac preview</a><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-wallet-android-arm64.apk">Android</a><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-wallet-linux-x64.AppImage">Linux</a><a href="https://github.com/krutftw/bitcoin09/blob/master/docs/DIRECT-DOWNLOADS.md">Install help</a></div>
 <p>Free code signing provided by SignPath.io, certificate by SignPath Foundation. <a href="https://signpath.io/">About SignPath</a> · <a href="https://github.com/krutftw/bitcoin09/blob/master/CODE_SIGNING.md">Code signing policy</a>.</p>
 </div>
 <ul class="native-status-list" aria-label="Native wallet platform status">
 <li><strong>Android signed APK</strong><span>Available</span></li>
 <li><strong>Linux AppImage</strong><span>Available</span></li>
-<li><strong>Windows signing</strong><span>In progress</span></li>
-<li><strong>macOS / iPhone</strong><span>Not in this beta</span></li>
+<li><strong>Windows preview</strong><span>Available · signing pending</span></li>
+<li><strong>macOS preview</strong><span>Available · signing pending</span></li>
+<li><strong>iPhone</strong><span>Tested · no public install yet</span></li>
 </ul>
 </aside>
 </section>

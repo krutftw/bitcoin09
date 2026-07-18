@@ -50,5 +50,14 @@ node tools/desktop/prepare-sidecar.mjs wallet
 cargo test --manifest-path walletapp/src-tauri/Cargo.toml
 
 APPLE_SIGNING_IDENTITY=- npm --prefix walletapp run macos:universal:build
-node tools/desktop/verify-macos-bundle.mjs \
-  "walletapp/src-tauri/target/universal-apple-darwin/release/bundle/macos/BTC09 Wallet.app"
+mac_app="walletapp/src-tauri/target/universal-apple-darwin/release/bundle/macos/BTC09 Wallet.app"
+node tools/desktop/verify-macos-bundle.mjs "$mac_app"
+
+# Keep the already-verified ad-hoc build as an optional direct-download preview.
+# It remains visibly separate from a future Developer ID signed and notarized build.
+preview_dir="walletapp/src-tauri/target/direct"
+preview_zip="$preview_dir/btc09-wallet-macos-universal-preview.zip"
+mkdir -p "$preview_dir"
+rm -f "$preview_zip"
+ditto -c -k --keepParent "$mac_app" "$preview_zip"
+shasum -a 256 "$preview_zip"

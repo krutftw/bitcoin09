@@ -353,6 +353,10 @@ receive the current consensus work from the upgraded coordinator.
 
 The wallet-only v0.1.34 beta is available as a signed Android APK and a Linux
 AppImage from [GitHub Releases](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34).
+Installable Windows and universal Mac wallet previews are available in the
+[native preview release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34-wallet-preview.1).
+They are wallet-only public-CI builds and still show the platform's
+unverified-publisher warning while trusted signing is completed.
 
 Network:
 
