@@ -11,7 +11,7 @@ Submitted through the official form on 18 July 2026. Confirmation ticket:
 - **Coin Name:** Bitcoin 09
 - **Shortcode:** 09C
 - **Blockexplorer:** https://explorer.btc09.org
-- **Github:** https://github.com/krutftw/bitcoin09
+- **GitHub:** https://github.com/krutftw/bitcoin09
 - **Bitcointalk Thread:** https://bitcointalk.org/index.php?topic=5587640.0
 - **Exchange:** FreiExchange
 
@@ -32,7 +32,7 @@ Integration guide:
 https://github.com/krutftw/bitcoin09/blob/master/docs/EXCHANGE-INTEGRATION.md
 
 Latest node release and checksums:
-https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34
+https://github.com/krutftw/bitcoin09/releases/latest
 
 Live status API:
 https://explorer.btc09.org/api/status
