@@ -3,6 +3,9 @@
 Use the official helpdesk and select **Add Coin**:
 https://helpdesk.freiexchange.com/open.php
 
+Submitted through the official form on 18 July 2026. Confirmation ticket:
+`#624198`. Do not submit this application again while that ticket is open.
+
 ## Form fields
 
 - **Coin Name:** Bitcoin 09
