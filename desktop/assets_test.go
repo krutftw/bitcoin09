@@ -446,6 +446,26 @@ func TestEmbeddedInterfaceIncludesClearWalletActivityMaxAndCleanup(t *testing.T)
 	}
 }
 
+func TestEmbeddedDesktopUsesInspectableInstrumentDesign(t *testing.T) {
+	cssBody, err := readAsset("assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(cssBody)
+	for _, required := range []string{
+		"The Inspectable Instrument",
+		`grid-template-columns: 236px minmax(0, 1fr)`,
+		`background: #123c32`,
+		`"Segoe UI Variable"`,
+		`.account-summary`,
+		`.ledger-tab.is-active`,
+	} {
+		if !strings.Contains(css, required) {
+			t.Errorf("desktop instrument design is missing %q", required)
+		}
+	}
+}
+
 func TestCommonWalletAssetsContainNoMiningImplementation(t *testing.T) {
 	for _, name := range []string{"assets/index.html", "assets/app.css", "assets/app.js"} {
 		body, err := commonAssets.ReadFile(name)

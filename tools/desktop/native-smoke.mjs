@@ -56,7 +56,31 @@ async function assertDesktopShellVisible(page) {
   assert.equal(await page.evaluate(() => window.scrollY), 0, "Desktop navigation scrolled the whole app shell.");
   const topbar = await page.locator(".topbar").boundingBox();
   assert.ok(topbar, "Desktop header is not visible.");
-  assert.ok(topbar.y >= 0 && topbar.y + topbar.height <= 100, "Desktop header moved outside the viewport.");
+  assert.ok(topbar.y >= 0 && topbar.y + topbar.height <= 220, "Desktop header moved outside the viewport.");
+}
+
+async function assertInstrumentDesign(page) {
+  const design = await page.evaluate(() => {
+    const frame = getComputedStyle(document.querySelector(".wallet-frame"));
+    const mark = getComputedStyle(document.querySelector(".wordmark-mark"));
+    const main = getComputedStyle(document.querySelector("main"));
+    return {
+      columns: frame.gridTemplateColumns,
+      frameRadius: Number.parseFloat(frame.borderRadius),
+      markRadius: Number.parseFloat(mark.borderRadius),
+      mainBackground: main.backgroundColor,
+      bodyFont: getComputedStyle(document.body).fontFamily,
+    };
+  });
+  assert.match(
+    design.columns,
+    /^236px /,
+    `Packaged desktop wallet should use the instrument rail: ${JSON.stringify(design)}`,
+  );
+  assert.ok(design.frameRadius <= 3, "Desktop shell should not return to a floating rounded card.");
+  assert.ok(design.markRadius <= 3, "The 09 mark should stay square.");
+  assert.equal(design.mainBackground, "rgb(238, 242, 238)");
+  assert.doesNotMatch(design.bodyFont, /Georgia|Palatino|Book Antiqua/i);
 }
 
 try {
@@ -86,6 +110,10 @@ try {
   await page.goto(launch.launch_url, { waitUntil: "networkidle" });
   await page.locator("#first-run").waitFor({ state: "visible" });
   await assertPrimaryActionFits(page, 1180, 790);
+  await assertInstrumentDesign(page);
+  await page.locator("#first-run").evaluate(async () => {
+    await Promise.all(document.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)));
+  });
   if (screenshotDirectory) {
     await mkdir(screenshotDirectory, { recursive: true });
     await page.screenshot({ path: path.join(screenshotDirectory, walletOnly ? "store-onboarding.png" : "desktop-onboarding.png") });
@@ -108,7 +136,27 @@ try {
   await page.locator("#confirm-word-21").fill(words[20]);
   await page.locator("#confirm-recovery-backup").click();
   await page.locator("#wallet-view").waitFor({ state: "visible" });
+  await page.locator("#wallet-view").evaluate(async () => {
+    await Promise.all(document.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)));
+  });
   assert.equal(await page.locator("#balance-major").textContent(), "0");
+  const walletDesign = await page.evaluate(() => ({
+    summaryBackground: getComputedStyle(document.querySelector(".account-summary")).backgroundColor,
+    tabRadius: Number.parseFloat(getComputedStyle(document.querySelector(".ledger-tab")).borderRadius),
+    ledgerRadius: Number.parseFloat(getComputedStyle(document.querySelector(".ledger")).borderRadius),
+  }));
+  assert.equal(walletDesign.summaryBackground, "rgb(18, 60, 50)");
+  assert.ok(walletDesign.tabRadius <= 3, "Desktop actions should use the square instrument geometry.");
+  assert.ok(walletDesign.ledgerRadius <= 3, "Desktop content should stay flat and inspectable.");
+
+  if (screenshotDirectory) {
+    await page.screenshot({ path: path.join(screenshotDirectory, walletOnly ? "store-receive.png" : "desktop-receive.png") });
+  }
+  await page.locator('[data-panel="send-panel"]').click();
+  await page.locator("#send-panel").waitFor({ state: "visible" });
+  if (screenshotDirectory) {
+    await page.screenshot({ path: path.join(screenshotDirectory, walletOnly ? "store-send.png" : "desktop-send.png") });
+  }
 
   await page.locator('[data-panel="activity-panel"]').click();
   await page.locator("#activity-list").waitFor({ state: "visible" });
