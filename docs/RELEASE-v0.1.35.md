@@ -36,7 +36,7 @@ activated at height 12,096.
 ## Planned release files
 
 - `btc09-wallet-windows-x64-setup.exe`
-- `btc09-wallet-macos-universal.zip`
+- `btc09-wallet-macos-universal-preview.zip`
 - `btc09-wallet-linux-x64.AppImage`
 - `btc09-wallet-android-arm64.apk`
 - `btc09-windows-amd64.exe`

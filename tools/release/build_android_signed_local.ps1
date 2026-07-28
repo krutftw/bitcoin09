@@ -117,16 +117,28 @@ try {
         }
     }
 
-    $buildTools = Get-ChildItem -LiteralPath (Join-Path $env:ANDROID_HOME 'build-tools') -Directory |
-        Sort-Object { [version]$_.Name } -Descending |
+    $apksignerCandidate = Get-ChildItem `
+        -LiteralPath (Join-Path $env:ANDROID_HOME 'build-tools') `
+        -Directory |
+        ForEach-Object {
+            $apksignerJar = Join-Path $_.FullName 'lib\apksigner.jar'
+            if (Test-Path -LiteralPath $apksignerJar -PathType Leaf) {
+                $versionMatch = [regex]::Match($_.Name, '^\d+(?:\.\d+){1,3}')
+                if ($versionMatch.Success) {
+                    [pscustomobject]@{
+                        JarPath  = $apksignerJar
+                        Version  = [version]$versionMatch.Value
+                        IsStable = [regex]::IsMatch($_.Name, '^\d+(?:\.\d+){1,3}$')
+                    }
+                }
+            }
+        } |
+        Sort-Object Version, IsStable -Descending |
         Select-Object -First 1
-    if ($null -eq $buildTools) {
-        throw 'Android build-tools are unavailable for certificate verification.'
-    }
-    $apksignerJar = Join-Path $buildTools.FullName 'lib\apksigner.jar'
-    if (-not (Test-Path -LiteralPath $apksignerJar -PathType Leaf)) {
+    if ($null -eq $apksignerCandidate) {
         throw 'The Android APK signer is unavailable for certificate verification.'
     }
+    $apksignerJar = $apksignerCandidate.JarPath
     $javaExecutable = $null
     if (-not [string]::IsNullOrWhiteSpace($env:JAVA_HOME)) {
         $configuredJava = Join-Path $env:JAVA_HOME 'bin\java.exe'
