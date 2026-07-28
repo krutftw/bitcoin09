@@ -112,32 +112,41 @@ const cases = [
   { name: "activity", wallet: "ready", width: 390, height: 844 },
   { name: "settings", wallet: "ready", width: 390, height: 844 },
   { name: "backup", wallet: "missing", width: 390, height: 844 },
-  { name: "home-small", wallet: "ready", width: 360, height: 740 },
+  { name: "home-small", screen: "home", wallet: "ready", width: 360, height: 740 },
+  { name: "onboarding-desktop", screen: "onboarding", wallet: "missing", width: 1180, height: 790 },
+  { name: "home-desktop", screen: "home", wallet: "ready", width: 1180, height: 790 },
+  { name: "receive-desktop", screen: "receive", wallet: "ready", width: 1180, height: 790 },
+  { name: "send-desktop", screen: "send", wallet: "ready", width: 1180, height: 790 },
+  { name: "review-desktop", screen: "review", wallet: "ready", width: 1180, height: 790 },
+  { name: "activity-desktop", screen: "activity", wallet: "ready", width: 1180, height: 790 },
+  { name: "settings-desktop", screen: "settings", wallet: "ready", width: 1180, height: 790 },
+  { name: "backup-desktop", screen: "backup", wallet: "missing", width: 1180, height: 790 },
 ];
 
 async function openCase(page, testCase) {
+  const target = testCase.screen || testCase.name;
   await installTestBridge(page, testCase.wallet);
   await page.goto(`http://127.0.0.1:${address.port}/mobile.html`, { waitUntil: "networkidle" });
-  if (testCase.name === "onboarding") return "onboarding";
-  if (testCase.name === "locked") return "unlock";
-  if (testCase.name === "backup") {
+  if (target === "onboarding") return "onboarding";
+  if (target === "locked") return "unlock";
+  if (target === "backup") {
     await page.locator('[data-screen="onboarding"]:visible').waitFor();
     await page.getByRole("button", { name: "Create a new wallet" }).click();
     return "backup";
   }
   await page.locator('[data-screen="home"]:visible').waitFor();
-  if (testCase.name === "receive") await page.getByRole("button", { name: "Receive" }).click();
-  if (testCase.name === "send" || testCase.name === "review") {
+  if (target === "receive") await page.getByRole("button", { name: "Receive" }).click();
+  if (target === "send" || target === "review") {
     await page.getByRole("button", { name: "Send" }).click();
   }
-  if (testCase.name === "review") {
+  if (target === "review") {
     await page.locator("#send-address").fill(testAddress);
     await page.locator("#send-amount").fill("1.25");
     await page.getByRole("button", { name: "Review payment" }).click();
   }
-  if (testCase.name === "activity") await page.getByRole("button", { name: "Activity" }).click();
-  if (testCase.name === "settings") await page.getByRole("button", { name: "Settings" }).click();
-  return testCase.name === "home-small" ? "home" : testCase.name;
+  if (target === "activity") await page.getByRole("button", { name: "Activity" }).click();
+  if (target === "settings") await page.getByRole("button", { name: "Settings" }).click();
+  return target;
 }
 
 async function waitForStableScreen(page, screen) {
@@ -159,6 +168,8 @@ try {
     const metrics = await page.evaluate(() => ({
       bodyWidth: document.body.scrollWidth,
       viewportWidth: document.documentElement.clientWidth,
+      appBarVisible: Boolean(document.querySelector("#app-bar:not([hidden])")?.getClientRects().length),
+      navigationVisible: Boolean(document.querySelector("#mobile-nav:not([hidden])")?.getClientRects().length),
       visibleTargets: [...document.querySelectorAll("button:not([hidden]), input:not([hidden]), textarea:not([hidden]), summary")]
         .filter((node) => node.getClientRects().length && !node.closest("[hidden]"))
         .filter((node) => node.type !== "checkbox" || (node.closest("label")?.getBoundingClientRect().height || 0) < 40)
@@ -168,6 +179,10 @@ try {
     assert.equal(failures.length, 0, `${name} raised: ${failures.join("; ")}`);
     assert.ok(metrics.bodyWidth <= metrics.viewportWidth, `${name} overflows by ${metrics.bodyWidth - metrics.viewportWidth}px`);
     assert.deepEqual(metrics.visibleTargets, [], `${name} has undersized controls`);
+    if (width >= 760 && !["onboarding", "unlock", "backup"].includes(screen)) {
+      assert.equal(metrics.appBarVisible, true, `${name} should keep wallet status visible in the desktop rail`);
+      assert.equal(metrics.navigationVisible, true, `${name} should keep desktop navigation visible`);
+    }
     await page.screenshot({ path: path.join(output, `${name}-${width}x${height}.png`), fullPage: true });
     await page.close();
   }

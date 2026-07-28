@@ -18,6 +18,7 @@ const byId = (id) => document.getElementById(id);
 const screens = [...document.querySelectorAll("[data-screen]")];
 const mainTabs = new Set(["home", "activity", "settings"]);
 const routeNames = new Set(screens.map((screen) => screen.dataset.screen));
+const desktopLayout = window.matchMedia("(min-width: 760px)");
 
 async function call(command, payload) {
   if (!invoke) throw new Error("BTC09 Wallet could not start safely.");
@@ -28,10 +29,11 @@ async function call(command, payload) {
 
 function showScreen(name, options = {}) {
   state.screen = name;
+  document.body.dataset.currentScreen = name;
   for (const screen of screens) screen.hidden = screen.dataset.screen !== name;
   const showChrome = !["onboarding", "unlock", "backup"].includes(name);
   byId("app-bar").hidden = !showChrome;
-  byId("mobile-nav").hidden = !mainTabs.has(name);
+  byId("mobile-nav").hidden = !showChrome || (!desktopLayout.matches && !mainTabs.has(name));
   for (const button of document.querySelectorAll("[data-nav]")) {
     const selected = button.dataset.nav === name;
     button.classList.toggle("active", selected);
@@ -41,6 +43,10 @@ function showScreen(name, options = {}) {
   if (!options.keepScroll) window.scrollTo({ top: 0, behavior: "instant" });
   byId("app-main").focus({ preventScroll: true });
 }
+
+desktopLayout.addEventListener("change", () => {
+  if (state.screen) showScreen(state.screen, { keepScroll: true });
+});
 
 function showRoute(name, mode = "push") {
   const current = history.state?.btc09Wallet ? history.state : null;
@@ -347,8 +353,12 @@ async function restoreAfterForeground() {
 async function openReceive(mode = "push") {
   const result = await run("Preparing your address…", () => call("receive"));
   if (!result) return;
+  const qr = document.createElement("img");
+  qr.id = "receive-qr";
+  qr.alt = "QR code for this BTC09 address";
+  qr.src = result.qr_data_url || `data:image/png;base64,${result.qr_png_base64}`;
+  byId("receive-qr-slot").replaceChildren(qr);
   byId("receive-address").textContent = result.address;
-  byId("receive-qr").src = result.qr_data_url || `data:image/png;base64,${result.qr_png_base64}`;
   showRoute("receive", mode);
 }
 
