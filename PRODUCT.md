@@ -55,7 +55,7 @@ BTC09 Wallet is a wallet-only application for the native 09C chain. It does not 
 
 ## Evidence on Hand
 
-- Working wallet screens and behavior: `walletapp/src/mobile.html`, `walletapp/src/mobile.js`, and `walletapp/src/mobile.css`.
+- Working wallet screens and behavior: the Android/iPhone surface in `walletapp/src/mobile.html`, `walletapp/src/mobile.js`, and `walletapp/src/mobile.css`, plus the bundled Windows/macOS/Linux surface in `desktop/assets/`.
 - Platform and packaging configuration: `walletapp/src-tauri/`.
 - Product behavior documentation: `README.md` and `docs/DIRECT-DOWNLOADS.md`.
 - Brand rules and assets: `BRAND.md`, `docs/assets/`, and `walletapp/src-tauri/icons/`.
