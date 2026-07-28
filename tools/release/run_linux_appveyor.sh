@@ -44,6 +44,15 @@ sudo mkdir -p /opt/node24
 sudo tar -C /opt/node24 --strip-components=1 -xf /tmp/node.tar.xz
 
 export PATH="/opt/go1.25.12/bin:/opt/node24/bin:$HOME/.cargo/bin:$PATH"
+if ! command -v rustup >/dev/null 2>&1; then
+  curl --proto '=https' --tlsv1.2 --silent --show-error --fail \
+    https://sh.rustup.rs \
+    --output /tmp/rustup-init.sh
+  sh /tmp/rustup-init.sh \
+    -y \
+    --profile minimal \
+    --default-toolchain none
+fi
 rustup toolchain install 1.95.0 --profile minimal --no-self-update
 rustup default 1.95.0
 rustup component add rustfmt

@@ -324,6 +324,8 @@ class DirectDistributionContractTest(unittest.TestCase):
         for token in (
             "go1.25.12.linux-amd64.tar.gz",
             "node-v24.11.1-linux-x64.tar.xz",
+            "https://sh.rustup.rs",
+            "--default-toolchain none",
             "rustup toolchain install 1.95.0",
             "go vet ./...",
             "go test ./...",

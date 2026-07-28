@@ -1,9 +1,9 @@
 version: 0.1.35.{build}
 
 image:
+  - Ubuntu2404
   - macos-sonoma
   - Visual Studio 2022
-  - Ubuntu2404
 
 skip_branch_with_pr: true
 
