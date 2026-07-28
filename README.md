@@ -49,9 +49,10 @@ chain. Native downloads are available for Windows, macOS, Android, and Linux:
 
 <https://btc09.org/#download>
 
-Windows and macOS are currently installable previews while trusted publisher
-signing is pending. Android is project-signed and Linux is available as an
-AppImage. Each release publishes checksums.
+Android is project-signed and Linux is available as an AppImage. Windows and
+macOS are installable community builds but are not publisher-signed or
+Apple-notarized, so the operating system warns on first launch. Each release
+publishes checksums.
 
 ### Full client, node, and CPU miner
 
@@ -358,19 +359,15 @@ retargeting, reorgs, and the pinned genesis.
 
 ## Status
 
-v0.1.34 is a mandatory network update for node and solo-miner operators before
-height 12,096. That height switches difficulty from the legacy 2,016-block
-window to per-block ASERT with a two-hour half-life. Wallet files, addresses,
-transactions, supply, rewards, and proof of work are unchanged. Pool miners
-receive the current consensus work from the upgraded coordinator.
+v0.1.35 is the current app and full-client release. It improves the wallet
+layout and release checks without changing consensus, proof of work, supply,
+rewards, addresses, or wallet files. Download all platforms and `SHA256SUMS`
+from the [v0.1.35 release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.35).
 
-The wallet-only v0.1.34 beta is available as a signed Android APK from the
-[main release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34) and a
-Linux AppImage from the [current maintenance release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34-wallet-linux.1).
-Installable Windows and universal Mac wallet previews are available in the
-[native preview release](https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34-wallet-preview.1).
-They are wallet-only public-CI builds and still show the platform's
-unverified-publisher warning while trusted signing is completed.
+v0.1.34 remains the minimum version for node and solo-miner operators because
+height 12,096 switched difficulty from the legacy 2,016-block window to
+per-block ASERT with a two-hour half-life. v0.1.35 is consensus-compatible with
+v0.1.34, and pool miners continue to receive current work from the coordinator.
 
 Network:
 

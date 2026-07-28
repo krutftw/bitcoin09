@@ -33,15 +33,11 @@ activated at height 12,096.
 - Install only files attached to the official GitHub release and verify
   `SHA256SUMS`.
 
-## Planned release files
+## Release files
 
-- `btc09-wallet-windows-x64-setup.exe`
-- `btc09-wallet-macos-universal-preview.zip`
-- `btc09-wallet-linux-x64.AppImage`
-- `btc09-wallet-android-arm64.apk`
-- `btc09-windows-amd64.exe`
-- `btc09-linux-amd64`
-- `btc09-linux-arm64`
-- `btc09-macos-apple.zip`
-- `btc09-macos-intel.zip`
-- `SHA256SUMS`
+- Wallet apps: Windows installer, universal macOS ZIP, Linux AppImage, and
+  signed Android ARM64 APK.
+- Full clients: Windows x64, Linux x64 and ARM64, and macOS Apple silicon and
+  Intel.
+- `SHA256SUMS`, build provenance, and the Android signing-certificate
+  fingerprint are attached to the release.

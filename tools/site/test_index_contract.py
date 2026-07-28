@@ -57,7 +57,7 @@ class IndexContractTest(unittest.TestCase):
     def test_current_release_separates_the_native_wallet_from_node_mining(self):
         for token in (
             "Wallet · most people",
-            "Node + CPU miner · v0.1.34",
+            "Node + CPU miner · v0.1.35",
             "Send and receive 09C",
             "Run the full client",
             "Open the wallet, choose Mine",
@@ -99,7 +99,7 @@ class IndexContractTest(unittest.TestCase):
         ):
             with self.subTest(asset=asset):
                 self.assertIn(
-                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/{asset}",
+                    f"https://github.com/krutftw/bitcoin09/releases/download/v0.1.35/{asset}",
                     self.html,
                 )
 
@@ -144,7 +144,7 @@ class IndexContractTest(unittest.TestCase):
 
     def test_macos_downloads_are_clickable_apps_not_raw_binaries(self):
         for token in (
-            "Download the ZIP",
+            "download the ZIP",
             "Bitcoin 09.app",
             "right-click the app",
         ):
@@ -236,7 +236,7 @@ class IndexContractTest(unittest.TestCase):
             'class="download-grid"',
             'class="download-card primary"',
             "Wallet · most people",
-            "Node + CPU miner · v0.1.34",
+            "Node + CPU miner · v0.1.35",
             'class="project-facts"',
         ):
             with self.subTest(token=token):
