@@ -50,11 +50,10 @@ func tokenHash(token []byte) []byte {
 
 func openTestStore(t *testing.T, root string) *Store {
 	t.Helper()
-	store, err := OpenStore(root, testLimits())
+	store, err := openStore(root, testLimits(), func() time.Time { return testNow })
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
-	store.now = func() time.Time { return testNow }
 	return store
 }
 

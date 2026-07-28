@@ -41,16 +41,29 @@ back.
 
 ## Quick start
 
-### Desktop wallet
+### Native wallet app
 
-Download the binary for your system and open it. Running BTC09 without a
-command starts the local desktop wallet in your browser:
+For everyday receiving and sending, use the installed BTC09 Wallet app. It
+runs in its own window and does not open a browser tab or download the full
+chain. Native downloads are available for Windows, macOS, Android, and Linux:
+
+<https://btc09.org/#download>
+
+Windows and macOS are currently installable previews while trusted publisher
+signing is pending. Android is project-signed and Linux is available as an
+AppImage. Each release publishes checksums.
+
+### Full client, node, and CPU miner
+
+The full BTC09 binary includes the wallet, node, and official CPU miner.
+Running it without a command starts its local interface in your browser:
 
 ```powershell
 .\btc09-windows-amd64.exe
 ```
 
-You can also start it explicitly with `btc09 app`. New wallets use a 24-word
+You can also start it explicitly with `btc09 app`. Use the full client when
+you want to mine, run a node, or use command-line tools. New wallets use a 24-word
 recovery phrase and an Argon2id-encrypted local file. The app asks for the
 password again after restart, can restore the same stable receive address from
 the words, shows the balance ready to send, and reviews each payment before

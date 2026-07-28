@@ -123,7 +123,7 @@ class DirectDistributionContractTest(unittest.TestCase):
                 with self.subTest(token=token):
                     self.assertIn(token, surface)
 
-    def test_mandatory_asert_upgrade_is_current_and_plain(self):
+    def test_asert_activation_status_is_current_and_plain(self):
         surfaces = {
             "node": pathlib.Path("cmd/btc09/main.go").read_text(encoding="utf-8"),
             "wallet node": pathlib.Path("cmd/btc09/main_wallet.go").read_text(encoding="utf-8"),
@@ -143,7 +143,8 @@ class DirectDistributionContractTest(unittest.TestCase):
             for token in ("12,096", "per-block ASERT"):
                 with self.subTest(token=token):
                     self.assertIn(token, surface)
-        self.assertIn("Mandatory update", homepage)
+        self.assertIn("ASERT is active", homepage)
+        self.assertNotIn("Mandatory update before", homepage)
         self.assertNotIn(
             "Difficulty retargets every 2016 blocks, same as Bitcoin",
             whitepaper,
