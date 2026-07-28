@@ -45,6 +45,7 @@ sudo tar -C /opt/node24 --strip-components=1 -xf /tmp/node.tar.xz
 export GOROOT="/opt/go1.25.12"
 export GOTOOLCHAIN=local
 export PATH="$GOROOT/bin:/opt/node24/bin:$HOME/.cargo/bin:$PATH"
+export RUSTFLAGS="--remap-path-prefix=$HOME=/home/build"
 if ! command -v rustup >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 --silent --show-error --fail \
     https://sh.rustup.rs \
@@ -85,6 +86,19 @@ mkdir -p "$direct_dir"
 cp "$source_appimage" "$release_appimage"
 chmod +x "$release_appimage"
 sha256sum "$release_appimage"
+
+extract_dir="$(mktemp -d)"
+(
+  cd "$extract_dir"
+  "$release_appimage" --appimage-extract >/dev/null
+)
+if grep -R -a -F -l "$HOME" "$extract_dir/squashfs-root" >/tmp/btc09-local-paths.txt 2>/dev/null; then
+  echo "Linux AppImage contains local build paths:" >&2
+  cat /tmp/btc09-local-paths.txt >&2
+  exit 1
+fi
+rm -rf "$extract_dir"
+echo "Verified Linux AppImage contains no local build paths"
 
 runtime_dir="$(mktemp -d)"
 chmod 700 "$runtime_dir"

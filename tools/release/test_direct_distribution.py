@@ -328,6 +328,7 @@ class DirectDistributionContractTest(unittest.TestCase):
             "--default-toolchain none",
             'export GOROOT="/opt/go1.25.12"',
             "export GOTOOLCHAIN=local",
+            'export RUSTFLAGS="--remap-path-prefix=$HOME=/home/build"',
             'test "$(go env GOROOT)" = "$GOROOT"',
             "rustup toolchain install 1.95.0",
             "go vet ./...",
@@ -337,6 +338,9 @@ class DirectDistributionContractTest(unittest.TestCase):
             "cargo test --manifest-path walletapp/src-tauri/Cargo.toml",
             "npm --prefix walletapp run store:build -- --bundles appimage",
             "node tools/desktop/verify-wallet-edition.mjs",
+            '"$release_appimage" --appimage-extract',
+            'grep -R -a -F -l "$HOME"',
+            "Verified Linux AppImage contains no local build paths",
             "APPIMAGE_EXTRACT_AND_RUN=1",
             'grep -F "BTC09 Wallet"',
         ):
