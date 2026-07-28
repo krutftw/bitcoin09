@@ -5,7 +5,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 export CI=true
-export GOTOOLCHAIN=auto
 
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
@@ -43,7 +42,9 @@ echo "60e3b0a8500819514aca603487c254298cd776de0698d3cd08f11dba5b8289a8  /tmp/nod
 sudo mkdir -p /opt/node24
 sudo tar -C /opt/node24 --strip-components=1 -xf /tmp/node.tar.xz
 
-export PATH="/opt/go1.25.12/bin:/opt/node24/bin:$HOME/.cargo/bin:$PATH"
+export GOROOT="/opt/go1.25.12"
+export GOTOOLCHAIN=local
+export PATH="$GOROOT/bin:/opt/node24/bin:$HOME/.cargo/bin:$PATH"
 if ! command -v rustup >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 --silent --show-error --fail \
     https://sh.rustup.rs \
@@ -58,6 +59,7 @@ rustup default 1.95.0
 rustup component add rustfmt
 
 go version
+test "$(go env GOROOT)" = "$GOROOT"
 node --version
 rustc --version
 
