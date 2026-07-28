@@ -338,6 +338,7 @@ class DirectDistributionContractTest(unittest.TestCase):
             "cargo test --manifest-path walletapp/src-tauri/Cargo.toml",
             "npm --prefix walletapp run store:build -- --bundles appimage",
             "node tools/desktop/verify-wallet-edition.mjs",
+            'release_appimage="$repo_root/$direct_dir/btc09-wallet-linux-x64.AppImage"',
             '"$release_appimage" --appimage-extract',
             'grep -R -a -F -l "$HOME"',
             "Verified Linux AppImage contains no local build paths",

@@ -81,7 +81,7 @@ test -n "$source_appimage"
 test -s "$source_appimage"
 
 direct_dir="walletapp/src-tauri/target/direct"
-release_appimage="$direct_dir/btc09-wallet-linux-x64.AppImage"
+release_appimage="$repo_root/$direct_dir/btc09-wallet-linux-x64.AppImage"
 mkdir -p "$direct_dir"
 cp "$source_appimage" "$release_appimage"
 chmod +x "$release_appimage"
