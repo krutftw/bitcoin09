@@ -1,12 +1,17 @@
 # Code signing policy
 
-Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+BTC09 Wallet is released under the [MIT license](LICENSE) from the public [BTC09 repository](https://github.com/krutftw/bitcoin09).
 
-## Project
+## Current platform trust
 
-This policy covers the Windows wallet-only packages built from the public [BTC09 repository](https://github.com/krutftw/bitcoin09). BTC09 Wallet is released under the [MIT license](LICENSE).
+- Android releases are signed with a project release key kept outside the repository. The release publishes its certificate fingerprint, and updates must use the same key.
+- Windows community builds are currently unsigned.
+- macOS community builds are currently ad-hoc signed and not Apple-notarized.
+- Linux AppImages are unsigned.
 
-Mining software is outside this signing policy. Signing requests may cover the BTC09 Wallet installer, its wallet shell, and its wallet-only core. The signed edition cannot start a miner or expose mining commands.
+This means Windows and macOS can show an unknown-publisher or Gatekeeper warning. Users should download only from the official release, verify `SHA256SUMS`, and use the operating system's one-app override. BTC09 does not ask users to disable platform security.
+
+Mining software and the full node are outside the wallet-only signing scope. Any future trusted signature for BTC09 Wallet must cover only the installer, wallet shell, and wallet-only core. The wallet-only core cannot start a miner or expose mining commands.
 
 ## Team roles
 
@@ -15,11 +20,11 @@ Mining software is outside this signing policy. Signing requests may cover the B
 
 Changes from other contributors require maintainer review before merge. Signing requests require a separate manual approval and must come from an immutable release tag. Multi-factor authentication is required for repository and signing access.
 
-## Signing requests
+## Release checks
 
-The release workflow builds from the public repository, checks the wallet-only boundary, and submits the resulting artifacts to SignPath. Signing keys are generated and held by the signing provider and are never available to the repository or build runner.
+Every public wallet release must come from an immutable release tag. Automated builds verify the version, wallet-only boundary, package contents, embedded paths, and native interface. Release candidates are malware-scanned where supported, checksummed, uploaded, downloaded into a fresh folder, and compared with the published checksums before release.
 
-The signing configuration must enforce the BTC09 Wallet product name and one consistent product version across the installer and signed executable files. A signing request is rejected if the source revision is not a release tag, required checks failed, or the artifact differs from the automated build output.
+If trusted Windows or Apple signing becomes available, the signing configuration must enforce the BTC09 Wallet product name and one consistent version across the package. The signing key must remain outside the repository and build runner. A request must be rejected if the source is not a release tag, required checks failed, or the artifact differs from the verified build output.
 
 ## Privacy and network use
 
@@ -29,4 +34,4 @@ The installer can ask Windows to obtain the Microsoft WebView2 runtime when the 
 
 ## Security reports
 
-Report a suspected vulnerability through a private [GitHub Security Advisory](https://github.com/krutftw/bitcoin09/security/advisories/new). Report a suspected misuse of a SignPath Foundation certificate to support@signpath.io with the affected file and supporting evidence.
+Report a suspected vulnerability through a private [GitHub Security Advisory](https://github.com/krutftw/bitcoin09/security/advisories/new).

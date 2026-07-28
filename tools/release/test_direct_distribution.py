@@ -3,27 +3,24 @@ import unittest
 
 
 class DirectDistributionContractTest(unittest.TestCase):
-    def test_public_guide_links_the_released_no_store_beta(self):
+    def test_public_guide_links_the_current_no_store_release(self):
         guide_path = pathlib.Path("docs/DIRECT-DOWNLOADS.md")
         self.assertTrue(guide_path.exists(), "direct-download guide is missing")
         guide = guide_path.read_text(encoding="utf-8") if guide_path.exists() else ""
 
         for token in (
             "GitHub Releases",
-            "SignPath Foundation",
-            "wallet-only",
+            "Wallet app or full client?",
             "signed APK",
             "AppImage",
             "standard sideload permission",
             "macOS",
             "iPhone",
             "SHA256SUMS",
-            "Available beta files",
-            "releases/tag/v0.1.34",
-            "v0.1.34-wallet-linux.1",
+            "Wallet apps",
+            "releases/tag/v0.1.35",
             "btc09-wallet-android-arm64.apk",
             "btc09-wallet-linux-x64.AppImage",
-            "v0.1.34-wallet-preview.1",
             "btc09-wallet-windows-x64-setup.exe",
             "btc09-wallet-macos-universal-preview.zip",
             "Do not disable system security",
@@ -55,13 +52,14 @@ class DirectDistributionContractTest(unittest.TestCase):
         policy = policy_path.read_text(encoding="utf-8") if policy_path.exists() else ""
 
         for token in (
-            "SignPath Foundation",
             "BTC09 Wallet",
             "wallet-only",
-            "Mining software is outside",
+            "Mining software and the full node are outside",
             "Security reports",
             "GitHub Security Advisory",
-            "Signing requests",
+            "Release checks",
+            "Windows community builds are currently unsigned",
+            "Android releases are signed",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, policy)
@@ -112,35 +110,34 @@ class DirectDistributionContractTest(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, script)
 
-    def test_homepage_links_the_released_native_wallet_beta(self):
+    def test_homepage_links_the_released_native_wallet(self):
         homepage = pathlib.Path("docs/index.html").read_text(encoding="utf-8")
         for token in (
-            "Native wallet beta",
-            "Windows preview",
-            "macOS preview",
-            "Android signed APK",
-            "Linux AppImage",
-            "no public install yet",
-            "releases/download/v0.1.34/btc09-wallet-android-arm64.apk",
-            "releases/download/v0.1.34-wallet-linux.1/btc09-wallet-linux-x64.AppImage",
-            "releases/download/v0.1.34-wallet-linux.1/SHA256SUMS",
-            "releases/download/v0.1.34-wallet-preview.1/btc09-wallet-windows-x64-setup.exe",
-            "releases/download/v0.1.34-wallet-preview.1/btc09-wallet-macos-universal-preview.zip",
+            "Native wallet: install status and checksums",
+            "Android is signed",
+            "Linux",
+            "no durable free public install",
+            "releases/download/v0.1.35/btc09-wallet-android-arm64.apk",
+            "releases/download/v0.1.35/btc09-wallet-linux-x64.AppImage",
+            "releases/download/v0.1.35/SHA256SUMS",
+            "releases/download/v0.1.35/btc09-wallet-windows-x64-setup.exe",
+            "releases/download/v0.1.35/btc09-wallet-macos-universal-preview.zip",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, homepage)
 
-        native_status = homepage.split("Native wallet beta", 1)[-1].split("</aside>", 1)[0]
+        native_status = homepage.split("Native wallet: install status and checksums", 1)[-1].split("</details>", 1)[0]
         self.assertNotIn("In preparation", native_status)
 
-    def test_homepage_and_download_guide_disclose_the_signing_policy(self):
+    def test_homepage_and_download_guide_disclose_current_platform_trust(self):
         homepage = pathlib.Path("docs/index.html").read_text(encoding="utf-8")
         guide = pathlib.Path("docs/DIRECT-DOWNLOADS.md").read_text(encoding="utf-8")
         required = (
-            "Code signing policy",
-            "Free code signing provided by",
-            "SignPath.io",
-            "certificate by SignPath Foundation",
+            "Windows",
+            "macOS",
+            "not publisher-signed",
+            "SHA256SUMS",
+            "Do not disable system security",
         )
         for surface in (homepage, guide):
             for token in required:
@@ -167,6 +164,7 @@ class DirectDistributionContractTest(unittest.TestCase):
             exchange_integration,
             "exchange operators must keep the mandatory ASERT baseline",
         )
+        self.assertIn("VERSION=v0.1.35", exchange_integration)
 
         homepage = pathlib.Path("docs/index.html").read_text(encoding="utf-8")
         whitepaper = pathlib.Path("WHITEPAPER.md").read_text(encoding="utf-8")
