@@ -3,6 +3,7 @@ version: 0.1.35.{build}
 image:
   - macos-sonoma
   - Visual Studio 2022
+  - Ubuntu2404
 
 skip_branch_with_pr: true
 
@@ -34,4 +35,15 @@ for:
     artifacts:
       - path: walletapp/src-tauri/target/direct/btc09-wallet-macos-universal-preview.zip
         name: btc09-wallet-macos-universal-preview.zip
+        type: File
+
+  -
+    matrix:
+      only:
+        - image: Ubuntu2404
+    build_script:
+      - sh: bash tools/release/run_linux_appveyor.sh
+    artifacts:
+      - path: walletapp/src-tauri/target/direct/btc09-wallet-linux-x64.AppImage
+        name: btc09-wallet-linux-x64.AppImage
         type: File

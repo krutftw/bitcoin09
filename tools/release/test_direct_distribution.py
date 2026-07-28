@@ -307,6 +307,37 @@ class DirectDistributionContractTest(unittest.TestCase):
             "the unproven iPhone gate should fail before the expensive macOS release build",
         )
 
+    def test_appveyor_builds_and_launch_checks_the_linux_wallet(self):
+        pipeline = pathlib.Path("appveyor.yml").read_text(encoding="utf-8")
+        runner = pathlib.Path("tools/release/run_linux_appveyor.sh").read_text(
+            encoding="utf-8"
+        )
+
+        for token in (
+            "Ubuntu2404",
+            "bash tools/release/run_linux_appveyor.sh",
+            "btc09-wallet-linux-x64.AppImage",
+        ):
+            with self.subTest(pipeline_token=token):
+                self.assertIn(token, pipeline)
+
+        for token in (
+            "go1.25.12.linux-amd64.tar.gz",
+            "node-v24.11.1-linux-x64.tar.xz",
+            "rustup toolchain install 1.95.0",
+            "go vet ./...",
+            "go test ./...",
+            "cargo fmt --manifest-path walletapp/src-tauri/Cargo.toml -- --check",
+            "node tools/desktop/prepare-sidecar.mjs wallet",
+            "cargo test --manifest-path walletapp/src-tauri/Cargo.toml",
+            "npm --prefix walletapp run store:build -- --bundles appimage",
+            "node tools/desktop/verify-wallet-edition.mjs",
+            "APPIMAGE_EXTRACT_AND_RUN=1",
+            'grep -F "BTC09 Wallet"',
+        ):
+            with self.subTest(runner_token=token):
+                self.assertIn(token, runner)
+
     def test_appveyor_reuses_preinstalled_rustup_before_bootstrap(self):
         script = pathlib.Path(
             "tools/release/install_appveyor_toolchain.ps1"
