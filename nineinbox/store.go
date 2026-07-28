@@ -111,7 +111,14 @@ type Store struct {
 }
 
 func OpenStore(root string, limits Limits) (*Store, error) {
+	return openStore(root, limits, time.Now)
+}
+
+func openStore(root string, limits Limits, now func() time.Time) (*Store, error) {
 	if strings.TrimSpace(root) == "" || !validLimits(limits) {
+		return nil, ErrInvalid
+	}
+	if now == nil {
 		return nil, ErrInvalid
 	}
 	absRoot, err := filepath.Abs(root)
@@ -132,7 +139,7 @@ func OpenStore(root string, limits Limits) (*Store, error) {
 	store := &Store{
 		root:    absRoot,
 		limits:  limits,
-		now:     time.Now,
+		now:     now,
 		inboxes: make(map[string]*inboxState),
 	}
 	if err := store.reconcile(); err != nil {
