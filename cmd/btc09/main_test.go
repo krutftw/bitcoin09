@@ -763,8 +763,8 @@ func TestReleaseNewer(t *testing.T) {
 }
 
 func TestNodeVersionMatchesV034Release(t *testing.T) {
-	if nodeVersion != "v0.1.34" {
-		t.Fatalf("nodeVersion = %q, want v0.1.34", nodeVersion)
+	if nodeVersion != "v0.1.35" {
+		t.Fatalf("nodeVersion = %q, want v0.1.35", nodeVersion)
 	}
 }
 

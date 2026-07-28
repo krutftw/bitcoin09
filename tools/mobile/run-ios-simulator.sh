@@ -50,7 +50,7 @@ case " $actual_archs " in
   *) echo "Simulator app is missing $expected_arch: $actual_archs" >&2; exit 1 ;;
 esac
 
-test "$(plutil -extract CFBundleShortVersionString raw "$APP/Info.plist")" = "0.1.34"
+test "$(plutil -extract CFBundleShortVersionString raw "$APP/Info.plist")" = "0.1.35"
 symbols="$APPLE_DIR/build/app-symbols.txt"
 nm -gU "$APP_BINARY" > "$symbols"
 grep -q ' _MobilewalletNewEngine$' "$symbols"

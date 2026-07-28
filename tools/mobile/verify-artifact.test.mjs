@@ -19,6 +19,18 @@ test("Windows runs the Android signer jar directly instead of spawning a batch f
   });
 });
 
+test("Windows discovers the default Android SDK for release verification", () => {
+  const expected = "C:\\Users\\builder\\AppData\\Local\\Android\\Sdk";
+  assert.equal(
+    artifactGate.resolveAndroidSdkRoot({
+      platform: "win32",
+      env: { LOCALAPPDATA: "C:\\Users\\builder\\AppData\\Local" },
+      directoryExists: (candidate) => candidate === expected,
+    }),
+    expected,
+  );
+});
+
 test("mobile artifact gate accepts ordinary packaged wallet files", () => {
   assert.doesNotThrow(() => assertMobileArtifactEntries([
     { name: "assets/mobile.html", bytes: Buffer.from("BTC09 Wallet Receive Send") },

@@ -119,7 +119,7 @@ mod tests {
     };
     use std::{path::Path, process::Command, time::Duration};
 
-    const VERSION: &str = "v0.1.34";
+    const VERSION: &str = "v0.1.35";
     const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     fn launch_json(version: &str, url: &str) -> String {

@@ -88,6 +88,30 @@ class DirectDistributionContractTest(unittest.TestCase):
 
         self.assertNotIn("Start mining", script)
 
+    def test_local_android_signing_keeps_credentials_out_of_git_and_logs(self):
+        script_path = pathlib.Path("tools/release/build_android_signed_local.ps1")
+        self.assertTrue(script_path.exists(), "local Android release helper is missing")
+        script = script_path.read_text(encoding="utf-8") if script_path.exists() else ""
+        for token in (
+            "ConvertTo-SecureString",
+            "SecureStringToBSTR",
+            "BTC09_ANDROID_KEYSTORE",
+            "mobile:android:build",
+            "Signer #1 certificate SHA-256 digest:",
+            "CertificateMatch",
+            "ZeroFreeBSTR",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, script)
+        for forbidden in (
+            "store_password =",
+            "key_password =",
+            "keystore_base64 =",
+            "Write-Host $plainText",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, script)
+
     def test_homepage_links_the_released_native_wallet_beta(self):
         homepage = pathlib.Path("docs/index.html").read_text(encoding="utf-8")
         for token in (
@@ -124,17 +148,25 @@ class DirectDistributionContractTest(unittest.TestCase):
                     self.assertIn(token, surface)
 
     def test_asert_activation_status_is_current_and_plain(self):
-        surfaces = {
+        release_surfaces = {
             "node": pathlib.Path("cmd/btc09/main.go").read_text(encoding="utf-8"),
             "wallet node": pathlib.Path("cmd/btc09/main_wallet.go").read_text(encoding="utf-8"),
             "tauri": pathlib.Path("walletapp/src-tauri/tauri.conf.json").read_text(encoding="utf-8"),
             "wallet package": pathlib.Path("walletapp/package.json").read_text(encoding="utf-8"),
             "appveyor": pathlib.Path("appveyor.yml").read_text(encoding="utf-8"),
-            "exchange integration": pathlib.Path("docs/EXCHANGE-INTEGRATION.md").read_text(encoding="utf-8"),
         }
-        for name, surface in surfaces.items():
+        for name, surface in release_surfaces.items():
             with self.subTest(surface=name):
-                self.assertIn("0.1.34", surface)
+                self.assertIn("0.1.35", surface)
+
+        exchange_integration = pathlib.Path("docs/EXCHANGE-INTEGRATION.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "0.1.34",
+            exchange_integration,
+            "exchange operators must keep the mandatory ASERT baseline",
+        )
 
         homepage = pathlib.Path("docs/index.html").read_text(encoding="utf-8")
         whitepaper = pathlib.Path("WHITEPAPER.md").read_text(encoding="utf-8")
@@ -169,6 +201,23 @@ class DirectDistributionContractTest(unittest.TestCase):
             "btc09-macos-intel.zip",
             "btc09-wallet-android-arm64.apk",
             "btc09-wallet-linux-x64.AppImage",
+            "SHA256SUMS",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, notes)
+
+    def test_v0135_release_notes_cover_the_native_wallet_without_claiming_a_fork(self):
+        notes_path = pathlib.Path("docs/RELEASE-v0.1.35.md")
+        self.assertTrue(notes_path.exists(), "v0.1.35 release notes are missing")
+        notes = notes_path.read_text(encoding="utf-8") if notes_path.exists() else ""
+        for token in (
+            "application and usability release",
+            "does not change consensus",
+            "Windows, macOS, Linux, Android, and iPhone",
+            "actual embedded desktop interface",
+            "wallet-only edition cannot start a miner",
+            "Existing wallet files and addresses continue to work",
+            "not a mandatory network fork",
             "SHA256SUMS",
         ):
             with self.subTest(token=token):
@@ -257,6 +306,47 @@ class DirectDistributionContractTest(unittest.TestCase):
             runner.index("npm --prefix walletapp run macos:universal:build"),
             "the unproven iPhone gate should fail before the expensive macOS release build",
         )
+
+    def test_appveyor_builds_and_launch_checks_the_linux_wallet(self):
+        pipeline = pathlib.Path("appveyor.yml").read_text(encoding="utf-8")
+        runner = pathlib.Path("tools/release/run_linux_appveyor.sh").read_text(
+            encoding="utf-8"
+        )
+
+        for token in (
+            "Ubuntu2404",
+            "bash tools/release/run_linux_appveyor.sh",
+            "btc09-wallet-linux-x64.AppImage",
+        ):
+            with self.subTest(pipeline_token=token):
+                self.assertIn(token, pipeline)
+
+        for token in (
+            "go1.25.12.linux-amd64.tar.gz",
+            "node-v24.11.1-linux-x64.tar.xz",
+            "https://sh.rustup.rs",
+            "--default-toolchain none",
+            'export GOROOT="/opt/go1.25.12"',
+            "export GOTOOLCHAIN=local",
+            'export RUSTFLAGS="--remap-path-prefix=$HOME=/home/build"',
+            'test "$(go env GOROOT)" = "$GOROOT"',
+            "rustup toolchain install 1.95.0",
+            "go vet ./...",
+            "go test ./...",
+            "cargo fmt --manifest-path walletapp/src-tauri/Cargo.toml -- --check",
+            "node tools/desktop/prepare-sidecar.mjs wallet",
+            "cargo test --manifest-path walletapp/src-tauri/Cargo.toml",
+            "npm --prefix walletapp run store:build -- --bundles appimage",
+            "node tools/desktop/verify-wallet-edition.mjs",
+            'release_appimage="$repo_root/$direct_dir/btc09-wallet-linux-x64.AppImage"',
+            '"$release_appimage" --appimage-extract',
+            'grep -R -a -F -l "$HOME"',
+            "Verified Linux AppImage contains no local build paths",
+            "APPIMAGE_EXTRACT_AND_RUN=1",
+            'grep -F "BTC09 Wallet"',
+        ):
+            with self.subTest(runner_token=token):
+                self.assertIn(token, runner)
 
     def test_appveyor_reuses_preinstalled_rustup_before_bootstrap(self):
         script = pathlib.Path(
