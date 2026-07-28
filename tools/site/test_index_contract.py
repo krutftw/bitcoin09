@@ -54,10 +54,12 @@ class IndexContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)
 
-    def test_current_release_makes_the_supported_wallet_miner_the_easy_path(self):
+    def test_current_release_separates_the_native_wallet_from_node_mining(self):
         for token in (
-            "Current release: v0.1.34",
-            "Desktop wallet and miner",
+            "Wallet · most people",
+            "Node + CPU miner · v0.1.34",
+            "Send and receive 09C",
+            "Run the full client",
             "Open the wallet, choose Mine",
             'id="mining-guide"',
             "Copy help report",
@@ -77,9 +79,10 @@ class IndexContractTest(unittest.TestCase):
             'href="#network"',
             'href="#mining-guide"',
             'id="download"',
-            "Download for Windows",
-            "Create or open a wallet",
-            "Receive, send, or mine",
+            "Get the wallet",
+            "Install the wallet",
+            "Create or restore",
+            "Receive or send 09C",
             "Private keys stay on your computer",
         ):
             with self.subTest(token=token):
@@ -230,13 +233,14 @@ class IndexContractTest(unittest.TestCase):
 
     def test_homepage_avoids_generic_ai_landing_page_structure(self):
         for token in (
-            'class="download-list"',
-            'class="download-row featured"',
+            'class="download-grid"',
+            'class="download-card primary"',
+            "Wallet · most people",
+            "Node + CPU miner · v0.1.34",
             'class="project-facts"',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.html)
-        self.assertNotIn('class="download-grid"', self.html)
         self.assertNotIn('class="trust-strip"', self.html)
 
     def test_nine_inbox_is_a_plain_optional_utility(self):
