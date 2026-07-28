@@ -123,7 +123,7 @@ $patch = [int]$versionMatch.Groups[2].Value
 if ($minor -lt 1 -or $minor -gt 65535 -or $patch -gt 65535) {
     throw 'The wallet version does not fit the four-part Microsoft Store version format.'
 }
-# Example: BTC09 Wallet 0.1.34 maps monotonically to Store version 1.34.0.0.
+# Example: BTC09 Wallet 0.1.35 maps monotonically to Store version 1.35.0.0.
 $storeVersion = "$minor.$patch.0.0"
 
 $stageRoot = Join-Path $targetRoot 'store-msix\stage'

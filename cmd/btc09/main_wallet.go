@@ -14,7 +14,7 @@ import (
 )
 
 // nodeVersion is the release version; bump alongside git tags.
-const nodeVersion = "v0.1.34"
+const nodeVersion = "v0.1.35"
 
 func main() {
 	log.SetFlags(log.Ltime)

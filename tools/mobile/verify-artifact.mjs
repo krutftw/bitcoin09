@@ -46,9 +46,25 @@ function jarCommand() {
   return "jar";
 }
 
+export function resolveAndroidSdkRoot(options = {}) {
+  const platform = options.platform || process.platform;
+  const env = options.env || process.env;
+  const directoryExists = options.directoryExists || existsSync;
+  const paths = platform === "win32" ? path.win32 : path;
+  const candidates = [
+    env.ANDROID_HOME,
+    env.ANDROID_SDK_ROOT,
+    platform === "win32" && env.LOCALAPPDATA
+      ? paths.join(env.LOCALAPPDATA, "Android", "Sdk")
+      : undefined,
+    platform !== "win32" ? paths.join(os.homedir(), "Android", "Sdk") : undefined,
+  ].filter(Boolean);
+  return candidates.find((candidate) => directoryExists(candidate));
+}
+
 function apksignerCommand() {
   const executable = process.platform === "win32" ? "apksigner.bat" : "apksigner";
-  const sdkRoot = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  const sdkRoot = resolveAndroidSdkRoot();
   if (!sdkRoot) return executable;
   const buildToolsRoot = path.join(sdkRoot, "build-tools");
   if (!existsSync(buildToolsRoot)) return executable;
