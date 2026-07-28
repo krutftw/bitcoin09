@@ -731,7 +731,7 @@ h1 {
 
 .download-grid {
   display: grid;
-  grid-template-columns: 1.2fr 0.9fr 0.9fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -1583,13 +1583,13 @@ h1 {
 <p class="tag">A fair-launch, CPU-mined network.</p>
 <p class="hero-description">21 million cap. 10 minute blocks. No premine. Argon2id proof of work.</p>
 <div class="hero-actions">
-<a class="button" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-windows-amd64.exe">Download for Windows</a>
-<a class="text-link" href="#download">macOS and Linux downloads</a>
+<a class="button" href="#download">Get the wallet</a>
+<a class="text-link" href="#node-miner">Mine or run a node</a>
 </div>
 <ol class="compact-steps" aria-label="Start with Bitcoin 09">
-<li><strong>Download the official app</strong></li>
-<li><strong>Create or open a wallet</strong></li>
-<li><strong>Receive, send, or mine</strong></li>
+<li><strong>Install the wallet</strong></li>
+<li><strong>Create or restore</strong></li>
+<li><strong>Receive or send 09C</strong></li>
 </ol>
 </div>
 </div>
@@ -1609,59 +1609,43 @@ h1 {
 
 <section class="section" id="download">
 <div class="section-heading">
-<h2>Download v0.1.34</h2>
-<p>One app contains the wallet, node, and official CPU miner. Activity shows recent sends, received payments, and mining rewards. Max uses the balance ready to send after the fee. Combine small payments is an optional wallet tool and costs the fee shown before broadcast.</p>
+<h2>Choose what you need</h2>
+<p>Use the native wallet for everyday payments. The full client is for mining, running a node, or using the command line.</p>
 </div>
-<div class="release-note"><span><strong>Mandatory update.</strong> Node and solo-miner operators need v0.1.34 before height 12,096. Pool miners receive the correct work automatically from the upgraded pool.</span><a href="https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34">Release notes</a></div>
-<div class="download-list">
-<article class="download-row featured">
-<span class="platform">Windows 10/11 · x64</span>
-<h3>Windows</h3>
-<p>Download and open the app.</p>
+<div class="download-grid">
+<article class="download-card primary">
+<span class="platform">Wallet · most people</span>
+<h3>Send and receive 09C</h3>
+<p>A normal installed app with no browser tab, node sync, or command line. Create or restore a wallet, check activity, review payments, and combine small outputs.</p>
 <div class="download-actions">
-<a class="button" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-windows-amd64.exe">Download for Windows</a>
-</div>
-</article>
-<article class="download-row">
-<span class="platform">macOS</span>
-<h3>Mac</h3>
-<p>Download the ZIP, unzip it, and open <code>Bitcoin 09.app</code>. If macOS blocks the first launch, verify the checksum, then right-click the app and choose <strong>Open</strong>.</p>
-<div class="download-actions">
-<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-macos-apple.zip">Apple silicon</a>
-<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-macos-intel.zip">Intel</a>
+<a class="button" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-preview.1/btc09-wallet-windows-x64-setup.exe">Windows wallet</a>
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-preview.1/btc09-wallet-macos-universal-preview.zip">macOS</a>
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-wallet-android-arm64.apk">Android</a>
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-linux.1/btc09-wallet-linux-x64.AppImage">Linux</a>
 </div>
 </article>
-<article class="download-row">
-<span class="platform">Linux</span>
-<h3>Linux</h3>
-<p>amd64 and arm64.</p>
+<article class="download-card" id="node-miner">
+<span class="platform">Node + CPU miner · v0.1.34</span>
+<h3>Run the full client</h3>
+<p>Mine 09C, relay the chain, run an explorer, or use scripts. The full client includes the local browser interface and command-line tools.</p>
 <div class="download-actions">
-<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-linux-amd64">amd64</a>
-<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-linux-arm64">arm64</a>
+<a class="button" href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-windows-amd64.exe">Windows full client</a>
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34">All systems</a>
+<a class="plain-link" href="https://github.com/krutftw/bitcoin09/blob/master/QUICKSTART.md">Mining help</a>
 </div>
 </article>
 </div>
 <div class="release-note">
-<span>Current release: v0.1.34. Official files are published on GitHub. Verify a download before running it.</span>
-<a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/SHA256SUMS">Main release checksums</a>
-<a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-linux.1/SHA256SUMS">Linux wallet checksum</a>
+<span><strong>ASERT is active.</strong> v0.1.34 has followed the per-block difficulty rules since height 12,096. Older nodes and solo miners must update.</span>
+<a href="https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34">Release notes</a>
 </div>
-<aside class="native-release-status" aria-labelledby="native-wallet-status">
-<div>
-<span class="platform">Native wallet beta</span>
-<h3 id="native-wallet-status">Direct downloads, no app store</h3>
-<p>Android and Linux are ready. Windows and Mac previews are also installable now, with an unverified-publisher warning until trusted signing is complete.</p>
-<div class="native-status-links"><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-preview.1/btc09-wallet-windows-x64-setup.exe">Windows preview</a><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-preview.1/btc09-wallet-macos-universal-preview.zip">Mac preview</a><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/btc09-wallet-android-arm64.apk">Android</a><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-linux.1/btc09-wallet-linux-x64.AppImage">Linux</a><a href="https://github.com/krutftw/bitcoin09/blob/master/docs/DIRECT-DOWNLOADS.md">Install help</a></div>
-<p>Free code signing provided by SignPath.io, certificate by SignPath Foundation. <a href="https://signpath.io/">About SignPath</a> · <a href="https://github.com/krutftw/bitcoin09/blob/master/CODE_SIGNING.md">Code signing policy</a>.</p>
+<details class="technical-note">
+<summary>Install status and checksums</summary>
+<div class="technical-content">
+<p>Android is project-signed and Linux is available as an AppImage. Windows and macOS are installable previews and still show an unverified-publisher warning while trusted signing is pending. The iPhone build passes simulator tests, but there is no normal free public install path yet.</p>
+<div class="text-links"><a href="https://github.com/krutftw/bitcoin09/blob/master/docs/DIRECT-DOWNLOADS.md">Install help</a><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34-wallet-preview.1/SHA256SUMS">Windows and Mac checksums</a><a href="https://github.com/krutftw/bitcoin09/releases/download/v0.1.34/SHA256SUMS">Full client checksums</a><a href="https://github.com/krutftw/bitcoin09/blob/master/CODE_SIGNING.md">Signing policy</a></div>
 </div>
-<ul class="native-status-list" aria-label="Native wallet platform status">
-<li><strong>Android signed APK</strong><span>Available</span></li>
-<li><strong>Linux AppImage</strong><span>Maintenance build available</span></li>
-<li><strong>Windows preview</strong><span>Available · signing pending</span></li>
-<li><strong>macOS preview</strong><span>Available · signing pending</span></li>
-<li><strong>iPhone</strong><span>Tested · no public install yet</span></li>
-</ul>
-</aside>
+</details>
 </section>
 
 <section class="section" aria-labelledby="use-heading">
@@ -1763,14 +1747,14 @@ h1 {
 <div class="stat-grid">
 <div class="stat"><b id="stat-target">-</b><span>target block time</span></div>
 <div class="stat"><b id="stat-avg-block">-</b><span>avg block time this window</span></div>
-<div class="stat"><b id="stat-retarget">-</b><span id="stat-daa-label">blocks to ASERT</span></div>
+<div class="stat"><b id="stat-retarget">-</b><span id="stat-daa-label">difficulty algorithm</span></div>
 <div class="stat"><b id="stat-next-diff">-</b><span>est. next difficulty</span></div>
 <div class="stat"><b id="stat-supply">-</b><span>circulating 09C</span></div>
 <div class="stat"><b id="stat-top-share-100">-</b><span>top solo payout address, last 100 blocks</span></div>
 <div class="stat"><b id="stat-distinct-100">-</b><span>solo payout addresses, last 100 blocks</span></div>
 <div class="stat"><b id="stat-distributed-100">-</b><span>distributed blocks, last 100</span></div>
 </div>
-<p>At height 12,096, 09C replaces the old 2,016-block window with per-block ASERT. Its two-hour half-life lets difficulty move smoothly when miners join or leave.</p>
+<p>ASERT activated at height 12,096. Difficulty now moves every block, with a two-hour half-life, so the chain can respond smoothly when miners join or leave.</p>
 <p class="muted">Solo concentration counts single-output blocks. Distributed PPLNS and other multi-output blocks are shown separately.</p>
 </div>
 </details>
@@ -1780,14 +1764,14 @@ h1 {
 
 <section class="section" id="mining-guide">
 <div class="section-heading">
-<h2>Wallet and mining</h2>
-<p>The desktop app handles recovery, receiving, sending, and CPU mining.</p>
+<h2>Mining and nodes</h2>
+<p>The native wallet handles payments. Use the full client when you want to mine or verify the chain yourself.</p>
 </div>
 <div class="wallet-panel">
 <div>
-<h2>Desktop wallet and miner</h2>
-<p>New wallets use 24 recovery words and an encrypted local file. Open the app to create, restore, receive, or send. Choose Mine, set the CPU threads, and press Start mining.</p>
-<div class="text-links"><a class="button" href="#download">Choose a download</a><a href="https://github.com/krutftw/bitcoin09/blob/master/QUICKSTART.md">Read the quickstart</a></div>
+<h2>Official CPU miner</h2>
+<p>Open the full client, choose Mine, set the CPU threads, and press Start mining. It can use the official 0% PPLNS service without downloading the whole chain.</p>
+<div class="text-links"><a class="button" href="#node-miner">Get the full client</a><a href="https://github.com/krutftw/bitcoin09/blob/master/QUICKSTART.md">Read the quickstart</a></div>
 </div>
 <details class="technical-note">
 <summary>Miner help and privacy</summary>
