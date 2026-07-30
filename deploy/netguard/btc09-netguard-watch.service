@@ -1,0 +1,13 @@
+[Unit]
+Description=Record BTC09 network-guard counters
+After=btc09-netguard.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/btc09-netguard-watch
+StateDirectory=btc09-netguard
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true

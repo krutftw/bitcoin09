@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+import json
+import subprocess
+from pathlib import Path
+
+LABELS = [  # Stable counter order from btc09_xdp_guard.c.
+    "syn_seen",
+    "syn_allowed",
+    "dropped_per_source",
+    "dropped_global",
+    "parse_pass",
+]
+
+
+def run(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, text=True, capture_output=True, check=False)
+
+
+def decode_percpu(value: object) -> int:
+    if isinstance(value, list):
+        total = 0
+        for item in value:
+            if isinstance(item, dict):
+                item = item.get("value", item.get("hex", 0))
+            if isinstance(item, list):
+                raw = bytes(int(part, 16) if isinstance(part, str) else part for part in item)
+                total += int.from_bytes(raw, "little")
+            elif isinstance(item, str):
+                total += int(item, 0)
+            elif isinstance(item, int):
+                total += item
+        return total
+    return 0
+
+
+backend_file = Path("/run/btc09-netguard/backend")  # Written by the loader.
+backend = backend_file.read_text(encoding="utf-8").strip() if backend_file.exists() else "inactive"
+print(f"backend={backend}")
+
+if backend == "xdp":
+    status = run("xdp-loader", "status", "eth0")
+    print(status.stdout.strip())
+    maps = run("bpftool", "-j", "map", "show")
+    try:
+        candidates = [item for item in json.loads(maps.stdout) if item.get("name") == "btc09_stats"]
+    except json.JSONDecodeError:
+        candidates = []
+    if candidates:
+        dump = run("bpftool", "-j", "map", "dump", "id", str(candidates[0]["id"]))
+        try:
+            rows = json.loads(dump.stdout)
+        except json.JSONDecodeError:
+            rows = []
+        values = {}
+        for row in rows:
+            key = row.get("key", [])
+            if isinstance(key, list):
+                raw_key = bytes(int(part, 16) if isinstance(part, str) else part for part in key)
+                index = int.from_bytes(raw_key, "little")
+                values[index] = decode_percpu(row.get("values", row.get("value", [])))
+        for index, label in enumerate(LABELS):
+            print(f"{label}={values.get(index, 0)}")
+elif backend == "nftables":
+    rules = run("nft", "-a", "list", "table", "inet", "btc09_netguard")
+    print(rules.stdout.strip())

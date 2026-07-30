@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail # Monitoring failures must be visible to systemd.
+
+state_dir="/var/lib/btc09-netguard" # Created by systemd StateDirectory.
+state_file="$state_dir/previous-counters"
+mkdir -p "$state_dir"
+
+status="$(/usr/local/sbin/btc09-netguard-status)"
+seen="$(awk -F= '$1 == "syn_seen" { print $2 }' <<<"$status")"
+source_drops="$(awk -F= '$1 == "dropped_per_source" { print $2 }' <<<"$status")"
+global_drops="$(awk -F= '$1 == "dropped_global" { print $2 }' <<<"$status")"
+
+seen="${seen:-0}"
+source_drops="${source_drops:-0}"
+global_drops="${global_drops:-0}"
+total_drops=$((source_drops + global_drops))
+
+previous_drops="$total_drops"
+if [[ -r "$state_file" ]]; then
+    previous_drops="$(awk -F= '$1 == "total_drops" { print $2 }' "$state_file")"
+    previous_drops="${previous_drops:-$total_drops}"
+fi
+if (( total_drops >= previous_drops )); then
+    drop_delta=$((total_drops - previous_drops))
+else
+    # A service restart resets the BPF maps.
+    drop_delta="$total_drops"
+fi
+
+syn_recv="$(ss -Htan state syn-recv | wc -l)"
+p2p_established="$(
+    ss -Htan state established '( sport = :9009 or dport = :9009 )' |
+        wc -l
+)"
+conntrack_count="$(cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null || printf '0')"
+conntrack_max="$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null || printf '0')"
+
+priority="info"
+if (( drop_delta > 0 )); then
+    priority="warning"
+fi
+
+printf \
+    'backend=%s syn_seen=%s total_drops=%s drop_delta=%s syn_recv=%s p2p_established=%s conntrack=%s/%s\n' \
+    "$(cat /run/btc09-netguard/backend 2>/dev/null || printf 'inactive')" \
+    "$seen" "$total_drops" "$drop_delta" "$syn_recv" "$p2p_established" \
+    "$conntrack_count" "$conntrack_max" |
+    systemd-cat -t btc09-netguard-watch -p "$priority"
+
+printf 'total_drops=%s\nsyn_seen=%s\n' "$total_drops" "$seen" >"$state_file"

@@ -1,0 +1,43 @@
+# Fallback for kernels or drivers that cannot attach XDP.
+table inet btc09_netguard {
+    counter ssh_source_drop {}
+    counter ssh_global_drop {}
+    counter web_source_drop {}
+    counter web_global_drop {}
+    counter p2p_source_drop {}
+    counter p2p_global_drop {}
+
+    chain input { # Runs before the ordinary UFW input chain.
+        type filter hook input priority -20; policy accept;
+
+        tcp flags & (fin | syn | rst | ack) == syn tcp dport 22 \
+            meter ssh4 { ip saddr timeout 10s limit rate over 30/second burst 60 packets } \
+            counter name ssh_source_drop drop
+        tcp flags & (fin | syn | rst | ack) == syn tcp dport 22 \
+            meter ssh6 { ip6 saddr timeout 10s limit rate over 30/second burst 60 packets } \
+            counter name ssh_source_drop drop
+        tcp flags & (fin | syn | rst | ack) == syn tcp dport 22 \
+            limit rate over 100/second burst 200 packets \
+            counter name ssh_global_drop drop
+
+        tcp flags & (fin | syn | rst | ack) == syn tcp dport { 80, 443 } \
+            meter web4 { tcp dport . ip saddr timeout 10s limit rate over 500/second burst 1000 packets } \
+            counter name web_source_drop drop
+        tcp flags & (fin | syn | rst | ack) == syn tcp dport { 80, 443 } \
+            meter web6 { tcp dport . ip6 saddr timeout 10s limit rate over 500/second burst 1000 packets } \
+            counter name web_source_drop drop
+        tcp flags & (fin | syn | rst | ack) == syn tcp dport { 80, 443 } \
+            limit rate over 2000/second burst 4000 packets \
+            counter name web_global_drop drop
+
+        tcp flags & (fin | syn | rst | ack) == syn tcp dport 9009 \
+            meter p2p4 { ip saddr timeout 10s limit rate over 20/second burst 40 packets } \
+            counter name p2p_source_drop drop
+        tcp flags & (fin | syn | rst | ack) == syn tcp dport 9009 \
+            meter p2p6 { ip6 saddr timeout 10s limit rate over 20/second burst 40 packets } \
+            counter name p2p_source_drop drop
+        tcp flags & (fin | syn | rst | ack) == syn tcp dport 9009 \
+            limit rate over 2000/second burst 4000 packets \
+            counter name p2p_global_drop drop
+    }
+}

@@ -1,0 +1,14 @@
+[Unit]
+Description=BTC09 early network packet-rate guard
+After=network-online.target systemd-sysctl.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=BTC09_NETGUARD_INTERFACE=eth0
+ExecStart=/usr/local/sbin/btc09-netguard-start
+ExecStop=/usr/local/sbin/btc09-netguard-stop
+
+[Install]
+WantedBy=multi-user.target

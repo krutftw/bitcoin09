@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail # Leave unrelated XDP programs attached.
+
+interface="${BTC09_NETGUARD_INTERFACE:-eth0}" # Match the start service.
+
+if command -v xdp-loader >/dev/null 2>&1; then
+    program_id="$(
+        xdp-loader status "$interface" 2>/dev/null |
+            awk '/btc09_xdp_guard/ {
+                for (field = 1; field <= NF; field++) {
+                    if ($field == "btc09_xdp_guard") {
+                        print $(field + 1)
+                        exit
+                    }
+                }
+            }'
+    )"
+    if [[ -n "$program_id" ]]; then
+        xdp-loader unload --id "$program_id" "$interface"
+    fi
+fi
+
+nft delete table inet btc09_netguard 2>/dev/null || true
+rm -rf /run/btc09-netguard

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail # Fail closed during setup.
+
+interface="${BTC09_NETGUARD_INTERFACE:-eth0}" # DigitalOcean public NIC.
+object="/opt/btc09-netguard/btc09_xdp_guard.o"
+fallback="/opt/btc09-netguard/btc09-netguard.nft"
+state_dir="/run/btc09-netguard"
+
+mkdir -p "$state_dir"
+
+if xdp-loader status "$interface" 2>/dev/null | grep -q 'btc09_xdp_guard'; then
+    printf '%s\n' xdp >"$state_dir/backend"
+    exit 0
+fi
+
+if xdp-loader load --mode native --section xdp "$interface" "$object" 2>"$state_dir/native-error.log"; then
+    printf '%s\n' native >"$state_dir/xdp-mode"
+    printf '%s\n' xdp >"$state_dir/backend"
+    exit 0
+fi
+
+if xdp-loader load --mode skb --section xdp "$interface" "$object" 2>"$state_dir/skb-error.log"; then
+    printf '%s\n' skb >"$state_dir/xdp-mode"
+    printf '%s\n' xdp >"$state_dir/backend"
+    exit 0
+fi
+
+nft -c -f "$fallback"
+nft -f "$fallback"
+printf '%s\n' nftables >"$state_dir/backend"
