@@ -61,5 +61,26 @@ if backend == "xdp":
         for index, label in enumerate(LABELS):
             print(f"{label}={values.get(index, 0)}")
 elif backend == "nftables":
-    rules = run("nft", "-a", "list", "table", "inet", "btc09_netguard")
-    print(rules.stdout.strip())
+    rules = run("nft", "-j", "list", "table", "inet", "btc09_netguard")
+    try:
+        objects = json.loads(rules.stdout).get("nftables", [])
+    except json.JSONDecodeError:
+        objects = []
+    counters = {}
+    for item in objects:
+        counter = item.get("counter", {})
+        name = counter.get("name")
+        packets = counter.get("packets", 0)
+        if isinstance(name, str) and isinstance(packets, int):
+            counters[name] = packets
+    source_drops = sum(
+        packets for name, packets in counters.items() if name.endswith("_source_drop")
+    )
+    global_drops = sum(
+        packets for name, packets in counters.items() if name.endswith("_global_drop")
+    )
+    print("syn_seen=0")
+    print("syn_allowed=0")
+    print(f"dropped_per_source={source_drops}")
+    print(f"dropped_global={global_drops}")
+    print("parse_pass=0")

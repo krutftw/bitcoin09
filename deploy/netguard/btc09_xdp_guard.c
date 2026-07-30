@@ -52,6 +52,18 @@ struct service_limit {
 	__u32 global;
 };
 
+struct btc09_ipv6_extension {
+	__u8 nexthdr;
+	__u8 hdrlen;
+};
+
+struct btc09_ipv6_fragment {
+	__u8 nexthdr;
+	__u8 reserved;
+	__be16 frag_off;
+	__be32 identification;
+};
+
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 65536);
@@ -179,6 +191,84 @@ static __always_inline int inspect_tcp(void *data_end, struct tcphdr *tcp,
 	return check_rate(source, (__u32)service, &limit);
 }
 
+static __always_inline int inspect_ipv6(void *data_end,
+					struct ipv6hdr *ipv6,
+					struct source_key *source)
+{
+	void *cursor = (void *)(ipv6 + 1);
+	__u8 next_header = ipv6->nexthdr;
+	int extension_index;
+
+	// Bound the walk so the verifier can prove termination. Six headers cover
+	// normal chains; a longer chain of recognized headers is dropped instead
+	// of becoming a rate-limit bypass.
+#pragma unroll
+	for (extension_index = 0; extension_index < 6; extension_index++) {
+		struct btc09_ipv6_extension *extension;
+		__u32 extension_length;
+
+		if (next_header == IPPROTO_TCP)
+			return inspect_tcp(data_end, cursor, source);
+
+		if (next_header == IPPROTO_FRAGMENT) {
+			struct btc09_ipv6_fragment *fragment = cursor;
+
+			if ((void *)(fragment + 1) > data_end) {
+				count_stat(STAT_PARSE_PASS);
+				return XDP_PASS;
+			}
+
+			// The initial fragment contains the TCP header and receives the
+			// normal rate decision. Later fragments can pass only after that
+			// first fragment has been accepted by the kernel reassembler.
+			if (bpf_ntohs(fragment->frag_off) & 0xfff8)
+				return XDP_PASS;
+
+			next_header = fragment->nexthdr;
+			cursor = (void *)(fragment + 1);
+			continue;
+		}
+
+		if (next_header != IPPROTO_HOPOPTS &&
+		    next_header != IPPROTO_ROUTING &&
+		    next_header != IPPROTO_DSTOPTS &&
+		    next_header != IPPROTO_AH)
+			return XDP_PASS;
+
+		extension = cursor;
+		if ((void *)(extension + 1) > data_end) {
+			count_stat(STAT_PARSE_PASS);
+			return XDP_PASS;
+		}
+
+		if (next_header == IPPROTO_AH)
+			extension_length = ((__u32)extension->hdrlen + 2) * 4;
+		else
+			extension_length = ((__u32)extension->hdrlen + 1) * 8;
+
+		if (extension_length < sizeof(*extension) ||
+		    cursor + extension_length > data_end) {
+			count_stat(STAT_PARSE_PASS);
+			return XDP_PASS;
+		}
+
+		next_header = extension->nexthdr;
+		cursor += extension_length;
+	}
+
+	if (next_header == IPPROTO_TCP)
+		return inspect_tcp(data_end, cursor, source);
+
+	if (next_header == IPPROTO_HOPOPTS ||
+	    next_header == IPPROTO_ROUTING ||
+	    next_header == IPPROTO_DSTOPTS ||
+	    next_header == IPPROTO_FRAGMENT ||
+	    next_header == IPPROTO_AH)
+		return XDP_DROP;
+
+	return XDP_PASS;
+}
+
 SEC("xdp")
 int btc09_xdp_guard(struct xdp_md *ctx)
 {
@@ -223,21 +313,15 @@ int btc09_xdp_guard(struct xdp_md *ctx)
 
 	if (protocol == ETH_P_IPV6) {
 		struct ipv6hdr *ipv6 = (void *)(ethernet + 1);
-		struct tcphdr *tcp;
 
 		if ((void *)(ipv6 + 1) > data_end) {
 			count_stat(STAT_PARSE_PASS);
 			return XDP_PASS;
 		}
-		// Extension-header traffic is passed for kernel validation.
-		if (ipv6->nexthdr != IPPROTO_TCP)
-			return XDP_PASS;
-
 		source.family = 6;
 		__builtin_memcpy(source.address, &ipv6->saddr,
 				 sizeof(ipv6->saddr));
-		tcp = (void *)(ipv6 + 1);
-		return inspect_tcp(data_end, tcp, &source);
+		return inspect_ipv6(data_end, ipv6, &source);
 	}
 
 	return XDP_PASS;

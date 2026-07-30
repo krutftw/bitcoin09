@@ -55,8 +55,11 @@ btc09-netguard-status
 Rollback:
 
 ```text
-systemctl disable --now btc09-netguard
-rm -f /etc/sysctl.d/99-btc09-netguard.conf
+systemctl disable --now btc09-netguard-watch.timer btc09-netguard
+rm -f /etc/sysctl.d/99-btc09-netguard.conf \
+  /etc/ssh/sshd_config.d/99-btc09-connection-guard.conf
+sshd -t
+systemctl reload ssh
 # Restore the values recorded in /root/btc09-netguard-backup-*/sysctl.before,
 # or reboot so the remaining system configuration is reapplied cleanly.
 ```
