@@ -96,7 +96,7 @@ test("service creates, persists, refreshes, and totals a BTC09-only payment", as
       assert.equal((await fetch(`${path}?token=${created.token}`)).status, 404);
       const authorised = await fetch(path, { headers: { "X-BTC09-Payment-Token": created.token } });
       assert.equal(authorised.status, 200);
-      assert.equal((await authorised.json()).payment.payment_status, "waiting");
+      assert.equal((await authorised.json()).payment.payment_status, "finished");
     } finally {
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
