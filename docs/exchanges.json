@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-01T08:43:17Z",
+  "updated_at": "2026-08-01T09:12:15Z",
   "disclaimer": "Applications are pending reviews, not listings, approvals, or partnerships.",
   "summary": {
-    "awaiting_reply": 16,
+    "awaiting_reply": 15,
     "terms_requested": 1,
     "requirements_needed": 10,
     "engineering_needed": 2,
@@ -12,7 +12,9 @@
   "funding": {
     "phase": 1,
     "venue": "NonKYC",
-    "donation_url": "https://nowpayments.io/donation/btc09",
+    "donation_url": "https://btc09.org/support.html#contribute",
+    "provider_fallback_url": "https://nowpayments.io/donation/btc09",
+    "status_url": "https://btc09.org/api/support/v1/status",
     "cash_target_usd": 3899,
     "cash_received_usd": 0,
     "coin_liquidity_target_usd": 400,
@@ -91,10 +93,9 @@
     },
     {
       "name": "AscendEX",
-      "status": "awaiting_reply",
-      "submitted_at": "2026-08-01",
+      "status": "no_current_route",
       "official_url": "https://ascendex.com/",
-      "public_note": "Native-chain package sent to the official listing-service address."
+      "public_note": "The email attempt bounced because the address did not exist. No valid current public application route has been verified."
     },
     {
       "name": "Deepcoin",

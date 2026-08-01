@@ -30,8 +30,33 @@
 </ul>
 <p><strong>Total one-market package: US$4,299.</strong></p>
 <p class="small" id="funding-note">No exchange payment will be made without written approval and confirmed current terms.</p>
-<a class="button" id="donate" href="https://nowpayments.io/donation/btc09">Support with crypto</a>
-<p class="small">The payment page is operated by NOWPayments. Network and provider fees may apply. Card and PayPal links are not published until there is a dedicated BTC09 merchant profile.</p>
+<a class="button" href="#contribute">Choose an amount and coin</a>
+</section>
+
+<section class="panel" id="contribute">
+<p class="eyebrow">Contribute</p>
+<h2>Support with crypto</h2>
+<p>Choose a USD amount and any supported coin. NOWPayments creates a one-time payment address.</p>
+<form id="payment-form" class="payment-form">
+<div class="form-grid">
+<label>Amount in USD<input id="amount" name="amount" type="number" min="5" max="3899" step="1" value="25" inputmode="decimal" required></label>
+<label>Pay with<select id="currency" name="currency" required disabled><option value="">Loading coins…</option></select></label>
+</div>
+<button class="button" id="create-payment" type="submit" disabled>Create payment</button>
+<span class="small form-status" id="form-status" role="status"></span>
+</form>
+
+<div class="payment-card" id="payment-card" hidden>
+<p class="eyebrow">Payment ready</p>
+<p class="payment-amount">Send <strong id="pay-amount"></strong></p>
+<p class="small">to this one-time address</p>
+<div class="copy-row"><code id="pay-address"></code><button class="copy-button" type="button" data-copy="pay-address">Copy</button></div>
+<div id="memo-row" hidden><p class="small">Memo / tag</p><div class="copy-row"><code id="pay-memo"></code><button class="copy-button" type="button" data-copy="pay-memo">Copy</button></div></div>
+<p class="payment-state" id="payment-state" role="status">Waiting for payment…</p>
+<p class="small">Use the exact coin, network, amount, address, and memo shown. The public total updates after NOWPayments marks the payment finished.</p>
+</div>
+
+<p class="small provider-note">Payment processing is handled by NOWPayments. Network and provider fees may apply. If the form is unavailable, use the <a id="hosted-donation" href="https://nowpayments.io/donation/btc09">hosted donation page</a>; hosted-link payments are checked before they are added to the public total.</p>
 </section>
 
 <section class="panel">
@@ -41,26 +66,148 @@
 </main>
 <footer class="site-foot-wrap"><div class="site-foot"><p>Bitcoin 09 · <a href="exchanges.html">Exchange status</a> · <a href="terms.html">Terms</a> · <a href="privacy.html">Privacy</a> · <a href="https://github.com/krutftw/bitcoin09">Source</a></p></div></footer>
 <script>
-fetch('exchanges.json', { cache: 'no-store' })
-  .then((response) => {
-    if (!response.ok) throw new Error(`status ${response.status}`);
-    return response.json();
-  })
-  .then((data) => {
-    const fund = data.funding;
-    const percent = Math.min(100, Math.max(0, fund.cash_received_usd / fund.cash_target_usd * 100));
-    document.getElementById('updated').textContent = `Updated ${new Date(data.updated_at).toLocaleString()}`;
-    document.getElementById('cash-total').textContent = `US$${fund.cash_received_usd.toLocaleString()} / US$${fund.cash_target_usd.toLocaleString()}`;
-    document.getElementById('cash-progress').style.width = `${percent}%`;
-    const progress = document.querySelector('.progress');
-    progress.setAttribute('aria-valuemax', fund.cash_target_usd);
-    progress.setAttribute('aria-valuenow', fund.cash_received_usd);
-    document.getElementById('funding-note').textContent = fund.note;
-    document.getElementById('donate').href = fund.donation_url;
-  })
-  .catch(() => {
-    document.getElementById('updated').textContent = 'Current funding data could not be loaded.';
+const preferredCoins = ['usdttrc20', 'usdterc20', 'usdtbsc', 'usdc', 'btc', 'eth', 'sol', 'trx', 'bnbbsc'];
+const coinNames = {
+  usdttrc20: 'USDT · Tron', usdterc20: 'USDT · Ethereum', usdtbsc: 'USDT · BNB Smart Chain',
+  btc: 'Bitcoin', eth: 'Ethereum', sol: 'Solana', trx: 'TRON', bnbbsc: 'BNB · BNB Smart Chain'
+};
+let paymentTimer = null;
+
+function renderFunding(fund, updatedAt) {
+  const received = Number(fund.cash_received_usd || 0);
+  const target = Number(fund.cash_target_usd || 3899);
+  const percent = Math.min(100, Math.max(0, received / target * 100));
+  document.getElementById('updated').textContent = `Confirmed total updated ${new Date(updatedAt).toLocaleString()}`;
+  document.getElementById('cash-total').textContent = `US$${received.toLocaleString()} / US$${target.toLocaleString()}`;
+  document.getElementById('cash-progress').style.width = `${percent}%`;
+  const progress = document.querySelector('.progress');
+  progress.setAttribute('aria-valuemax', target);
+  progress.setAttribute('aria-valuenow', received);
+}
+
+async function loadFunding() {
+  const configResponse = await fetch('exchanges.json', { cache: 'no-store' });
+  if (!configResponse.ok) throw new Error('funding config unavailable');
+  const config = await configResponse.json();
+  document.getElementById('funding-note').textContent = config.funding.note;
+  document.getElementById('hosted-donation').href = config.funding.provider_fallback_url;
+  let fund = config.funding;
+  let updatedAt = config.updated_at;
+  try {
+    const statusResponse = await fetch(config.funding.status_url, { cache: 'no-store' });
+    if (statusResponse.ok) {
+      const live = await statusResponse.json();
+      fund = { ...fund, ...live };
+      updatedAt = live.updated_at || updatedAt;
+    }
+  } catch {}
+  renderFunding(fund, updatedAt);
+}
+
+async function loadCurrencies() {
+  const response = await fetch('/api/support/v1/currencies', { cache: 'no-store' });
+  if (!response.ok) throw new Error('coins unavailable');
+  const data = await response.json();
+  const currencies = [...data.currencies].sort((a, b) => {
+    const left = preferredCoins.indexOf(a);
+    const right = preferredCoins.indexOf(b);
+    if (left !== -1 || right !== -1) return (left === -1 ? 999 : left) - (right === -1 ? 999 : right);
+    return a.localeCompare(b);
   });
+  const select = document.getElementById('currency');
+  select.replaceChildren();
+  for (const ticker of currencies) {
+    const option = document.createElement('option');
+    option.value = ticker;
+    option.textContent = coinNames[ticker] || ticker.toUpperCase();
+    select.append(option);
+  }
+  select.disabled = false;
+  document.getElementById('create-payment').disabled = false;
+}
+
+function statusLabel(status) {
+  return {
+    waiting: 'Waiting for payment…', confirming: 'Payment found. Waiting for confirmations…',
+    confirmed: 'Confirmed on-chain. Finishing settlement…', sending: 'Payment confirmed. Settlement is in progress…',
+    partially_paid: 'A partial payment arrived. Check the amount before sending more.',
+    finished: 'Payment finished. Thank you — the public total will refresh now.',
+    expired: 'This payment expired. Create a new one if you still want to contribute.',
+    failed: 'The payment failed. No contribution was counted.', refunded: 'This payment was refunded.'
+  }[status] || `Payment status: ${status}`;
+}
+
+function showPayment(payment) {
+  document.getElementById('payment-card').hidden = false;
+  document.getElementById('pay-amount').textContent = `${payment.pay_amount} ${payment.pay_currency.toUpperCase()}`;
+  document.getElementById('pay-address').textContent = payment.pay_address;
+  const memoRow = document.getElementById('memo-row');
+  memoRow.hidden = !payment.payin_extra_id;
+  if (payment.payin_extra_id) document.getElementById('pay-memo').textContent = payment.payin_extra_id;
+  document.getElementById('payment-state').textContent = statusLabel(payment.payment_status);
+}
+
+async function pollPayment(saved) {
+  try {
+    const response = await fetch(`/api/support/v1/payments/${encodeURIComponent(saved.id)}?token=${encodeURIComponent(saved.token)}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error('payment status unavailable');
+    const data = await response.json();
+    showPayment(data.payment);
+    if (['finished', 'expired', 'failed', 'refunded'].includes(data.payment.payment_status)) {
+      sessionStorage.removeItem('btc09-support-payment');
+      clearInterval(paymentTimer);
+      if (data.payment.payment_status === 'finished') loadFunding();
+    }
+  } catch {
+    document.getElementById('payment-state').textContent = 'Payment status could not be refreshed. Your payment address is still valid.';
+  }
+}
+
+document.getElementById('payment-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = document.getElementById('create-payment');
+  const status = document.getElementById('form-status');
+  button.disabled = true;
+  status.textContent = 'Creating payment…';
+  try {
+    const response = await fetch('/api/support/v1/payments', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount_usd: Number(document.getElementById('amount').value), pay_currency: document.getElementById('currency').value })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'payment could not be created');
+    showPayment(data.payment);
+    const saved = { id: data.payment.payment_id, token: data.token };
+    sessionStorage.setItem('btc09-support-payment', JSON.stringify(saved));
+    clearInterval(paymentTimer);
+    paymentTimer = setInterval(() => pollPayment(saved), 10000);
+    status.textContent = '';
+    document.getElementById('payment-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+for (const button of document.querySelectorAll('[data-copy]')) {
+  button.addEventListener('click', async () => {
+    const source = document.getElementById(button.dataset.copy);
+    await navigator.clipboard.writeText(source.textContent);
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+  });
+}
+
+loadFunding().catch(() => { document.getElementById('updated').textContent = 'Current funding total could not be loaded.'; });
+loadCurrencies().catch(() => { document.getElementById('form-status').textContent = 'The payment form is temporarily unavailable. Use the hosted link below.'; });
+try {
+  const saved = JSON.parse(sessionStorage.getItem('btc09-support-payment'));
+  if (saved?.id && saved?.token) {
+    pollPayment(saved);
+    paymentTimer = setInterval(() => pollPayment(saved), 10000);
+  }
+} catch {}
 </script>
 </body>
 </html>

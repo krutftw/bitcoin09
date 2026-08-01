@@ -16,6 +16,7 @@ import {
 const API_BASE = "https://discord.com/api/v10";
 const EXPLORER_STATUS = "https://explorer.btc09.org/api/status";
 const EXCHANGE_STATUS_URL = "https://btc09.org/exchanges.json";
+const FUNDING_STATUS_URL = "https://btc09.org/api/support/v1/status";
 const DISCORD_INVITE = "https://discord.gg/fUuGzwRTzP";
 const MESSAGE_MARKER = "Bitcoin 09 live mining stats";
 const EXCHANGE_MESSAGE_MARKER = "Bitcoin 09 exchange status";
@@ -481,15 +482,26 @@ export async function getStats(fetchImpl = fetch) {
 }
 
 export async function getExchangeStatus(fetchImpl = fetch) {
-  return json(EXCHANGE_STATUS_URL, { cache: "no-store" }, fetchImpl);
+  const status = await json(EXCHANGE_STATUS_URL, { cache: "no-store" }, fetchImpl);
+  try {
+    const funding = await json(FUNDING_STATUS_URL, { cache: "no-store" }, fetchImpl);
+    return { ...status, funding: { ...(status?.funding ?? {}), ...funding } };
+  } catch {
+    return status;
+  }
 }
 
 export function formatExchangeStatusMessage(status) {
   const summary = status?.summary ?? {};
   const funding = status?.funding ?? {};
   const requirements = Number(summary.requirements_needed ?? 0) + Number(summary.engineering_needed ?? 0);
-  const updatedSeconds = Math.floor(Date.parse(status?.updated_at ?? "") / 1000);
-  const updated = Number.isFinite(updatedSeconds) ? `<t:${updatedSeconds}:R>` : "recently";
+  const statusUpdated = Date.parse(status?.updated_at ?? "");
+  const fundingUpdated = Date.parse(funding?.updated_at ?? "");
+  const updatedSeconds = Math.floor(Math.max(
+    Number.isFinite(statusUpdated) ? statusUpdated : 0,
+    Number.isFinite(fundingUpdated) ? fundingUpdated : 0,
+  ) / 1000);
+  const updated = Number.isFinite(updatedSeconds) && updatedSeconds > 0 ? `<t:${updatedSeconds}:R>` : "recently";
 
   return [
     EXCHANGE_MESSAGE_MARKER,

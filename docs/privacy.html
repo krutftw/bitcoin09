@@ -70,7 +70,8 @@
 
 <section>
 <h2>Project support</h2>
-<p>The Bitcoin 09 website does not collect payment-card or crypto-payment details. If you use a support link, the named payment provider receives the information needed to process it under that provider's own privacy policy. Public funding totals do not identify contributors.</p>
+<p>The support form sends the chosen USD amount and payment currency to the Bitcoin 09 server, which asks NOWPayments for a one-time address. The service stores the provider payment ID, amount, currency, address, status, timestamps, and an opaque browser token so it can check settlement and update the total. Ordinary connection metadata may also be processed as described above. It does not ask for a contributor name or email.</p>
+<p>The payment provider, NOWPayments, receives the transaction information needed to process the contribution under its own privacy policy. The public tracker shows only aggregate confirmed funding and does not identify contributors.</p>
 </section>
 
 <section>

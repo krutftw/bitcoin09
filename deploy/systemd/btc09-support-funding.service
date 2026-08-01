@@ -1,0 +1,47 @@
+[Unit]
+Description=BTC09 confirmed support funding tracker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=btc09-support
+Group=btc09-support
+WorkingDirectory=/opt/btc09/bitcoin09
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/btc09/support-funding.env
+ExecStart=/usr/bin/node /opt/btc09/bitcoin09/tools/support/funding-service.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+UMask=0077
+
+StateDirectory=btc09-support
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/btc09-support
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

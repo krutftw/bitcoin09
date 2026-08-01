@@ -151,6 +151,35 @@ test("exchange status is concise, factual, and links to the public tracker", () 
   assert.doesNotMatch(message, /—/);
 });
 
+test("exchange status uses the confirmed funding service without failing closed", async () => {
+  const config = {
+    updated_at: "2026-08-01T08:13:00Z",
+    summary: { awaiting_reply: 15 },
+    funding: { cash_received_usd: 0, cash_target_usd: 3899 },
+  };
+  const calls = [];
+  const status = await statsBot.getExchangeStatus(async (url) => {
+    calls.push(url);
+    if (url.endsWith("/exchanges.json")) return jsonResponse(config);
+    if (url.endsWith("/api/support/v1/status")) {
+      return jsonResponse({ cash_received_usd: 125, confirmed_payments: 3 });
+    }
+    throw new Error(`unexpected service ${url}`);
+  });
+  assert.deepEqual(calls, [
+    "https://btc09.org/exchanges.json",
+    "https://btc09.org/api/support/v1/status",
+  ]);
+  assert.equal(status.funding.cash_received_usd, 125);
+  assert.equal(status.funding.cash_target_usd, 3899);
+
+  const fallback = await statsBot.getExchangeStatus(async (url) => {
+    if (url.endsWith("/exchanges.json")) return jsonResponse(config);
+    throw new Error("funding service offline");
+  });
+  assert.equal(fallback.funding.cash_received_usd, 0);
+});
+
 test("stats implementation contains no retired pool dependency", async () => {
   const source = await import("node:fs/promises").then(({ readFile }) =>
     readFile(scriptPath, "utf8"),
