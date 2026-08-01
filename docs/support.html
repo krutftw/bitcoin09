@@ -56,7 +56,7 @@
 <p class="small">Use the exact coin, network, amount, address, and memo shown. The public total updates after NOWPayments marks the payment finished.</p>
 </div>
 
-<p class="small provider-note">Payment processing is handled by NOWPayments. Network and provider fees may apply. If the form is unavailable, use the <a id="hosted-donation" href="https://nowpayments.io/donation/btc09">hosted donation page</a>; hosted-link payments are checked before they are added to the public total.</p>
+<p class="small provider-note">Payment processing is handled by NOWPayments. Network and provider fees may apply. If the form is temporarily unavailable, please try again later so the contribution can be tracked correctly.</p>
 </section>
 
 <section class="panel">
@@ -90,7 +90,6 @@ async function loadFunding() {
   if (!configResponse.ok) throw new Error('funding config unavailable');
   const config = await configResponse.json();
   document.getElementById('funding-note').textContent = config.funding.note;
-  document.getElementById('hosted-donation').href = config.funding.provider_fallback_url;
   let fund = config.funding;
   let updatedAt = config.updated_at;
   try {
@@ -200,7 +199,7 @@ for (const button of document.querySelectorAll('[data-copy]')) {
 }
 
 loadFunding().catch(() => { document.getElementById('updated').textContent = 'Current funding total could not be loaded.'; });
-loadCurrencies().catch(() => { document.getElementById('form-status').textContent = 'The payment form is temporarily unavailable. Use the hosted link below.'; });
+loadCurrencies().catch(() => { document.getElementById('form-status').textContent = 'The payment form is temporarily unavailable. Please try again later.'; });
 try {
   const saved = JSON.parse(sessionStorage.getItem('btc09-support-payment'));
   if (saved?.id && saved?.token) {

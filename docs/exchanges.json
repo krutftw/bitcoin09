@@ -13,7 +13,6 @@
     "phase": 1,
     "venue": "NonKYC",
     "donation_url": "https://btc09.org/support.html#contribute",
-    "provider_fallback_url": "https://nowpayments.io/donation/btc09",
     "status_url": "https://btc09.org/api/support/v1/status",
     "cash_target_usd": 3899,
     "cash_received_usd": 0,

@@ -33,7 +33,7 @@ class ExchangeStatusContractTests(unittest.TestCase):
         self.assertEqual(funding["coin_liquidity_target_usd"], coin_items)
         self.assertEqual(funding["total_package_usd"], cash_items + coin_items)
         self.assertEqual(funding["donation_url"], "https://btc09.org/support.html#contribute")
-        self.assertEqual(funding["provider_fallback_url"], "https://nowpayments.io/donation/btc09")
+        self.assertNotIn("provider_fallback_url", funding)
         self.assertEqual(funding["status_url"], "https://btc09.org/api/support/v1/status")
         for phrase in ("not an investment", "approves BTC09 in writing", "No exchange payment"):
             self.assertIn(phrase, funding["note"])
@@ -49,7 +49,7 @@ class ExchangeStatusContractTests(unittest.TestCase):
         for token in (
             "US$4,299",
             "Support does not buy 09C",
-            "nowpayments.io/donation/btc09",
+            "try again later",
             "/api/support/v1/currencies",
             "/api/support/v1/payments",
             "after NOWPayments marks the payment finished",
