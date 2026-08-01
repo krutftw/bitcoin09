@@ -47,6 +47,7 @@ class ExchangeStatusContractTests(unittest.TestCase):
         for token in ("exchanges.json", "Applications are pending reviews", "View funding target"):
             self.assertIn(token, self.exchange_page)
         for token in (
+            'href="status.css?v=20260801-supporters"',
             "US$4,299",
             "Support does not buy 09C",
             "try again later",
