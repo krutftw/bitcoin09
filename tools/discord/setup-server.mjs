@@ -137,6 +137,15 @@ const desiredChannels = [
     lockedForEveryone: true,
   },
   {
+    key: "exchange-status",
+    name: "📋-exchange-status",
+    aliases: ["exchange-status", "listings"],
+    category: "info",
+    position: 5,
+    topic: "Current BTC09 exchange applications, blockers, published paid routes, and funding target.",
+    lockedForEveryone: true,
+  },
+  {
     key: "general",
     name: "💬-general",
     aliases: ["general"],

@@ -545,6 +545,36 @@ nginx restores the client IP, applies separate v1 and v2 limits, and proxies
 only the two v1 routes plus `POST /api/v2/pool/work`,
 `POST /api/v2/pool/submit`, and `GET /api/v2/pool/status` to loopback.
 
+### Confirmed support funding tracker
+
+The support service creates BTC09-prefixed NOWPayments payments, stores only
+their provider state, and polls by payment ID. Existing payments in the shared
+merchant account are never included. Only provider status `finished` is added
+to the public USD total.
+
+Create the root-only credential file without committing or printing its value:
+
+```bash
+install -d -o root -g root -m 0755 /etc/btc09
+install -o root -g root -m 0600 /dev/null /etc/btc09/support-funding.env
+editor /etc/btc09/support-funding.env
+# NOWPAYMENTS_API_KEY=...
+```
+
+Then install the loopback service and exact nginx routes:
+
+```bash
+/opt/btc09/bitcoin09/deploy/scripts/install-support-funding.sh \
+  /opt/btc09/bitcoin09
+curl -fsS http://127.0.0.1:8032/healthz
+curl -fsS https://btc09.org/api/support/v1/status
+```
+
+The durable state is `/var/lib/btc09-support/payments.json`, mode `0600` under
+the dedicated service account. The API key never reaches the website. Nginx
+rate-limits payment creation and exposes only status, supported currencies,
+creation, and token-bound per-payment reads.
+
 ## 8. Restore and rollback
 
 Choose a completed backup directory and verify it before stopping services:

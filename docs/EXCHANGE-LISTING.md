@@ -6,25 +6,28 @@ and current release again when submitting.
 ## Listing route
 
 Use only an exchange's official listing form, helpdesk, or published listing
-address. SafeTrade and CoinEx already have applications under review. The next
-no-fee target is FreiExchange through its official **Add Coin** helpdesk form.
-The trading API key on an exchange account is for that user's orders and
-balances; it does not create a coin listing request.
+address. The public tracker at https://btc09.org/exchanges.html is the canonical
+status page, backed by the machine-readable `docs/exchanges.json` file. The
+trading API key on an exchange account is for that user's orders and balances;
+it does not create a coin listing request.
 
 ## Outreach status
 
-Reviewed 18 July 2026. Prices and requirements can change, so obtain written
+Reviewed 1 August 2026. Prices and requirements can change, so obtain written
 terms from the exchange before paying or supplying liquidity.
 
-| Venue | Current status | Decision |
-| --- | --- | --- |
-| SafeTrade | Applications `#39826` and `#39837` were acknowledged on 11 and 12 July. A single follow-up was sent on `#39826` on 18 July, identifying `#39837` as a duplicate. | Wait for a response. Do not send another routine follow-up or describe this as a listing until SafeTrade confirms one. |
-| CoinEx | The native-chain package was sent to the official `listing@coinex.com` address on 13 July. No reply had arrived by 18 July and no fee was paid. | Await review and answer requests for team or legal documents honestly. This is not a confirmed listing. |
-| FreiExchange | The no-fee native-coin application was submitted through the official **Add Coin** form on 18 July and acknowledged as ticket `#624198`. | Wait for review. Its helpdesk says reviews can take six to eight weeks, so do not create a duplicate ticket. |
-| NonKYC | The official listing page quotes native-chain integration from **$3,499**, plus locked liquidity of **$400 in 09C and $400 in the paired asset per market**. Its verifier recognized an unsolicited Discord contact as a listing promoter, but the listing page names `@Nonkycadmin` as its only listing manager and says that manager never contacts projects first. NonKYC also requires an active community and an X account; BTC09 does not currently have an official X account. | Use only the authenticated site application and official support path. Do not negotiate or pay through DMs. Do not pay now. One market starts at $4,299 before any other costs. |
-| XeggeX | The official listing page displays the integration fee as **`5.000$`** and requires at least **$400 total liquidity per spot market**. | Treat that as a $5,000 quote unless XeggeX confirms otherwise in writing. Do not pay now. |
-| TradeOgre | No current official public application route or written terms were verified. | Do not contact brokers or unofficial accounts claiming they can arrange a listing. |
-| BasicSwap DEX | Its open-source integration route has no exchange listing fee, but the standard path expects CLTV or CSV, SegWit, and watch-only address support. BTC09 does not currently implement those features. | Not a quick listing route. Ask about a custom integration only after the no-fee CEX applications are submitted. |
+| Status | Venues |
+| --- | --- |
+| Submitted / awaiting reply | SafeTrade, CoinEx, FreiExchange, MEXC, Bitget, BitMart, LBank, Biconomy, Toobit, AscendEX, Deepcoin, KCEX, CoinW, Coinstore, Phemex, Bitfinex |
+| Written terms requested | XT |
+| Published paid routes | NonKYC, XeggeX |
+| Requirements not currently met | Bitrue, BingX, Gate, Bybit, Kraken, Coinbase, Crypto.com, KuCoin, OKX, HTX |
+| Engineering prerequisite | BasicSwap, DEX Screener |
+| No verified public route | TradeOgre |
+
+Applications under review are not listings, approvals, or partnerships. Do not
+send duplicate applications or routine follow-ups before the venue's own review
+window has passed.
 
 Official routes checked:
 
@@ -33,8 +36,14 @@ Official routes checked:
 - https://www.coinex.com/en/help/sections/articles/900004236303
 - https://helpdesk.freiexchange.com/open.php
 - https://helpdesk.freiexchange.com/kb/faq.php?id=3
+- https://phemex.com/announcements/listing-application
+- https://www.coinw.com/coin-apply
+- https://www.coinstore.com/
+- https://blog.bitfinex.com/announcements/introducing-the-new-token-listing-form/
+- https://www.kucoin.com/support/26125293810713
 - https://nonkyc.io/listing
 - https://xeggex.com/listing
+- https://docs.dexscreener.com/token-listing
 - https://academy.particl.io/en/latest/basicswap-guides/basicswapguides_apply.html
 
 ## Funding decision

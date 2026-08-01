@@ -21,7 +21,7 @@ function run(mode) {
 }
 
 test("one-shot Discord commands fail when required credentials are missing", () => {
-  for (const mode of ["--post", "--register-commands"]) {
+  for (const mode of ["--post", "--post-exchanges", "--register-commands"]) {
     const result = run(mode);
     assert.equal(result.status, 1, `${mode} should exit nonzero`);
     assert.match(result.stderr, /Missing required environment variables/);
@@ -121,6 +121,63 @@ test("chain stats report ASERT without a fake legacy retarget", () => {
   assert.match(message, /Difficulty adjustment: \*\*ASERT active\*\*, 2h half-life/);
   assert.doesNotMatch(message, /Retarget:/);
   assert.doesNotMatch(message, /retarget in 0/i);
+});
+
+test("exchange status is concise, factual, and links to the public tracker", () => {
+  const message = statsBot.formatExchangeStatusMessage({
+    updated_at: "2026-08-01T08:13:00Z",
+    summary: {
+      awaiting_reply: 16,
+      terms_requested: 1,
+      requirements_needed: 10,
+      engineering_needed: 2,
+      paid_routes_published: 2,
+    },
+    funding: {
+      cash_received_usd: 0,
+      cash_target_usd: 3899,
+      coin_liquidity_received_usd: 0,
+      coin_liquidity_target_usd: 400,
+    },
+  });
+
+  assert.match(message, /Submitted \/ awaiting: \*\*16\*\*/);
+  assert.match(message, /Requirements \/ engineering: \*\*12\*\*/);
+  assert.match(message, /US\$0 \/ US\$3,899 cash/);
+  assert.match(message, /Applications are pending reviews, not listings\./);
+  assert.match(message, /https:\/\/btc09\.org\/exchanges\.html/);
+  assert.ok(message.length < 700);
+  assert.doesNotMatch(message, /approved|partnership|guaranteed/i);
+  assert.doesNotMatch(message, /—/);
+});
+
+test("exchange status uses the confirmed funding service without failing closed", async () => {
+  const config = {
+    updated_at: "2026-08-01T08:13:00Z",
+    summary: { awaiting_reply: 15 },
+    funding: { cash_received_usd: 0, cash_target_usd: 3899 },
+  };
+  const calls = [];
+  const status = await statsBot.getExchangeStatus(async (url) => {
+    calls.push(url);
+    if (url.endsWith("/exchanges.json")) return jsonResponse(config);
+    if (url.endsWith("/api/support/v1/status")) {
+      return jsonResponse({ cash_received_usd: 125, confirmed_payments: 3 });
+    }
+    throw new Error(`unexpected service ${url}`);
+  });
+  assert.deepEqual(calls, [
+    "https://btc09.org/exchanges.json",
+    "https://btc09.org/api/support/v1/status",
+  ]);
+  assert.equal(status.funding.cash_received_usd, 125);
+  assert.equal(status.funding.cash_target_usd, 3899);
+
+  const fallback = await statsBot.getExchangeStatus(async (url) => {
+    if (url.endsWith("/exchanges.json")) return jsonResponse(config);
+    throw new Error("funding service offline");
+  });
+  assert.equal(fallback.funding.cash_received_usd, 0);
 });
 
 test("stats implementation contains no retired pool dependency", async () => {
@@ -465,10 +522,13 @@ test("combined live stats refresh still updates the message when channel renames
     messageRefreshImpl: async () => {
       calls.push("message");
     },
+    exchangeMessageRefreshImpl: async () => {
+      calls.push("exchange");
+    },
     logger: { error: (...args) => errors.push(args.join(" ")) },
   });
 
-  assert.deepEqual(calls, ["channels", "message"]);
+  assert.deepEqual(calls, ["channels", "message", "exchange"]);
   assert.deepEqual(errors, ["Live stats channel update failed: Missing Access"]);
 });
 

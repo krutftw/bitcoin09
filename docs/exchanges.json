@@ -1,0 +1,239 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-08-01T09:12:15Z",
+  "disclaimer": "Applications are pending reviews, not listings, approvals, or partnerships.",
+  "summary": {
+    "awaiting_reply": 15,
+    "terms_requested": 1,
+    "requirements_needed": 10,
+    "engineering_needed": 2,
+    "paid_routes_published": 2
+  },
+  "funding": {
+    "phase": 1,
+    "venue": "NonKYC",
+    "donation_url": "https://btc09.org/support.html#contribute",
+    "status_url": "https://btc09.org/api/support/v1/status",
+    "cash_target_usd": 3899,
+    "cash_received_usd": 0,
+    "coin_liquidity_target_usd": 400,
+    "coin_liquidity_received_usd": 0,
+    "total_package_usd": 4299,
+    "items": [
+      { "label": "Native-chain integration", "amount_usd": 3499, "asset": "cash" },
+      { "label": "Paired-asset liquidity", "amount_usd": 400, "asset": "cash" },
+      { "label": "09C liquidity", "amount_usd": 400, "asset": "09C" }
+    ],
+    "note": "No exchange payment will be made unless the venue first approves BTC09 in writing and confirms its current integration, custody, liquidity, withdrawal, delisting, and refund terms. Support is voluntary and is not an investment or purchase."
+  },
+  "exchanges": [
+    {
+      "name": "SafeTrade",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-07-11",
+      "official_url": "https://support.safetrade.com/hc/en-us/requests/new",
+      "public_note": "Official tickets acknowledged. One duplicate was identified in the follow-up; no further routine follow-up is due."
+    },
+    {
+      "name": "CoinEx",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-07-13",
+      "official_url": "https://www.coinex.com/en/apply/create",
+      "public_note": "Native-chain listing package sent to the official listing address."
+    },
+    {
+      "name": "FreiExchange",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-07-18",
+      "official_url": "https://helpdesk.freiexchange.com/open.php",
+      "public_note": "Official Add Coin ticket acknowledged. Its helpdesk quotes a six-to-eight-week review window."
+    },
+    {
+      "name": "MEXC",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://www.mexc.com/support/requests/applycoin",
+      "public_note": "Official application submitted and receipt confirmed."
+    },
+    {
+      "name": "Bitget",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://www.bitget.com/support/articles/12560603808952",
+      "public_note": "Official application and due-diligence package submitted."
+    },
+    {
+      "name": "BitMart",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://www.bitmart.com/",
+      "public_note": "Native-chain package sent to the official service address."
+    },
+    {
+      "name": "LBank",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://www.lbank.com/",
+      "public_note": "Native-chain package sent to the official business address."
+    },
+    {
+      "name": "Biconomy",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://www.biconomy.com/",
+      "public_note": "Official application submitted with no upfront listing budget claimed."
+    },
+    {
+      "name": "Toobit",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://www.toobit.com/",
+      "public_note": "Native-chain package sent to the official listing address."
+    },
+    {
+      "name": "AscendEX",
+      "status": "no_current_route",
+      "official_url": "https://ascendex.com/",
+      "public_note": "The email attempt bounced because the address did not exist. No valid current public application route has been verified."
+    },
+    {
+      "name": "Deepcoin",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://www.deepcoin.com/",
+      "public_note": "Native-chain package sent to the official listing address."
+    },
+    {
+      "name": "KCEX",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://www.kcex.com/",
+      "public_note": "Official no-fee application submitted. KCEX says it aims to respond within three business days."
+    },
+    {
+      "name": "CoinW",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://www.coinw.com/coin-apply",
+      "public_note": "Official application and detailed project form submitted. No upfront listing budget was claimed."
+    },
+    {
+      "name": "Coinstore",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://www.coinstore.com/",
+      "public_note": "Native-chain package sent to the official business address after checking that no earlier request existed."
+    },
+    {
+      "name": "Phemex",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://phemex.com/announcements/listing-application",
+      "public_note": "Initial information sent to the official listing address. Phemex quotes up to seven business days for a reply."
+    },
+    {
+      "name": "Bitfinex",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://blog.bitfinex.com/announcements/introducing-the-new-token-listing-form/",
+      "public_note": "Official native-chain form submitted and receipt confirmed."
+    },
+    {
+      "name": "XT",
+      "status": "terms_requested",
+      "submitted_at": "2026-08-01",
+      "official_url": "https://www.xt.com/listing/index",
+      "public_note": "Written native-chain fees, liquidity, ongoing-cost, delisting, and refund terms requested. No payment made."
+    },
+    {
+      "name": "NonKYC",
+      "status": "funding_needed",
+      "official_url": "https://nonkyc.io/listing",
+      "public_note": "Published minimum for one native-chain market is US$4,299: US$3,499 integration plus US$400 in each side of liquidity. Approval and an official X account are still required."
+    },
+    {
+      "name": "XeggeX",
+      "status": "funding_needed",
+      "official_url": "https://xeggex.com/listing",
+      "public_note": "Published minimum for one market is US$5,400: US$5,000 integration plus US$400 total liquidity. An official X account and security review are also required."
+    },
+    {
+      "name": "Bitrue",
+      "status": "requirements_needed",
+      "official_url": "https://www.bitrue.com/token-listing",
+      "public_note": "Due-diligence workbook is complete, but the official form upload did not complete. Not submitted."
+    },
+    {
+      "name": "BingX",
+      "status": "requirements_needed",
+      "official_url": "https://bingx.com/",
+      "public_note": "Official form could not be completed without unsupported referral information. Not submitted."
+    },
+    {
+      "name": "Gate",
+      "status": "requirements_needed",
+      "official_url": "https://www.gate.com/listing",
+      "public_note": "Official application requires account access and additional listing information. Not submitted."
+    },
+    {
+      "name": "Bybit",
+      "status": "requirements_needed",
+      "official_url": "https://www.bybit.com/",
+      "public_note": "The form requires a positive listing valuation. BTC09 has no verified public market price, so no value was fabricated."
+    },
+    {
+      "name": "Kraken",
+      "status": "requirements_needed",
+      "official_url": "https://www.kraken.com/get-listed",
+      "public_note": "Requires market-maker, price, audit, custody, and treasury information BTC09 cannot honestly provide yet."
+    },
+    {
+      "name": "Coinbase",
+      "status": "requirements_needed",
+      "official_url": "https://www.coinbase.com/asset-listing",
+      "public_note": "Requires an issuer entity, address, team identity details, and beneficial-owner information."
+    },
+    {
+      "name": "Crypto.com",
+      "status": "requirements_needed",
+      "official_url": "https://crypto.com/exchange/listing",
+      "public_note": "Requires legal and security review material that is not available yet."
+    },
+    {
+      "name": "KuCoin",
+      "status": "requirements_needed",
+      "official_url": "https://www.kucoin.com/support/26125293810713",
+      "public_note": "Requires company records, a legal opinion, and KYC for at least three core team members."
+    },
+    {
+      "name": "OKX",
+      "status": "requirements_needed",
+      "official_url": "https://www.okx.com/",
+      "public_note": "Current application requirements do not fit BTC09's fair-launch, no-company structure."
+    },
+    {
+      "name": "HTX",
+      "status": "requirements_needed",
+      "official_url": "https://www.htx.com/",
+      "public_note": "Current application requirements do not fit the information and budget available."
+    },
+    {
+      "name": "BasicSwap",
+      "status": "engineering_needed",
+      "official_url": "https://academy.particl.io/en/latest/basicswap-guides/basicswapguides_apply.html",
+      "public_note": "The no-fee integration path expects chain features BTC09 does not currently implement, including CLTV or CSV and SegWit-style support."
+    },
+    {
+      "name": "DEX Screener",
+      "status": "engineering_needed",
+      "official_url": "https://docs.dexscreener.com/token-listing",
+      "public_note": "DEX Screener indexes supported DEX pools after a real pool and transaction exist. BTC09 is a native chain and has no supported DEX pool."
+    },
+    {
+      "name": "TradeOgre",
+      "status": "no_current_route",
+      "official_url": "https://tradeogre.com/",
+      "public_note": "No current official public application route or written terms were verified."
+    }
+  ]
+}
