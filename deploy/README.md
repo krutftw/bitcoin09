@@ -559,6 +559,23 @@ install -d -o root -g root -m 0755 /etc/btc09
 install -o root -g root -m 0600 /dev/null /etc/btc09/support-funding.env
 editor /etc/btc09/support-funding.env
 # NOWPAYMENTS_API_KEY=...
+umask 077
+printf 'BTC09_SUPPORT_CLAIM_SECRET=%s\n' "$(openssl rand -hex 32)" \
+  > /etc/btc09/support-claims.env
+chown root:root /etc/btc09/support-claims.env
+chmod 0600 /etc/btc09/support-claims.env
+```
+
+The claim secret is shared only by the loopback funding service and the Discord
+stats bot. Install the current bot unit so `/support claim` can use it without
+giving the bot the NOWPayments API key:
+
+```bash
+install -o root -g root -m 0644 \
+  /opt/btc09/bitcoin09/bot/btc09-discord-stats.service \
+  /etc/systemd/system/btc09-discord-stats.service
+systemctl daemon-reload
+systemctl try-restart btc09-discord-stats
 ```
 
 Then install the loopback service and exact nginx routes:

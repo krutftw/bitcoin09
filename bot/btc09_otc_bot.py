@@ -530,6 +530,32 @@ def register_node_owned_commands(bot: commands.Bot) -> None:
     async def mine_placeholder(_interaction: discord.Interaction) -> None:
         return None
 
+    support_group = discord.app_commands.Group(
+        name="support",
+        description="Claim a supporter role or see the current perks.",
+    )
+
+    @support_group.command(
+        name="claim",
+        description="Claim your role after a BTC09 support payment finishes.",
+    )
+    @discord.app_commands.describe(
+        code="The private claim code shown on the BTC09 support page."
+    )
+    async def support_claim_placeholder(
+        _interaction: discord.Interaction, code: str
+    ) -> None:
+        return None
+
+    @support_group.command(
+        name="perks",
+        description="Show the current BTC09 supporter roles and perks.",
+    )
+    async def support_perks_placeholder(_interaction: discord.Interaction) -> None:
+        return None
+
+    bot.tree.add_command(support_group)
+
 
 class OTCBot(commands.Bot):
     def __init__(self, config: Config, runtime: Runtime) -> None:

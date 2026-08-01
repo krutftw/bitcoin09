@@ -10,6 +10,15 @@ import {
   mergeProviderPayment,
   summarizeFunding,
 } from "./funding-service.mjs";
+import { supporterTierFor } from "./supporter-tiers.mjs";
+
+test("supporter tiers use the donor's cumulative confirmed USD total", () => {
+  assert.equal(supporterTierFor(4.99), null);
+  assert.equal(supporterTierFor(5).key, "supporter");
+  assert.equal(supporterTierFor(25).key, "backer");
+  assert.equal(supporterTierFor(100).key, "builder");
+  assert.equal(supporterTierFor(250).key, "core_supporter");
+});
 
 test("funding summary counts only finished BTC09 USD payments", () => {
   const summary = summarizeFunding({
@@ -81,6 +90,7 @@ test("service creates, persists, refreshes, and totals a BTC09-only payment", as
       apiKey: "test-key",
       statePath,
       fetchImpl,
+      claimSecret: "claim-secret",
       clock: () => "2026-08-01T00:03:00Z",
     });
     const created = await service.createPayment({ amount_usd: 25, pay_currency: "btc" });
@@ -97,6 +107,22 @@ test("service creates, persists, refreshes, and totals a BTC09-only payment", as
       const authorised = await fetch(path, { headers: { "X-BTC09-Payment-Token": created.token } });
       assert.equal(authorised.status, 200);
       assert.equal((await authorised.json()).payment.payment_status, "finished");
+
+      const claimPath = `http://127.0.0.1:${address.port}/internal/support/v1/claims`;
+      const claimBody = JSON.stringify({ claim_code: created.token, discord_user_id: "123456789012345678" });
+      assert.equal((await fetch(claimPath, { method: "POST", body: claimBody })).status, 403);
+      const claimedResponse = await fetch(claimPath, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-BTC09-Claim-Secret": "claim-secret" },
+        body: claimBody,
+      });
+      assert.equal(claimedResponse.status, 200);
+      const claimed = await claimedResponse.json();
+      assert.equal(claimed.total_confirmed_usd, 25);
+      assert.equal(claimed.tier.key, "backer");
+
+      const afterClaim = await fetch(path, { headers: { "X-BTC09-Payment-Token": created.token } });
+      assert.equal((await afterClaim.json()).payment.claim_status, "claimed");
     } finally {
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
@@ -108,7 +134,159 @@ test("service creates, persists, refreshes, and totals a BTC09-only payment", as
 
     const saved = JSON.parse(await readFile(statePath, "utf8"));
     assert.equal(saved.payments["123456"].payment_status, "finished");
+    assert.equal(saved.payments["123456"].claimed_by_discord_user_id, "123456789012345678");
+    assert.equal(saved.payments["123456"].client_token, created.token);
     assert.equal(calls.filter((call) => call.url.endsWith("/payment")).length, 1);
+
+    const repeated = await service.claimPayment({
+      claim_code: created.token,
+      discord_user_id: "123456789012345678",
+    });
+    assert.equal(repeated.tier.key, "backer");
+    await assert.rejects(service.claimPayment({
+      claim_code: created.token,
+      discord_user_id: "999999999999999999",
+    }), /already been used/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("separate finished payments add up for one Discord supporter", async () => {
+  const root = await mkdtemp(join(tmpdir(), "btc09-funding-test-"));
+  const statePath = join(root, "payments.json");
+  let nextPaymentId = 800000;
+  const orders = new Map();
+  const fetchImpl = async (url, options = {}) => {
+    if (url.endsWith("/merchant/coins")) {
+      return new Response(JSON.stringify({ selectedCurrencies: ["btc"] }), { status: 200 });
+    }
+    if (url.endsWith("/payment") && options.method === "POST") {
+      const body = JSON.parse(options.body);
+      const paymentId = String(nextPaymentId++);
+      orders.set(paymentId, body);
+      return new Response(JSON.stringify({
+        payment_id: paymentId,
+        payment_status: "waiting",
+        pay_address: `bc1q${paymentId}`,
+        pay_amount: 0.001,
+        pay_currency: "btc",
+        order_id: body.order_id,
+      }), { status: 201 });
+    }
+    const paymentId = url.split("/").at(-1);
+    if (orders.has(paymentId)) {
+      const order = orders.get(paymentId);
+      return new Response(JSON.stringify({
+        payment_id: paymentId,
+        payment_status: "finished",
+        order_id: order.order_id,
+        price_amount: order.price_amount,
+        price_currency: "usd",
+        pay_amount: 0.001,
+        pay_currency: "btc",
+      }), { status: 200 });
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+
+  try {
+    const service = await createFundingService({
+      apiKey: "test-key",
+      statePath,
+      fetchImpl,
+      claimSecret: "claim-secret",
+    });
+    const first = await service.createPayment({ amount_usd: 10, pay_currency: "btc" });
+    const firstClaim = await service.claimPayment({
+      claim_code: first.token,
+      discord_user_id: "123456789012345678",
+    });
+    assert.equal(firstClaim.tier.key, "supporter");
+
+    const second = await service.createPayment({ amount_usd: 20, pay_currency: "btc" });
+    const secondClaim = await service.claimPayment({
+      claim_code: second.token,
+      discord_user_id: "123456789012345678",
+    });
+    assert.equal(secondClaim.total_confirmed_usd, 30);
+    assert.equal(secondClaim.tier.key, "backer");
+    assert.ok(Object.values(service.getState().payments).every((record) =>
+      record.claimed_role_name === "🤝 Backer"
+    ));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent claims cannot move one payment between Discord accounts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "btc09-funding-test-"));
+  const statePath = join(root, "payments.json");
+  let orderId = null;
+  let providerReads = 0;
+  let releaseProvider;
+  let providerStarted;
+  const started = new Promise((resolve) => { providerStarted = resolve; });
+  const released = new Promise((resolve) => { releaseProvider = resolve; });
+  const fetchImpl = async (url, options = {}) => {
+    if (url.endsWith("/merchant/coins")) {
+      return new Response(JSON.stringify({ selectedCurrencies: ["btc"] }), { status: 200 });
+    }
+    if (url.endsWith("/payment") && options.method === "POST") {
+      const body = JSON.parse(options.body);
+      orderId = body.order_id;
+      return new Response(JSON.stringify({
+        payment_id: "900001",
+        payment_status: "waiting",
+        pay_address: "bc1qconcurrency",
+        pay_amount: 0.001,
+        pay_currency: "btc",
+        order_id: orderId,
+      }), { status: 201 });
+    }
+    if (url.endsWith("/payment/900001")) {
+      providerReads += 1;
+      providerStarted();
+      await released;
+      return new Response(JSON.stringify({
+        payment_id: "900001",
+        payment_status: "finished",
+        order_id: orderId,
+        price_amount: 25,
+        price_currency: "usd",
+      }), { status: 200 });
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+
+  try {
+    const service = await createFundingService({
+      apiKey: "test-key",
+      statePath,
+      fetchImpl,
+      claimSecret: "claim-secret",
+    });
+    const payment = await service.createPayment({ amount_usd: 25, pay_currency: "btc" });
+    const first = service.claimPayment({
+      claim_code: payment.token,
+      discord_user_id: "111111111111111111",
+    });
+    await started;
+    const second = service.claimPayment({
+      claim_code: payment.token,
+      discord_user_id: "222222222222222222",
+    });
+    releaseProvider();
+
+    const results = await Promise.allSettled([first, second]);
+    assert.equal(results[0].status, "fulfilled");
+    assert.equal(results[1].status, "rejected");
+    assert.match(results[1].reason.message, /already been used/);
+    assert.equal(providerReads, 1);
+    assert.equal(
+      service.getState().payments["900001"].claimed_by_discord_user_id,
+      "111111111111111111",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

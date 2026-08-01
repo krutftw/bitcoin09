@@ -10,6 +10,7 @@ Group=btc09-support
 WorkingDirectory=/opt/btc09/bitcoin09
 Environment=NODE_ENV=production
 EnvironmentFile=/etc/btc09/support-funding.env
+EnvironmentFile=/etc/btc09/support-claims.env
 ExecStart=/usr/bin/node /opt/btc09/bitcoin09/tools/support/funding-service.mjs
 Restart=on-failure
 RestartSec=5

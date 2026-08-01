@@ -57,9 +57,20 @@ class ExchangeStatusContractTests(unittest.TestCase):
             "/api/support/v1/currencies",
             "/api/support/v1/payments",
             "after NOWPayments marks the payment finished",
+            "US$25 · 🤝 Backer",
+            "US$250 · ⭐ Core Supporter",
+            "supporter lab",
+            "/support claim",
+            "const activePaymentKey = 'btc09-support-payment'",
+            "btc09-support-claims",
+            "Saved Discord claim codes",
+            "saveFinishedClaim(saved)",
+            "clearActivePayment()",
+            "Each payment code can only be linked to one Discord account",
         ):
             self.assertIn(token, self.support_page)
         self.assertNotIn("?token=", self.support_page)
+        self.assertNotIn("sessionStorage", self.support_page)
         self.assertIn('href="exchanges.html"', home)
         self.assertIn('href="support.html"', home)
         self.assertIn("Project support", terms)
