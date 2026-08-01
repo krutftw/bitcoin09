@@ -129,3 +129,20 @@ test("service rejects an amount outside the published range", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("service stops creating payments after the cash target is reached", async () => {
+  const root = await mkdtemp(join(tmpdir(), "btc09-funding-test-"));
+  try {
+    const service = await createFundingService({
+      apiKey: "test-key",
+      statePath: join(root, "payments.json"),
+      cashTargetUsd: 0,
+      fetchImpl: async () => {
+        throw new Error("provider must not be called");
+      },
+    });
+    await assert.rejects(service.createPayment({ amount_usd: 25, pay_currency: "btc" }), /target has been reached/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -90,17 +90,13 @@ async function loadFunding() {
   if (!configResponse.ok) throw new Error('funding config unavailable');
   const config = await configResponse.json();
   document.getElementById('funding-note').textContent = config.funding.note;
-  let fund = config.funding;
-  let updatedAt = config.updated_at;
-  try {
-    const statusResponse = await fetch(config.funding.status_url, { cache: 'no-store' });
-    if (statusResponse.ok) {
-      const live = await statusResponse.json();
-      fund = { ...fund, ...live };
-      updatedAt = live.updated_at || updatedAt;
-    }
-  } catch {}
+  const statusResponse = await fetch(config.funding.status_url, { cache: 'no-store' });
+  if (!statusResponse.ok) throw new Error('current funding total unavailable');
+  const live = await statusResponse.json();
+  const fund = { ...config.funding, ...live };
+  const updatedAt = live.updated_at || config.updated_at;
   renderFunding(fund, updatedAt);
+  return fund;
 }
 
 async function loadCurrencies() {
@@ -121,8 +117,24 @@ async function loadCurrencies() {
     option.textContent = coinNames[ticker] || ticker.toUpperCase();
     select.append(option);
   }
-  select.disabled = false;
+  return currencies;
+}
+
+function applySupportAvailability(fund) {
+  const remaining = Number(fund.cash_remaining_usd || 0);
+  const status = document.getElementById('form-status');
+  const amount = document.getElementById('amount');
+  if (remaining < 5) {
+    document.getElementById('currency').disabled = true;
+    document.getElementById('create-payment').disabled = true;
+    status.textContent = 'The current support target has been reached.';
+    return;
+  }
+  amount.max = String(Math.min(3899, remaining));
+  amount.value = String(Math.min(25, remaining));
+  document.getElementById('currency').disabled = false;
   document.getElementById('create-payment').disabled = false;
+  status.textContent = '';
 }
 
 function statusLabel(status) {
@@ -157,7 +169,7 @@ async function pollPayment(saved) {
     if (['finished', 'expired', 'failed', 'refunded'].includes(data.payment.payment_status)) {
       sessionStorage.removeItem('btc09-support-payment');
       clearInterval(paymentTimer);
-      if (data.payment.payment_status === 'finished') loadFunding();
+      if (data.payment.payment_status === 'finished') loadFunding().then(applySupportAvailability).catch(() => {});
     }
   } catch {
     document.getElementById('payment-state').textContent = 'Payment status could not be refreshed. Your payment address is still valid.';
@@ -200,9 +212,13 @@ for (const button of document.querySelectorAll('[data-copy]')) {
   });
 }
 
-loadFunding().catch(() => { document.getElementById('updated').textContent = 'Current funding total could not be loaded.'; });
+Promise.all([loadFunding(), loadCurrencies()])
+  .then(([fund]) => applySupportAvailability(fund))
+  .catch(() => {
+    document.getElementById('updated').textContent = 'Current funding total could not be loaded.';
+    document.getElementById('form-status').textContent = 'The payment form is temporarily unavailable. Please try again later.';
+  });
 setInterval(() => loadFunding().catch(() => {}), 60000);
-loadCurrencies().catch(() => { document.getElementById('form-status').textContent = 'The payment form is temporarily unavailable. Please try again later.'; });
 try {
   const saved = JSON.parse(sessionStorage.getItem('btc09-support-payment'));
   if (saved?.id && saved?.token) {

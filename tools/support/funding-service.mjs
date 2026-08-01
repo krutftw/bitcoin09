@@ -264,8 +264,19 @@ export async function createFundingService({
   async function createPayment(body) {
     const amount = money(body?.amount_usd);
     const currency = String(body?.pay_currency ?? "").trim().toLowerCase();
+    const remaining = summarizeFunding(state, { cashTargetUsd, coinTargetUsd }).cash_remaining_usd;
+    if (remaining < finiteNumber(minUsd)) {
+      const error = new Error("The current support target has been reached.");
+      error.statusCode = 409;
+      throw error;
+    }
     if (amount < finiteNumber(minUsd) || amount > finiteNumber(maxUsd)) {
       const error = new Error(`amount must be between US$${money(minUsd)} and US$${money(maxUsd)}`);
+      error.statusCode = 400;
+      throw error;
+    }
+    if (amount > remaining) {
+      const error = new Error(`amount cannot be more than the remaining US$${money(remaining)} target`);
       error.statusCode = 400;
       throw error;
     }

@@ -51,6 +51,8 @@ class ExchangeStatusContractTests(unittest.TestCase):
             "Support does not buy 09C",
             "try again later",
             "setInterval(() => loadFunding()",
+            "Promise.all([loadFunding(), loadCurrencies()])",
+            "The current support target has been reached.",
             "'X-BTC09-Payment-Token': saved.token",
             "/api/support/v1/currencies",
             "/api/support/v1/payments",
