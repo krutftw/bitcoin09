@@ -18,7 +18,7 @@ terms from the exchange before paying or supplying liquidity.
 
 | Status | Venues |
 | --- | --- |
-| Submitted / awaiting reply | SafeTrade, CoinEx, FreiExchange, MEXC, Bitget, BitMart, LBank, Biconomy, Toobit, AscendEX, Deepcoin, KCEX, Phemex, Bitfinex |
+| Submitted / awaiting reply | SafeTrade, CoinEx, FreiExchange, MEXC, Bitget, BitMart, LBank, Biconomy, Toobit, AscendEX, Deepcoin, KCEX, CoinW, Coinstore, Phemex, Bitfinex |
 | Written terms requested | XT |
 | Published paid routes | NonKYC, XeggeX |
 | Requirements not currently met | Bitrue, BingX, Gate, Bybit, Kraken, Coinbase, Crypto.com, KuCoin, OKX, HTX |
@@ -37,6 +37,8 @@ Official routes checked:
 - https://helpdesk.freiexchange.com/open.php
 - https://helpdesk.freiexchange.com/kb/faq.php?id=3
 - https://phemex.com/announcements/listing-application
+- https://www.coinw.com/coin-apply
+- https://www.coinstore.com/
 - https://blog.bitfinex.com/announcements/introducing-the-new-token-listing-form/
 - https://www.kucoin.com/support/26125293810713
 - https://nonkyc.io/listing

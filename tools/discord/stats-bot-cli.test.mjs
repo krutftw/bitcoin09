@@ -127,7 +127,7 @@ test("exchange status is concise, factual, and links to the public tracker", () 
   const message = statsBot.formatExchangeStatusMessage({
     updated_at: "2026-08-01T08:13:00Z",
     summary: {
-      awaiting_reply: 14,
+      awaiting_reply: 16,
       terms_requested: 1,
       requirements_needed: 10,
       engineering_needed: 2,
@@ -141,7 +141,7 @@ test("exchange status is concise, factual, and links to the public tracker", () 
     },
   });
 
-  assert.match(message, /Submitted \/ awaiting: \*\*14\*\*/);
+  assert.match(message, /Submitted \/ awaiting: \*\*16\*\*/);
   assert.match(message, /Requirements \/ engineering: \*\*12\*\*/);
   assert.match(message, /US\$0 \/ US\$3,899 cash/);
   assert.match(message, /Applications are pending reviews, not listings\./);
