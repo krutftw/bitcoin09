@@ -50,6 +50,7 @@ class ExchangeStatusContractTests(unittest.TestCase):
             "US$4,299",
             "Support does not buy 09C",
             "try again later",
+            "setInterval(() => loadFunding()",
             "/api/support/v1/currencies",
             "/api/support/v1/payments",
             "after NOWPayments marks the payment finished",

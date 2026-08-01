@@ -199,6 +199,7 @@ for (const button of document.querySelectorAll('[data-copy]')) {
 }
 
 loadFunding().catch(() => { document.getElementById('updated').textContent = 'Current funding total could not be loaded.'; });
+setInterval(() => loadFunding().catch(() => {}), 60000);
 loadCurrencies().catch(() => { document.getElementById('form-status').textContent = 'The payment form is temporarily unavailable. Please try again later.'; });
 try {
   const saved = JSON.parse(sessionStorage.getItem('btc09-support-payment'));
