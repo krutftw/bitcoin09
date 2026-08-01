@@ -24,6 +24,9 @@ const EXCHANGE_MESSAGE_MARKER = "Bitcoin 09 exchange status";
 const DEFAULT_STATS_CHANNEL = "pools-and-nodes";
 const DEFAULT_EXCHANGE_STATUS_CHANNEL = "exchange-status";
 const SUPPORT_CLAIM_URL = "http://127.0.0.1:8032/internal/support/v1/claims";
+const SUPPORTER_UPDATES_CHANNEL = "💛-supporter-updates";
+const SUPPORTER_UPDATES_TOPIC = "Short BTC09 build notes, test releases, and supporter polls from the project bot.";
+const SUPPORTER_UPDATES_MESSAGE_MARKER = "BTC09 supporter updates";
 const SUPPORTER_LAB_CHANNEL = "💛-supporter-lab";
 const SUPPORTER_LAB_TOPIC = "Early BTC09 builds, short feature polls, and practical testing for confirmed project backers.";
 const SUPPORTER_LAB_MESSAGE_MARKER = "BTC09 supporter lab";
@@ -34,6 +37,8 @@ const CHANNEL_TYPE_TEXT = 0;
 const CHANNEL_TYPE_CATEGORY = 4;
 const CONNECT_PERMISSION = "1048576";
 const VIEW_CHANNEL_PERMISSION = "1024";
+const SEND_MESSAGES_PERMISSION = "2048";
+const SUPPORTER_READ_ONLY_PERMISSIONS = "66560";
 const SUPPORTER_CHANNEL_PERMISSIONS = "84992";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const selfAssignableRoles = [
@@ -241,6 +246,7 @@ async function watchGateway() {
   });
   try {
     const supporterInfrastructure = await syncSupporterInfrastructure(process.env.DISCORD_GUILD_ID);
+    await postOrUpdateSupporterUpdatesIntro(supporterInfrastructure.updatesChannel);
     await postOrUpdateSupporterLabIntro(supporterInfrastructure.channel);
   } catch (error) {
     console.error("Supporter role setup failed:", error.message || error);
@@ -319,14 +325,25 @@ export function formatMiningHelp() {
 export function formatSupportPerks() {
   return [
     "**Supporter roles**",
-    "US$5: 💛 Supporter",
-    "US$25: 🤝 Backer + supporter lab",
-    "US$100: 🛠 Builder + optional public and release credit",
-    "US$250: ⭐ Core Supporter + everything above",
+    "US$5: 💛 Supporter - private build updates",
+    "US$25: 🤝 Backer - early test builds, polls, and supporter lab",
+    "US$100: 🛠 Builder - public/release credit and priority issue triage",
+    "US$250: ⭐ Core Supporter - linked credit and a direct feedback thread",
     "",
-    "The supporter lab is for early builds, short feature polls, and testing threads. Roles use your cumulative finished BTC09 support payments. They are recognition, not 09C, equity, governance, or a return.",
+    "Finished payments add together, so your role moves up automatically. Credits are optional and use the name or project link you choose.",
     "Support: https://btc09.org/support.html",
     "When the payment page says finished, use `/support claim`.",
+  ].join("\n");
+}
+
+export function formatSupporterUpdatesIntro() {
+  return [
+    SUPPORTER_UPDATES_MESSAGE_MARKER,
+    "",
+    "This is the quiet feed for wallet and miner progress. Test builds, short dev notes, and supporter polls will land here first.",
+    "",
+    "Current releases: https://github.com/krutftw/bitcoin09/releases/latest",
+    "Backers can discuss builds and open feedback threads in the supporter lab.",
   ].join("\n");
 }
 
@@ -334,19 +351,36 @@ export function formatSupporterLabIntro() {
   return [
     SUPPORTER_LAB_MESSAGE_MARKER,
     "",
-    "This channel is for early wallet and miner builds, short feature polls, and useful test feedback. No price calls, paid hype, or guaranteed roadmap slots.",
+    "Use this channel for early wallet and miner builds, quick polls, bug reports, and practical feedback.",
     "",
-    "Builder and Core Supporter members can ask a moderator here to use a specific name for optional project or release credits.",
+    "Builders can post an issue here for priority triage and choose a name for project or release credits. Core Supporters can also open a focused feedback thread and add one project link to their credit.",
   ].join("\n");
 }
 
+export async function postOrUpdateSupporterUpdatesIntro(channel, { discordImpl = discord } = {}) {
+  return postOrUpdateMarkedMessage({
+    channel,
+    marker: SUPPORTER_UPDATES_MESSAGE_MARKER,
+    content: formatSupporterUpdatesIntro(),
+    discordImpl,
+  });
+}
+
 export async function postOrUpdateSupporterLabIntro(channel, { discordImpl = discord } = {}) {
-  if (!channel?.id) throw new Error("supporter lab channel is unavailable");
+  return postOrUpdateMarkedMessage({
+    channel,
+    marker: SUPPORTER_LAB_MESSAGE_MARKER,
+    content: formatSupporterLabIntro(),
+    discordImpl,
+  });
+}
+
+async function postOrUpdateMarkedMessage({ channel, marker, content, discordImpl }) {
+  if (!channel?.id) throw new Error("supporter channel is unavailable");
   const botUser = await discordImpl("GET", "/users/@me");
   const messages = await discordImpl("GET", `/channels/${channel.id}/messages?limit=50`);
-  const content = formatSupporterLabIntro();
   const existing = messages.find((message) =>
-    message.author?.id === botUser.id && message.content.includes(SUPPORTER_LAB_MESSAGE_MARKER)
+    message.author?.id === botUser.id && message.content.includes(marker)
   );
   if (existing) {
     if (existing.content !== content) {
@@ -398,12 +432,11 @@ async function handleSupportInteraction(interaction) {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     });
-    const lab = claim.tier.supporter_lab && infrastructure.channel
-      ? ` You can now see <#${infrastructure.channel.id}>.`
-      : "";
+    const unlocked = [`<#${infrastructure.updatesChannel.id}>`];
+    if (claim.tier.supporter_lab && infrastructure.channel) unlocked.push(`<#${infrastructure.channel.id}>`);
     await editInteraction(
       interaction.token,
-      `Claimed. Your confirmed total is **US$${total}** and your role is **${claim.tier.role_name}**.${lab}`,
+      `Done. Your confirmed total is **US$${total}** and your role is **${claim.tier.role_name}**. You now have access to ${unlocked.join(" and ")}.`,
     );
   } catch (error) {
     await editInteraction(interaction.token, supportClaimErrorMessage(error));
@@ -664,7 +697,7 @@ export async function syncSupporterInfrastructure(
     channel.type === CHANNEL_TYPE_CATEGORY && normalizeChannelName(channel.name) === "community"
   );
   if (!communityCategory) throw new Error("Could not find the COMMUNITY category");
-  const channelPermissions = [
+  const labPermissions = [
     { id: guildId, type: 0, allow: "0", deny: VIEW_CHANNEL_PERMISSION },
     ...roles
       .filter((role) => SUPPORTER_TIERS.find((tier) =>
@@ -678,7 +711,7 @@ export async function syncSupporterInfrastructure(
       })),
   ];
   if (clientId) {
-    channelPermissions.push({
+    labPermissions.push({
       id: clientId,
       type: 1,
       allow: SUPPORTER_CHANNEL_PERMISSIONS,
@@ -693,9 +726,9 @@ export async function syncSupporterInfrastructure(
     name: SUPPORTER_LAB_CHANNEL,
     type: CHANNEL_TYPE_TEXT,
     parent_id: communityCategory.id,
-    position: 2,
+    position: 3,
     topic: SUPPORTER_LAB_TOPIC,
-    permission_overwrites: channelPermissions,
+    permission_overwrites: labPermissions,
   };
   if (!channel) {
     channel = await discordImpl("POST", `/guilds/${guildId}/channels`, channelBody);
@@ -704,11 +737,51 @@ export async function syncSupporterInfrastructure(
     channel.parent_id !== channelBody.parent_id ||
     Number(channel.position) !== channelBody.position ||
     channel.topic !== channelBody.topic ||
-    !permissionOverwritesMatch(channel.permission_overwrites ?? [], channelPermissions)
+    !permissionOverwritesMatch(channel.permission_overwrites ?? [], labPermissions)
   ) {
     channel = await discordImpl("PATCH", `/channels/${channel.id}`, channelBody);
   }
-  return { roles, channel };
+
+  const updatesPermissions = [
+    { id: guildId, type: 0, allow: "0", deny: VIEW_CHANNEL_PERMISSION },
+    ...roles.map((role) => ({
+      id: role.id,
+      type: 0,
+      allow: SUPPORTER_READ_ONLY_PERMISSIONS,
+      deny: SEND_MESSAGES_PERMISSION,
+    })),
+  ];
+  if (clientId) {
+    updatesPermissions.push({
+      id: clientId,
+      type: 1,
+      allow: SUPPORTER_CHANNEL_PERMISSIONS,
+      deny: "0",
+    });
+  }
+  let updatesChannel = channels.find((candidate) =>
+    candidate.type === CHANNEL_TYPE_TEXT && normalizeChannelName(candidate.name) === "supporter-updates"
+  );
+  const updatesBody = {
+    name: SUPPORTER_UPDATES_CHANNEL,
+    type: CHANNEL_TYPE_TEXT,
+    parent_id: communityCategory.id,
+    position: 2,
+    topic: SUPPORTER_UPDATES_TOPIC,
+    permission_overwrites: updatesPermissions,
+  };
+  if (!updatesChannel) {
+    updatesChannel = await discordImpl("POST", `/guilds/${guildId}/channels`, updatesBody);
+  } else if (
+    updatesChannel.name !== updatesBody.name ||
+    updatesChannel.parent_id !== updatesBody.parent_id ||
+    Number(updatesChannel.position) !== updatesBody.position ||
+    updatesChannel.topic !== updatesBody.topic ||
+    !permissionOverwritesMatch(updatesChannel.permission_overwrites ?? [], updatesPermissions)
+  ) {
+    updatesChannel = await discordImpl("PATCH", `/channels/${updatesChannel.id}`, updatesBody);
+  }
+  return { roles, channel, updatesChannel };
 }
 
 export async function applySupporterRole({
@@ -829,7 +902,7 @@ export function formatExchangeStatusMessage(status) {
     "",
     `Phase 1 target: **US$${formatInteger(funding.cash_received_usd)} / US$${formatInteger(funding.cash_target_usd)} cash** + **US$${formatInteger(funding.coin_liquidity_received_usd)} / US$${formatInteger(funding.coin_liquidity_target_usd)} in 09C**`,
     "<https://btc09.org/exchanges.html>",
-    `Applications are pending reviews, not listings. Updated ${updated}.`,
+    `Updated ${updated}.`,
   ].join("\n");
 }
 

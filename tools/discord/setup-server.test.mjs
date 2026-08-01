@@ -4,17 +4,15 @@ import test from "node:test";
 
 const source = await readFile(new URL("./setup-server.mjs", import.meta.url), "utf8");
 
-test("v0.1.34 announcement makes the ASERT upgrade clear without hype", () => {
-  const start = source.indexOf('marker: "Mandatory v0.1.34 update"');
-  assert.ok(start >= 0, "missing v0.1.34 upgrade announcement");
+test("current ASERT announcement explains the active rule without hype", () => {
+  const start = source.indexOf('marker: "ASERT is active on Bitcoin 09"');
+  assert.ok(start >= 0, "missing current ASERT announcement");
   const announcement = source.slice(start, start + 1500);
   for (const required of [
-    "Mandatory v0.1.34 update",
-    "before block 12,096",
-    "Node and solo-miner operators",
-    "Pool miners do not need to change settings",
+    "ASERT is active on Bitcoin 09",
+    "at block 12,096",
     "per-block ASERT",
-    "https://github.com/krutftw/bitcoin09/releases/tag/v0.1.34",
+    "https://github.com/krutftw/bitcoin09/releases/latest",
   ]) {
     assert.ok(announcement.includes(required), `missing ${required}`);
   }

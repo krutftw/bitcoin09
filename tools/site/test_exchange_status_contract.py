@@ -25,7 +25,7 @@ class ExchangeStatusContractTests(unittest.TestCase):
         self.assertEqual(summary["engineering_needed"], counts["engineering_needed"])
         self.assertEqual(summary["paid_routes_published"], counts["funding_needed"])
 
-    def test_funding_math_and_boundaries_are_explicit(self):
+    def test_funding_math_and_route_are_explicit(self):
         funding = self.data["funding"]
         cash_items = sum(item["amount_usd"] for item in funding["items"] if item["asset"] == "cash")
         coin_items = sum(item["amount_usd"] for item in funding["items"] if item["asset"] == "09C")
@@ -35,7 +35,7 @@ class ExchangeStatusContractTests(unittest.TestCase):
         self.assertEqual(funding["donation_url"], "https://btc09.org/support.html#contribute")
         self.assertNotIn("provider_fallback_url", funding)
         self.assertEqual(funding["status_url"], "https://btc09.org/api/support/v1/status")
-        for phrase in ("not an investment", "approves BTC09 in writing", "No exchange payment"):
+        for phrase in ("Funds are reserved", "approves BTC09", "confirms its current integration"):
             self.assertIn(phrase, funding["note"])
 
     def test_public_pages_link_the_tracker_without_claiming_a_listing(self):
@@ -44,12 +44,12 @@ class ExchangeStatusContractTests(unittest.TestCase):
         privacy = (self.root / "privacy.html").read_text(encoding="utf-8")
         sitemap = (self.root / "sitemap.xml").read_text(encoding="utf-8")
 
-        for token in ("exchanges.json", "Applications are pending reviews", "View funding target"):
+        for token in ("exchanges.json", "Statuses come from submitted forms", "View funding target"):
             self.assertIn(token, self.exchange_page)
         for token in (
             'href="status.css?v=20260801-supporters"',
             "US$4,299",
-            "Support does not buy 09C",
+            "Useful extras for people backing the work",
             "try again later",
             "setInterval(() => loadFunding()",
             "Promise.all([loadFunding(), loadCurrencies()])",
@@ -60,6 +60,9 @@ class ExchangeStatusContractTests(unittest.TestCase):
             "after NOWPayments marks the payment finished",
             "US$25 · 🤝 Backer",
             "US$250 · ⭐ Core Supporter",
+            "private build updates",
+            "priority issue triage",
+            "direct project feedback thread",
             "supporter lab",
             "/support claim",
             "const activePaymentKey = 'btc09-support-payment'",

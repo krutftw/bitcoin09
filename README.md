@@ -32,12 +32,9 @@ terms:    https://btc09.org/terms.html
 
 ## Read this first
 
-09C is worth nothing. Bitcoin was worth nothing in 2009 too, that's the
-whole idea here. No premine, no company, no allocation. The genesis reward is
-burned to an address nobody can spend from, so every coin that will ever
-exist gets mined publicly starting at block 1. Mine it because it's fun and
-you missed 2009. Don't put in money you care about, and don't expect any
-back.
+Bitcoin 09 starts with public mining, the part of Bitcoin most people missed.
+There was no premine, ICO, company allocation, or spendable genesis reward.
+Every circulating coin is mined publicly from block 1.
 
 ## Quick start
 
@@ -278,11 +275,10 @@ gives you for a specific order. AUD, USD, CNY, USDT, USDC, BTC, ETH, and custom
 settlement funds move directly between buyer and seller. The bot never takes
 custody of those funds. Disputes still need human review.
 
-The public OTC board at https://btc09.org/markets.html lets
-users draft buy offers, sell offers, and completed-trade references on the
-website, copy a Discord post, and open a prefilled GitHub issue for the public
-record. It is not an exchange, it does not set an official price, and there are
-no price promises.
+The public OTC board at https://btc09.org/markets.html lets users draft buy
+offers, sell offers, and completed-trade references, copy a Discord post, and
+open a prefilled GitHub issue for the public record. Prices come from completed
+trades between buyers and sellers.
 
 The hosted board reads the sanitized Discord escrow feed from the BTC09 server.
 Public offer and completed-trade records are backed by GitHub issues and a

@@ -87,5 +87,5 @@ Node and solo-miner operators must upgrade to v0.1.34 before height 12,096.
 That block activates per-block ASERT difficulty adjustment, replacing the old
 2,016-block window. Pool miners receive valid work from the upgraded pool.
 
-This has no price. It may never have a price. Mine it if you want to be early
-to a fair-launch proof-of-work chain and you like the idea of doing the 2009 part again.
+Mine it if you want to join a fair-launch proof-of-work chain and do the 2009
+part again.

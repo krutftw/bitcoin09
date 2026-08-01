@@ -5,6 +5,7 @@ export const SUPPORTER_TIERS = Object.freeze([
     label: "Supporter",
     roleName: "💛 Supporter",
     color: 0xe0ac35,
+    supporterUpdates: true,
     supporterLab: false,
   }),
   Object.freeze({
@@ -13,6 +14,7 @@ export const SUPPORTER_TIERS = Object.freeze([
     label: "Backer",
     roleName: "🤝 Backer",
     color: 0x2d9cdb,
+    supporterUpdates: true,
     supporterLab: true,
   }),
   Object.freeze({
@@ -21,6 +23,7 @@ export const SUPPORTER_TIERS = Object.freeze([
     label: "Builder",
     roleName: "🛠 Builder",
     color: 0x9b51e0,
+    supporterUpdates: true,
     supporterLab: true,
   }),
   Object.freeze({
@@ -29,6 +32,7 @@ export const SUPPORTER_TIERS = Object.freeze([
     label: "Core Supporter",
     roleName: "⭐ Core Supporter",
     color: 0xe67e22,
+    supporterUpdates: true,
     supporterLab: true,
   }),
 ]);
@@ -46,6 +50,7 @@ export function publicSupporterTier(tier) {
     min_usd: tier.minUsd,
     label: tier.label,
     role_name: tier.roleName,
+    supporter_updates: tier.supporterUpdates,
     supporter_lab: tier.supporterLab,
   };
 }

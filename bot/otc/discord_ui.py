@@ -629,7 +629,7 @@ class DiscordTradeUI:
             assert isinstance(status, AccountStatus)
             await self._followup(
                 interaction,
-                "Bitcoin 09 OTC does not hold a custodial user account balance. "
+                "There is no general OTC account balance. Any 09C in escrow belongs to a specific order. "
                 f"Your orders: {status.order_count} total, "
                 f"{status.active_order_count} active, "
                 f"{status.completed_order_count} completed, "
