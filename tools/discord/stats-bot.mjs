@@ -15,9 +15,12 @@ import {
 
 const API_BASE = "https://discord.com/api/v10";
 const EXPLORER_STATUS = "https://explorer.btc09.org/api/status";
+const EXCHANGE_STATUS_URL = "https://btc09.org/exchanges.json";
 const DISCORD_INVITE = "https://discord.gg/fUuGzwRTzP";
 const MESSAGE_MARKER = "Bitcoin 09 live mining stats";
+const EXCHANGE_MESSAGE_MARKER = "Bitcoin 09 exchange status";
 const DEFAULT_STATS_CHANNEL = "pools-and-nodes";
+const DEFAULT_EXCHANGE_STATUS_CHANNEL = "exchange-status";
 const LIVE_STATS_CATEGORY = "📊 LIVE STATS";
 const LIVE_STATS_REFRESH_MS = 600_000;
 const CHANNEL_TYPE_VOICE = 2;
@@ -69,6 +72,10 @@ async function main() {
 
   if (args.has("--post")) {
     await postOrUpdateStatsMessage();
+  }
+
+  if (args.has("--post-exchanges")) {
+    await postOrUpdateExchangeStatusMessage();
   }
 
   if (args.has("--watch")) {
@@ -151,6 +158,40 @@ async function postOrUpdateStatsMessage() {
     allowed_mentions: { parse: [] },
   });
   console.log(`Posted live stats message in #${channel.name}.`);
+}
+
+export async function postOrUpdateExchangeStatusMessage() {
+  requireDiscordEnv();
+
+  const channels = await discord("GET", `/guilds/${process.env.DISCORD_GUILD_ID}/channels`);
+  const wanted = process.env.DISCORD_EXCHANGE_STATUS_CHANNEL ?? DEFAULT_EXCHANGE_STATUS_CHANNEL;
+  const channel = findStatsChannel(channels, wanted);
+  if (!channel) {
+    throw new Error(`Could not find exchange status channel ${wanted}.`);
+  }
+
+  const botUser = await discord("GET", "/users/@me");
+  const status = await getExchangeStatus();
+  const content = formatExchangeStatusMessage(status);
+  const recentMessages = await discord("GET", `/channels/${channel.id}/messages?limit=50`);
+  const existing = recentMessages.find(
+    (message) => message.author?.id === botUser.id && message.content.includes(EXCHANGE_MESSAGE_MARKER),
+  );
+
+  if (existing) {
+    await discord("PATCH", `/channels/${channel.id}/messages/${existing.id}`, {
+      content,
+      allowed_mentions: { parse: [] },
+    });
+    console.log(`Updated exchange status message in #${channel.name}.`);
+    return;
+  }
+
+  await discord("POST", `/channels/${channel.id}/messages`, {
+    content,
+    allowed_mentions: { parse: [] },
+  });
+  console.log(`Posted exchange status message in #${channel.name}.`);
 }
 
 async function watchGateway() {
@@ -439,6 +480,31 @@ export async function getStats(fetchImpl = fetch) {
   };
 }
 
+export async function getExchangeStatus(fetchImpl = fetch) {
+  return json(EXCHANGE_STATUS_URL, { cache: "no-store" }, fetchImpl);
+}
+
+export function formatExchangeStatusMessage(status) {
+  const summary = status?.summary ?? {};
+  const funding = status?.funding ?? {};
+  const requirements = Number(summary.requirements_needed ?? 0) + Number(summary.engineering_needed ?? 0);
+  const updatedSeconds = Math.floor(Date.parse(status?.updated_at ?? "") / 1000);
+  const updated = Number.isFinite(updatedSeconds) ? `<t:${updatedSeconds}:R>` : "recently";
+
+  return [
+    EXCHANGE_MESSAGE_MARKER,
+    "",
+    `Submitted / awaiting: **${formatInteger(summary.awaiting_reply)}**`,
+    `Terms requested: **${formatInteger(summary.terms_requested)}**`,
+    `Requirements / engineering: **${formatInteger(requirements)}**`,
+    `Published paid routes: **${formatInteger(summary.paid_routes_published)}**`,
+    "",
+    `Phase 1 target: **US$${formatInteger(funding.cash_received_usd)} / US$${formatInteger(funding.cash_target_usd)} cash** + **US$${formatInteger(funding.coin_liquidity_received_usd)} / US$${formatInteger(funding.coin_liquidity_target_usd)} in 09C**`,
+    "<https://btc09.org/exchanges.html>",
+    `Applications are pending reviews, not listings. Updated ${updated}.`,
+  ].join("\n");
+}
+
 export function formatStatsMessage(stats) {
   const explorer = stats.explorer;
   const retargetBlocks = explorer.blocks_to_retarget ?? null;
@@ -657,6 +723,7 @@ async function refreshLiveStatChannels() {
 export async function refreshAllLiveStats({
   channelRefreshImpl = refreshLiveStatChannels,
   messageRefreshImpl = postOrUpdateStatsMessage,
+  exchangeMessageRefreshImpl = postOrUpdateExchangeStatusMessage,
   logger = console,
 } = {}) {
   try {
@@ -669,6 +736,12 @@ export async function refreshAllLiveStats({
     await messageRefreshImpl();
   } catch (error) {
     logger.error("Live stats message update failed:", error.message || error);
+  }
+
+  try {
+    await exchangeMessageRefreshImpl();
+  } catch (error) {
+    logger.error("Exchange status message update failed:", error.message || error);
   }
 }
 
@@ -833,6 +906,7 @@ Usage:
   node tools/discord/stats-bot.mjs
   node tools/discord/stats-bot.mjs --register-commands
   node tools/discord/stats-bot.mjs --post
+  node tools/discord/stats-bot.mjs --post-exchanges
   node tools/discord/stats-bot.mjs --post --channel=pools-and-nodes
   node tools/discord/stats-bot.mjs --watch
 
@@ -840,12 +914,14 @@ Modes:
   no args              Print current stats locally.
   --register-commands  Register the guild /stats, /rank, /leaderboard, /wallet, and /mine commands.
   --post               Post or update one stats message in Discord.
+  --post-exchanges     Post or update one exchange status message in Discord.
   --watch              Keep a gateway connection open for role buttons.
 
 Environment:
   DISCORD_CLIENT_ID
   DISCORD_GUILD_ID
   DISCORD_BOT_TOKEN
+  DISCORD_EXCHANGE_STATUS_CHANNEL (optional)
   DISCORD_XP_STATE_FILE (optional)
 `);
 }

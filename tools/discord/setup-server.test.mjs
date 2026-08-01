@@ -102,6 +102,15 @@ test("server status post names v0.1.35 as the current release", () => {
   assert.ok(source.includes('"Current release: v0.1.35"'));
 });
 
+test("server layout includes one locked exchange status channel", () => {
+  const start = source.indexOf('key: "exchange-status"');
+  assert.ok(start >= 0, "missing exchange status channel");
+  const channel = source.slice(start, start + 420);
+  assert.ok(channel.includes('name: "📋-exchange-status"'));
+  assert.ok(channel.includes('category: "info"'));
+  assert.ok(channel.includes("lockedForEveryone: true"));
+});
+
 test("v0.1.31 announcement explains the sync fix without blaming miners", () => {
   for (const text of [
     "Bitcoin 09 v0.1.31 is out.",

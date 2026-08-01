@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Itemised Bitcoin 09 exchange funding target and official project support link.">
+<link rel="canonical" href="https://btc09.org/support.html">
+<link rel="icon" type="image/png" href="assets/bitcoin09-ai-logo-512.png">
+<link rel="stylesheet" href="status.css">
+<title>Support | Bitcoin 09</title>
+</head>
+<body>
+<header class="site-head"><div class="bar">
+<a class="brand" href="index.html">Bitcoin <span>09</span></a>
+<nav class="site-nav" aria-label="Main navigation"><a href="index.html">Home</a><a href="exchanges.html">Exchange status</a><a href="markets.html">OTC</a><a href="https://explorer.btc09.org">Explorer</a></nav>
+</div></header>
+<main>
+<p class="eyebrow">Project support</p>
+<h1>Exchange funding, itemised.</h1>
+<p class="intro">The first target is based on NonKYC's published minimum for one native-chain market.</p>
+<p class="updated" id="updated">Loading current target…</p>
+
+<section class="panel" id="funding-panel">
+<div class="funding-line"><h2>Cash target</h2><strong id="cash-total">US$0 / US$3,899</strong></div>
+<div class="progress" role="progressbar" aria-label="Cash funding progress" aria-valuemin="0" aria-valuemax="3899" aria-valuenow="0"><span id="cash-progress" style="width:0%"></span></div>
+<ul class="breakdown" id="breakdown">
+<li>US$3,499 native-chain integration</li>
+<li>US$400 paired-asset liquidity</li>
+<li>US$400 equivalent in publicly sourced 09C, tracked separately</li>
+</ul>
+<p><strong>Total one-market package: US$4,299.</strong></p>
+<p class="small" id="funding-note">No exchange payment will be made without written approval and confirmed current terms.</p>
+<a class="button" id="donate" href="https://nowpayments.io/donation/btc09">Support with crypto</a>
+<p class="small">The payment page is operated by NOWPayments. Network and provider fees may apply. Card and PayPal links are not published until there is a dedicated BTC09 merchant profile.</p>
+</section>
+
+<section class="panel">
+<h2>What this is not</h2>
+<p>Support does not buy 09C, equity, ownership, a listing, or a return. It does not guarantee that an exchange will approve BTC09. Funding and application status remain public on the <a href="exchanges.html">exchange tracker</a>.</p>
+</section>
+</main>
+<footer class="site-foot-wrap"><div class="site-foot"><p>Bitcoin 09 · <a href="exchanges.html">Exchange status</a> · <a href="terms.html">Terms</a> · <a href="privacy.html">Privacy</a> · <a href="https://github.com/krutftw/bitcoin09">Source</a></p></div></footer>
+<script>
+fetch('exchanges.json', { cache: 'no-store' })
+  .then((response) => {
+    if (!response.ok) throw new Error(`status ${response.status}`);
+    return response.json();
+  })
+  .then((data) => {
+    const fund = data.funding;
+    const percent = Math.min(100, Math.max(0, fund.cash_received_usd / fund.cash_target_usd * 100));
+    document.getElementById('updated').textContent = `Updated ${new Date(data.updated_at).toLocaleString()}`;
+    document.getElementById('cash-total').textContent = `US$${fund.cash_received_usd.toLocaleString()} / US$${fund.cash_target_usd.toLocaleString()}`;
+    document.getElementById('cash-progress').style.width = `${percent}%`;
+    const progress = document.querySelector('.progress');
+    progress.setAttribute('aria-valuemax', fund.cash_target_usd);
+    progress.setAttribute('aria-valuenow', fund.cash_received_usd);
+    document.getElementById('funding-note').textContent = fund.note;
+    document.getElementById('donate').href = fund.donation_url;
+  })
+  .catch(() => {
+    document.getElementById('updated').textContent = 'Current funding data could not be loaded.';
+  });
+</script>
+</body>
+</html>
