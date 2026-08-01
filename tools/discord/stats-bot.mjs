@@ -12,6 +12,7 @@ import {
   formatRankSummary,
   rankForLevel,
 } from "./xp-system.mjs";
+import { SUPPORTER_TIERS } from "../support/supporter-tiers.mjs";
 
 const API_BASE = "https://discord.com/api/v10";
 const EXPLORER_STATUS = "https://explorer.btc09.org/api/status";
@@ -22,11 +23,18 @@ const MESSAGE_MARKER = "Bitcoin 09 live mining stats";
 const EXCHANGE_MESSAGE_MARKER = "Bitcoin 09 exchange status";
 const DEFAULT_STATS_CHANNEL = "pools-and-nodes";
 const DEFAULT_EXCHANGE_STATUS_CHANNEL = "exchange-status";
+const SUPPORT_CLAIM_URL = "http://127.0.0.1:8032/internal/support/v1/claims";
+const SUPPORTER_LAB_CHANNEL = "💛-supporter-lab";
+const SUPPORTER_LAB_TOPIC = "Early BTC09 builds, short feature polls, and practical testing for confirmed project backers.";
+const SUPPORTER_LAB_MESSAGE_MARKER = "BTC09 supporter lab";
 const LIVE_STATS_CATEGORY = "📊 LIVE STATS";
 const LIVE_STATS_REFRESH_MS = 600_000;
 const CHANNEL_TYPE_VOICE = 2;
+const CHANNEL_TYPE_TEXT = 0;
 const CHANNEL_TYPE_CATEGORY = 4;
 const CONNECT_PERMISSION = "1048576";
+const VIEW_CHANNEL_PERMISSION = "1024";
+const SUPPORTER_CHANNEL_PERMISSIONS = "84992";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const selfAssignableRoles = [
   { key: "miner", label: "Miner", roleName: "⛏ Miner" },
@@ -125,6 +133,31 @@ export function getCommandDefinitions() {
       description: "Open the current Bitcoin 09 mining guide.",
       type: 1,
     },
+    {
+      name: "support",
+      description: "Claim a supporter role or see the current perks.",
+      type: 1,
+      options: [
+        {
+          type: 1,
+          name: "claim",
+          description: "Claim your role after a BTC09 support payment finishes.",
+          options: [
+            {
+              type: 3,
+              name: "code",
+              description: "The private claim code shown on the BTC09 support page.",
+              required: true,
+            },
+          ],
+        },
+        {
+          type: 1,
+          name: "perks",
+          description: "Show supporter role levels and what they include.",
+        },
+      ],
+    },
   ];
 }
 
@@ -206,6 +239,12 @@ async function watchGateway() {
   await syncXpRankRoles(process.env.DISCORD_GUILD_ID).catch((error) => {
     console.error("XP rank role setup failed:", error.message || error);
   });
+  try {
+    const supporterInfrastructure = await syncSupporterInfrastructure(process.env.DISCORD_GUILD_ID);
+    await postOrUpdateSupporterLabIntro(supporterInfrastructure.channel);
+  } catch (error) {
+    console.error("Supporter role setup failed:", error.message || error);
+  }
   startLiveStatsUpdater();
   const gateway = await fetchGatewayWithRetry(
     () => discord("GET", "/gateway/bot"),
@@ -243,6 +282,7 @@ async function handleInteraction(interaction) {
 	if (action === "leaderboard") await handleLeaderboardInteraction(interaction);
 	if (action === "wallet") await respondToInteraction(interaction, formatWalletHelp(), true);
 	if (action === "mine") await respondToInteraction(interaction, formatMiningHelp(), true);
+	if (action === "support") await handleSupportInteraction(interaction);
 	if (action === "role") await handleRoleButtonInteraction(interaction);
 }
 
@@ -252,6 +292,7 @@ export function classifyInteraction(interaction) {
 	if (interaction?.type === 2 && interaction.data?.name === "leaderboard") return "leaderboard";
 	if (interaction?.type === 2 && interaction.data?.name === "wallet") return "wallet";
 	if (interaction?.type === 2 && interaction.data?.name === "mine") return "mine";
+	if (interaction?.type === 2 && interaction.data?.name === "support") return "support";
 	if (interaction?.type === 3 && interaction.data?.custom_id?.startsWith("role:toggle:")) return "role";
 	return null;
 }
@@ -273,6 +314,163 @@ export function formatMiningHelp() {
     "If it fails, use Copy help report in the Mine tab and post it in mining help.",
     "Guide: https://btc09.org/#mining-guide",
   ].join("\n");
+}
+
+export function formatSupportPerks() {
+  return [
+    "**Supporter roles**",
+    "US$5: 💛 Supporter",
+    "US$25: 🤝 Backer + supporter lab",
+    "US$100: 🛠 Builder + optional public and release credit",
+    "US$250: ⭐ Core Supporter + everything above",
+    "",
+    "The supporter lab is for early builds, short feature polls, and testing threads. Roles use your cumulative finished BTC09 support payments. They are recognition, not 09C, equity, governance, or a return.",
+    "Support: https://btc09.org/support.html",
+    "When the payment page says finished, use `/support claim`.",
+  ].join("\n");
+}
+
+export function formatSupporterLabIntro() {
+  return [
+    SUPPORTER_LAB_MESSAGE_MARKER,
+    "",
+    "This channel is for early wallet and miner builds, short feature polls, and useful test feedback. No price calls, paid hype, or guaranteed roadmap slots.",
+    "",
+    "Builder and Core Supporter members can ask a moderator here to use a specific name for optional project or release credits.",
+  ].join("\n");
+}
+
+export async function postOrUpdateSupporterLabIntro(channel, { discordImpl = discord } = {}) {
+  if (!channel?.id) throw new Error("supporter lab channel is unavailable");
+  const botUser = await discordImpl("GET", "/users/@me");
+  const messages = await discordImpl("GET", `/channels/${channel.id}/messages?limit=50`);
+  const content = formatSupporterLabIntro();
+  const existing = messages.find((message) =>
+    message.author?.id === botUser.id && message.content.includes(SUPPORTER_LAB_MESSAGE_MARKER)
+  );
+  if (existing) {
+    if (existing.content !== content) {
+      await discordImpl("PATCH", `/channels/${channel.id}/messages/${existing.id}`, {
+        content,
+        allowed_mentions: { parse: [] },
+      });
+    }
+    return existing.id;
+  }
+  const created = await discordImpl("POST", `/channels/${channel.id}/messages`, {
+    content,
+    allowed_mentions: { parse: [] },
+  });
+  return created.id;
+}
+
+async function handleSupportInteraction(interaction) {
+  const subcommand = interaction.data?.options?.[0];
+  if (subcommand?.name === "perks") {
+    await respondToInteraction(interaction, formatSupportPerks(), true);
+    return;
+  }
+  if (subcommand?.name !== "claim") {
+    await respondToInteraction(interaction, "Use `/support perks` or `/support claim`.", true);
+    return;
+  }
+
+  await discord("POST", `/interactions/${interaction.id}/${interaction.token}/callback`, {
+    type: 5,
+    data: { flags: 64 },
+  }, { auth: false });
+
+  const claimCode = subcommand.options?.find((option) => option.name === "code")?.value;
+  const userId = interaction.member?.user?.id ?? interaction.user?.id;
+  const guildId = interaction.guild_id ?? process.env.DISCORD_GUILD_ID;
+  try {
+    const claim = await claimSupportPayment({ claimCode, userId });
+    const infrastructure = await syncSupporterInfrastructure(guildId);
+    const memberRoleIds = await getMemberRoleIds(guildId, userId, interaction.member);
+    await applySupporterRole({
+      guildId,
+      userId,
+      memberRoleIds,
+      tierKey: claim.tier.key,
+      roles: infrastructure.roles,
+    });
+    const total = Number(claim.total_confirmed_usd).toLocaleString(undefined, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    });
+    const lab = claim.tier.supporter_lab && infrastructure.channel
+      ? ` You can now see <#${infrastructure.channel.id}>.`
+      : "";
+    await editInteraction(
+      interaction.token,
+      `Claimed. Your confirmed total is **US$${total}** and your role is **${claim.tier.role_name}**.${lab}`,
+    );
+  } catch (error) {
+    await editInteraction(interaction.token, supportClaimErrorMessage(error));
+  }
+}
+
+export async function claimSupportPayment({
+  claimCode,
+  userId,
+  fetchImpl = fetch,
+  claimSecret = process.env.BTC09_SUPPORT_CLAIM_SECRET,
+  claimUrl = SUPPORT_CLAIM_URL,
+} = {}) {
+  if (!/^[A-Za-z0-9_-]{32}$/.test(String(claimCode ?? ""))) {
+    const error = new Error("claim code is invalid");
+    error.status = 400;
+    throw error;
+  }
+  if (!/^\d{15,22}$/.test(String(userId ?? ""))) {
+    const error = new Error("Discord user is unavailable");
+    error.status = 400;
+    throw error;
+  }
+  if (!claimSecret) {
+    const error = new Error("support claims are temporarily unavailable");
+    error.status = 503;
+    throw error;
+  }
+
+  const response = await fetchImpl(claimUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-BTC09-Claim-Secret": claimSecret,
+    },
+    body: JSON.stringify({
+      claim_code: String(claimCode),
+      discord_user_id: String(userId),
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload?.error || "support claim failed");
+    error.status = response.status;
+    throw error;
+  }
+  const tier = SUPPORTER_TIERS.find((candidate) => candidate.key === payload?.tier?.key);
+  if (!tier || payload?.tier?.role_name !== tier.roleName) {
+    const error = new Error("support service returned an unknown role");
+    error.status = 502;
+    throw error;
+  }
+  return payload;
+}
+
+export function supportClaimErrorMessage(error) {
+  if (error?.message === "payment is not finished yet") {
+    return "That payment is not finished yet. Wait for the support page to say finished, then try again.";
+  }
+  if (error?.message === "claim code has already been used") {
+    return "That claim code has already been used by another Discord account.";
+  }
+  if (error?.status === 400 || error?.status === 404) {
+    return "That claim code is not valid. Copy it again from the finished payment on the support page.";
+  }
+  return "Support claims are temporarily unavailable. Your payment is still recorded; try again shortly.";
 }
 
 async function handleStatsInteraction(interaction) {
@@ -415,6 +613,124 @@ async function getMemberRoleIds(guildId, userId, interactionMember) {
 
   const member = await discord("GET", `/guilds/${guildId}/members/${userId}`);
   return member.roles ?? [];
+}
+
+export async function syncSupporterInfrastructure(
+  guildId,
+  {
+    clientId = process.env.DISCORD_CLIENT_ID,
+    discordImpl = discord,
+  } = {},
+) {
+  if (!guildId) throw new Error("Missing required environment variable: DISCORD_GUILD_ID");
+  const guildRoles = await discordImpl("GET", `/guilds/${guildId}/roles`);
+  const roles = [];
+  for (const tier of SUPPORTER_TIERS) {
+    let role = guildRoles.find(
+      (candidate) => normalizeRoleName(candidate.name) === normalizeRoleName(tier.roleName),
+    );
+    if (!role) {
+      role = await discordImpl("POST", `/guilds/${guildId}/roles`, {
+        name: tier.roleName,
+        color: tier.color,
+        hoist: true,
+        mentionable: false,
+        permissions: "0",
+      });
+      guildRoles.push(role);
+      roleCache = null;
+    } else if (
+      Number(role.color) !== tier.color ||
+      role.hoist !== true ||
+      role.mentionable !== false ||
+      String(role.permissions ?? "0") !== "0"
+    ) {
+      role = await discordImpl("PATCH", `/guilds/${guildId}/roles/${role.id}`, {
+        name: tier.roleName,
+        color: tier.color,
+        hoist: true,
+        mentionable: false,
+        permissions: "0",
+      });
+      const index = guildRoles.findIndex((candidate) => candidate.id === role.id);
+      if (index !== -1) guildRoles[index] = role;
+      roleCache = null;
+    }
+    roles.push(role);
+  }
+
+  const channels = await discordImpl("GET", `/guilds/${guildId}/channels`);
+  const communityCategory = channels.find((channel) =>
+    channel.type === CHANNEL_TYPE_CATEGORY && normalizeChannelName(channel.name) === "community"
+  );
+  if (!communityCategory) throw new Error("Could not find the COMMUNITY category");
+  const channelPermissions = [
+    { id: guildId, type: 0, allow: "0", deny: VIEW_CHANNEL_PERMISSION },
+    ...roles
+      .filter((role) => SUPPORTER_TIERS.find((tier) =>
+        normalizeRoleName(tier.roleName) === normalizeRoleName(role.name)
+      )?.supporterLab)
+      .map((role) => ({
+        id: role.id,
+        type: 0,
+        allow: SUPPORTER_CHANNEL_PERMISSIONS,
+        deny: "0",
+      })),
+  ];
+  if (clientId) {
+    channelPermissions.push({
+      id: clientId,
+      type: 1,
+      allow: SUPPORTER_CHANNEL_PERMISSIONS,
+      deny: "0",
+    });
+  }
+
+  let channel = channels.find((candidate) =>
+    candidate.type === CHANNEL_TYPE_TEXT && normalizeChannelName(candidate.name) === "supporter-lab"
+  );
+  const channelBody = {
+    name: SUPPORTER_LAB_CHANNEL,
+    type: CHANNEL_TYPE_TEXT,
+    parent_id: communityCategory.id,
+    position: 2,
+    topic: SUPPORTER_LAB_TOPIC,
+    permission_overwrites: channelPermissions,
+  };
+  if (!channel) {
+    channel = await discordImpl("POST", `/guilds/${guildId}/channels`, channelBody);
+  } else if (
+    channel.name !== channelBody.name ||
+    channel.parent_id !== channelBody.parent_id ||
+    Number(channel.position) !== channelBody.position ||
+    channel.topic !== channelBody.topic ||
+    !permissionOverwritesMatch(channel.permission_overwrites ?? [], channelPermissions)
+  ) {
+    channel = await discordImpl("PATCH", `/channels/${channel.id}`, channelBody);
+  }
+  return { roles, channel };
+}
+
+export async function applySupporterRole({
+  guildId,
+  userId,
+  memberRoleIds,
+  tierKey,
+  roles,
+  discordImpl = discord,
+}) {
+  const tier = SUPPORTER_TIERS.find((candidate) => candidate.key === tierKey);
+  if (!tier) throw new Error("unknown supporter tier");
+  for (const role of roles) {
+    const hasRole = memberRoleIds.includes(role.id);
+    const isTarget = normalizeRoleName(role.name) === normalizeRoleName(tier.roleName);
+    if (hasRole && !isTarget) {
+      await discordImpl("DELETE", `/guilds/${guildId}/members/${userId}/roles/${role.id}`, null);
+    }
+    if (!hasRole && isTarget) {
+      await discordImpl("PUT", `/guilds/${guildId}/members/${userId}/roles/${role.id}`, null);
+    }
+  }
 }
 
 export async function syncXpRankRoles(
@@ -924,7 +1240,7 @@ Usage:
 
 Modes:
   no args              Print current stats locally.
-  --register-commands  Register the guild /stats, /rank, /leaderboard, /wallet, and /mine commands.
+  --register-commands  Register the guild /stats, /rank, /leaderboard, /wallet, /mine, and /support commands.
   --post               Post or update one stats message in Discord.
   --post-exchanges     Post or update one exchange status message in Discord.
   --watch              Keep a gateway connection open for role buttons.
@@ -935,5 +1251,6 @@ Environment:
   DISCORD_BOT_TOKEN
   DISCORD_EXCHANGE_STATUS_CHANNEL (optional)
   DISCORD_XP_STATE_FILE (optional)
+  BTC09_SUPPORT_CLAIM_SECRET (required for /support claim)
 `);
 }

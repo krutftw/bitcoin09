@@ -29,6 +29,7 @@ class SupportFundingDeploymentContract(unittest.TestCase):
         self.assertGreaterEqual(text.count("proxy_pass http://127.0.0.1:8032"), 4)
         self.assertNotIn("0.0.0.0:8032", text)
         self.assertNotIn("location /api/support/", text)
+        self.assertNotIn("/internal/support/", text)
         self.assertNotIn("server_name", text)
 
     def test_proxy_bounds_creation_reads_connections_and_timeouts(self) -> None:
@@ -53,6 +54,7 @@ class SupportFundingDeploymentContract(unittest.TestCase):
             "User=btc09-support",
             "Group=btc09-support",
             "EnvironmentFile=/etc/btc09/support-funding.env",
+            "EnvironmentFile=/etc/btc09/support-claims.env",
             "funding-service.mjs",
             "StateDirectory=btc09-support",
             "ReadWritePaths=/var/lib/btc09-support",
@@ -72,8 +74,10 @@ class SupportFundingDeploymentContract(unittest.TestCase):
         for required in (
             "set -Eeuo pipefail",
             "support-funding.env",
+            "support-claims.env",
             "must have mode 0600",
             "NOWPAYMENTS_API_KEY is missing",
+            "BTC09_SUPPORT_CLAIM_SECRET is missing or too short",
             "node --check",
             "systemd-analyze verify",
             "nginx -t",
@@ -81,6 +85,7 @@ class SupportFundingDeploymentContract(unittest.TestCase):
             "curl --fail --silent --show-error http://127.0.0.1:8032/healthz",
             "--resolve btc09.org:443:127.0.0.1",
             "https://btc09.org/api/support/v1/status",
+            "http://127.0.0.1:8032/internal/support/v1/claims",
             "restore_install",
             "trap restore_install ERR INT TERM",
         ):

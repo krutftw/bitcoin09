@@ -39,7 +39,7 @@ test("CLI help lists every Node-owned guild command", () => {
   assert.equal(result.status, 0);
   assert.match(
     result.stdout,
-    /\/stats, \/rank, \/leaderboard, \/wallet, and \/mine commands/,
+    /\/stats, \/rank, \/leaderboard, \/wallet, \/mine, and \/support commands/,
   );
 });
 
@@ -194,6 +194,7 @@ test("registered stats commands and role buttons are routed", () => {
   assert.equal(classifyInteraction({ type: 2, data: { name: "leaderboard" } }), "leaderboard");
   assert.equal(classifyInteraction({ type: 2, data: { name: "wallet" } }), "wallet");
   assert.equal(classifyInteraction({ type: 2, data: { name: "mine" } }), "mine");
+  assert.equal(classifyInteraction({ type: 2, data: { name: "support" } }), "support");
   assert.equal(classifyInteraction({ type: 3, data: { custom_id: "role:toggle:miner" } }), "role");
   assert.equal(classifyInteraction({ type: 2, data: { name: "unknown" } }), null);
   assert.deepEqual(statsBot.getCommandDefinitions().map(({ name }) => name), [
@@ -202,7 +203,62 @@ test("registered stats commands and role buttons are routed", () => {
     "leaderboard",
     "wallet",
     "mine",
+    "support",
   ]);
+});
+
+test("supporter copy is concise and does not promise an investment return", () => {
+  const message = statsBot.formatSupportPerks();
+  for (const token of [
+    "US$5: 💛 Supporter",
+    "US$25: 🤝 Backer + supporter lab",
+    "US$100: 🛠 Builder",
+    "US$250: ⭐ Core Supporter",
+    "cumulative finished BTC09 support payments",
+    "`/support claim`",
+  ]) {
+    assert.match(message, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.ok(message.length < 700);
+  assert.match(message, /not 09C, equity, governance, or a return/);
+  assert.doesNotMatch(message, /guarantee|profit|yield/i);
+});
+
+test("support claims use the loopback service secret and validate its tier", async () => {
+  const calls = [];
+  const claimCode = "a".repeat(32);
+  const claimed = await statsBot.claimSupportPayment({
+    claimCode,
+    userId: "123456789012345678",
+    claimSecret: "test-secret",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return jsonResponse({
+        claimed: true,
+        total_confirmed_usd: 30,
+        tier: {
+          key: "backer",
+          role_name: "🤝 Backer",
+          supporter_lab: true,
+        },
+      });
+    },
+  });
+  assert.equal(claimed.tier.key, "backer");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "http://127.0.0.1:8032/internal/support/v1/claims");
+  assert.equal(calls[0].options.headers["X-BTC09-Claim-Secret"], "test-secret");
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    claim_code: claimCode,
+    discord_user_id: "123456789012345678",
+  });
+
+  await assert.rejects(statsBot.claimSupportPayment({
+    claimCode: "short",
+    userId: "123456789012345678",
+    claimSecret: "test-secret",
+    fetchImpl: async () => { throw new Error("must not fetch"); },
+  }), /claim code is invalid/);
 });
 
 test("wallet and mining help is short, current, and points to official pages", () => {
@@ -282,6 +338,128 @@ test("XP promotion keeps only the highest earned rank role", async () => {
     {
       method: "PUT",
       path: "/guilds/guild-1/members/user-1/roles/regular",
+      body: null,
+    },
+  ]);
+});
+
+test("supporter setup creates four display roles and one private lab without duplicates", async () => {
+  const roles = [{ id: "guild-1", name: "@everyone", color: 0, permissions: "0" }];
+  const channels = [{ id: "community", name: "💬 COMMUNITY", type: 4, position: 1 }];
+  const calls = [];
+  let nextRole = 1;
+  const discordImpl = async (method, path, body) => {
+    calls.push({ method, path, body });
+    if (method === "GET" && path === "/guilds/guild-1/roles") {
+      return roles.map((role) => ({ ...role }));
+    }
+    if (method === "POST" && path === "/guilds/guild-1/roles") {
+      const role = { id: `support-${nextRole++}`, ...body };
+      roles.push(role);
+      return { ...role };
+    }
+    if (method === "GET" && path === "/guilds/guild-1/channels") {
+      return channels.map((channel) => ({ ...channel }));
+    }
+    if (method === "POST" && path === "/guilds/guild-1/channels") {
+      const channel = { id: "supporter-lab", ...body };
+      channels.push(channel);
+      return { ...channel };
+    }
+    throw new Error(`unexpected Discord call ${method} ${path}`);
+  };
+
+  const first = await statsBot.syncSupporterInfrastructure("guild-1", {
+    clientId: "bot-1",
+    discordImpl,
+  });
+  assert.deepEqual(first.roles.map((role) => role.name), [
+    "💛 Supporter",
+    "🤝 Backer",
+    "🛠 Builder",
+    "⭐ Core Supporter",
+  ]);
+  assert.ok(first.roles.every((role) => role.hoist === true));
+  assert.equal(first.channel.name, "💛-supporter-lab");
+  assert.equal(first.channel.parent_id, "community");
+  assert.deepEqual(first.channel.permission_overwrites[0], {
+    id: "guild-1", type: 0, allow: "0", deny: "1024",
+  });
+  assert.equal(first.channel.permission_overwrites.some((overwrite) =>
+    overwrite.id === first.roles[0].id
+  ), false);
+  for (const role of first.roles.slice(1)) {
+    assert.equal(first.channel.permission_overwrites.some((overwrite) =>
+      overwrite.id === role.id && overwrite.allow === "84992"
+    ), true);
+  }
+
+  calls.length = 0;
+  await statsBot.syncSupporterInfrastructure("guild-1", {
+    clientId: "bot-1",
+    discordImpl,
+  });
+  assert.deepEqual(calls.map(({ method, path }) => ({ method, path })), [
+    { method: "GET", path: "/guilds/guild-1/roles" },
+    { method: "GET", path: "/guilds/guild-1/channels" },
+  ]);
+});
+
+test("supporter lab intro is useful and idempotent", async () => {
+  const content = statsBot.formatSupporterLabIntro();
+  assert.match(content, /early wallet and miner builds/);
+  assert.match(content, /No price calls, paid hype, or guaranteed roadmap slots/);
+  assert.ok(content.length < 500);
+
+  const messages = [];
+  const calls = [];
+  const discordImpl = async (method, path, body) => {
+    calls.push({ method, path, body });
+    if (method === "GET" && path === "/users/@me") return { id: "bot-1" };
+    if (method === "GET" && path === "/channels/lab/messages?limit=50") {
+      return messages.map((message) => ({ ...message }));
+    }
+    if (method === "POST" && path === "/channels/lab/messages") {
+      const message = { id: "intro-1", author: { id: "bot-1" }, ...body };
+      messages.push(message);
+      return { ...message };
+    }
+    throw new Error(`unexpected Discord call ${method} ${path}`);
+  };
+  assert.equal(await statsBot.postOrUpdateSupporterLabIntro({ id: "lab" }, { discordImpl }), "intro-1");
+  calls.length = 0;
+  assert.equal(await statsBot.postOrUpdateSupporterLabIntro({ id: "lab" }, { discordImpl }), "intro-1");
+  assert.equal(calls.some((call) => call.method === "POST" || call.method === "PATCH"), false);
+});
+
+test("supporter promotion keeps only the highest confirmed tier role", async () => {
+  const calls = [];
+  const roles = [
+    { id: "supporter", name: "💛 Supporter" },
+    { id: "backer", name: "🤝 Backer" },
+    { id: "builder", name: "🛠 Builder" },
+    { id: "core", name: "⭐ Core Supporter" },
+  ];
+  await statsBot.applySupporterRole({
+    guildId: "guild-1",
+    userId: "user-1",
+    memberRoleIds: ["supporter"],
+    tierKey: "builder",
+    roles,
+    discordImpl: async (method, path, body) => {
+      calls.push({ method, path, body });
+      return null;
+    },
+  });
+  assert.deepEqual(calls, [
+    {
+      method: "DELETE",
+      path: "/guilds/guild-1/members/user-1/roles/supporter",
+      body: null,
+    },
+    {
+      method: "PUT",
+      path: "/guilds/guild-1/members/user-1/roles/builder",
       body: null,
     },
   ]);

@@ -145,6 +145,10 @@ p { margin: 0 0 10px; }
   text-decoration: none;
 }
 .small { color: var(--muted); font-size: 13px; }
+.supporter-tiers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+.supporter-tiers article { display: flex; flex-direction: column; gap: 2px; padding: 10px 11px; background: #f1ead4; border: 1px solid #c3b58f; }
+.supporter-tiers strong { font-size: 14px; }
+.supporter-tiers span { color: var(--muted); font-size: 12px; }
 
 .payment-form { margin-top: 14px; }
 .form-grid { display: grid; grid-template-columns: minmax(150px, .6fr) minmax(220px, 1.4fr); gap: 12px; margin-bottom: 12px; }
@@ -165,12 +169,14 @@ p { margin: 0 0 10px; }
 .form-status { margin-left: 9px; }
 .provider-note { margin-top: 14px; }
 .payment-card { margin-top: 18px; padding: 15px; background: #eef1dc; border: 1px solid #93a36f; }
-.payment-card[hidden], #memo-row[hidden] { display: none; }
+.payment-card[hidden], #memo-row[hidden], .claim-card[hidden], #claim-code-row[hidden] { display: none; }
 .payment-amount { margin-bottom: 3px; font-size: 19px; }
 .copy-row { display: flex; align-items: stretch; gap: 7px; margin: 5px 0 10px; }
 .copy-row code { flex: 1; min-width: 0; padding: 9px; overflow-wrap: anywhere; background: #fffdf5; border: 1px solid #b4a77f; }
 .copy-button { padding: 7px 10px; color: #fff7dd; background: #4b5e38; border: 0; border-radius: 3px; cursor: pointer; }
 .payment-state { margin: 12px 0 5px; font-weight: 700; }
+.claim-card { margin-top: 14px; padding-top: 13px; border-top: 1px solid #aab58c; }
+.claim-card p { margin-bottom: 7px; }
 
 .site-foot-wrap { color: #cfc4a7; background: var(--bg); border-top: 1px solid #3d341f; }
 .site-foot { padding: 22px 0; }
@@ -181,6 +187,7 @@ p { margin: 0 0 10px; }
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .status-row { grid-template-columns: 1fr; gap: 6px; }
   .form-grid { grid-template-columns: 1fr; }
+  .supporter-tiers { grid-template-columns: 1fr; }
   .copy-row { flex-direction: column; }
   main { padding-top: 28px; }
 }

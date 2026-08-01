@@ -12,6 +12,7 @@ server_source="$repo_root/deploy/nginx/bitcoin09-support-funding-server.conf"
 service_source="$repo_root/deploy/systemd/btc09-support-funding.service"
 app_source="$repo_root/tools/support/funding-service.mjs"
 env_target=/etc/btc09/support-funding.env
+claim_env_target=/etc/btc09/support-claims.env
 http_target=/etc/nginx/conf.d/bitcoin09-support-funding-http.conf
 server_target=/etc/nginx/snippets/bitcoin09-support-funding-server.conf
 service_target=/etc/systemd/system/btc09-support-funding.service
@@ -26,9 +27,12 @@ for source in "$http_source" "$server_source" "$service_source" "$app_source"; d
     [[ -f "$source" && ! -L "$source" ]] || { echo "missing or unsafe deployment file: $source" >&2; exit 1; }
 done
 [[ -f "$env_target" && ! -L "$env_target" ]] || { echo "missing or unsafe credential file: $env_target" >&2; exit 1; }
+[[ -f "$claim_env_target" && ! -L "$claim_env_target" ]] || { echo "missing or unsafe credential file: $claim_env_target" >&2; exit 1; }
 [[ -f "$site_target" && ! -L "$site_target" ]] || { echo "canonical nginx site is missing or unsafe" >&2; exit 1; }
 [[ $(stat -c '%a' "$env_target") == 600 ]] || { echo "$env_target must have mode 0600" >&2; exit 1; }
+[[ $(stat -c '%a' "$claim_env_target") == 600 ]] || { echo "$claim_env_target must have mode 0600" >&2; exit 1; }
 grep -Eq '^NOWPAYMENTS_API_KEY=.+$' "$env_target" || { echo "NOWPAYMENTS_API_KEY is missing" >&2; exit 1; }
+grep -Eq '^BTC09_SUPPORT_CLAIM_SECRET=.{32,}$' "$claim_env_target" || { echo "BTC09_SUPPORT_CLAIM_SECRET is missing or too short" >&2; exit 1; }
 
 backup_file() {
     local target=$1 name=$2
@@ -132,6 +136,8 @@ for _attempt in {1..20}; do
     sleep 1
 done
 [[ $ready -eq 1 ]]
+[[ $(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --request POST http://127.0.0.1:8032/internal/support/v1/claims) == 403 ]]
 systemctl is-active --quiet btc09-support-funding
 ss -ltn | grep -Fq '127.0.0.1:8032'
 if ss -ltn | grep -Eq '0\.0\.0\.0:8032|\[::\]:8032'; then

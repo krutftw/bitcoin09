@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
+import { publicSupporterTier, supporterTierFor } from "./supporter-tiers.mjs";
 
 const PROVIDER_BASE = "https://api.nowpayments.io/v1";
 const ORDER_PREFIX = "btc09-support-";
@@ -46,6 +47,9 @@ function safeEqual(left, right) {
 }
 
 function publicPayment(record) {
+  const claimStatus = record.claimed_by_discord_user_id
+    ? "claimed"
+    : record.payment_status === "finished" ? "ready" : "pending";
   return {
     payment_id: record.payment_id,
     payment_status: record.payment_status,
@@ -57,7 +61,16 @@ function publicPayment(record) {
     payin_extra_id: record.payin_extra_id,
     created_at: record.created_at,
     updated_at: record.updated_at,
+    claim_status: claimStatus,
+    claimed_role_name: record.claimed_role_name ?? null,
   };
+}
+
+function countsAsSupport(record) {
+  return record?.payment_status === "finished" &&
+    typeof record?.order_id === "string" &&
+    record.order_id.startsWith(ORDER_PREFIX) &&
+    String(record.price_currency).toLowerCase() === "usd";
 }
 
 export function summarizeFunding(state, {
@@ -65,12 +78,7 @@ export function summarizeFunding(state, {
   coinTargetUsd = DEFAULT_09C_TARGET_USD,
 } = {}) {
   const records = Object.values(state?.payments ?? {});
-  const finished = records.filter((record) =>
-    record?.payment_status === "finished" &&
-    typeof record?.order_id === "string" &&
-    record.order_id.startsWith(ORDER_PREFIX) &&
-    String(record.price_currency).toLowerCase() === "usd"
-  );
+  const finished = records.filter(countsAsSupport);
   const cashReceivedUsd = money(finished.reduce((total, record) => total + finiteNumber(record.price_amount), 0));
   return {
     schema_version: 1,
@@ -192,6 +200,7 @@ export async function createFundingService({
   coinTargetUsd = DEFAULT_09C_TARGET_USD,
   minUsd = DEFAULT_MIN_USD,
   maxUsd = DEFAULT_MAX_USD,
+  claimSecret,
   clock = nowIso,
 } = {}) {
   if (!apiKey) throw new Error("NOWPAYMENTS_API_KEY is required");
@@ -202,14 +211,15 @@ export async function createFundingService({
   let currencyCache = { values: [], expiresAt: 0 };
 
   async function updateState(updater) {
-    mutation = mutation.then(async () => {
+    const operation = mutation.then(async () => {
       const next = await updater(state);
       next.updated_at = clock();
       await saveState(statePath, next);
       state = next;
       return next;
     });
-    return mutation;
+    mutation = operation.catch(() => {});
+    return operation;
   }
 
   async function currencies() {
@@ -340,6 +350,96 @@ export async function createFundingService({
     return { token: clientToken, payment: publicPayment(record) };
   }
 
+  async function claimPayment(body) {
+    const claimCode = String(body?.claim_code ?? "").trim();
+    const discordUserId = String(body?.discord_user_id ?? "").trim();
+    if (!/^[A-Za-z0-9_-]{32}$/.test(claimCode) || !/^\d{15,22}$/.test(discordUserId)) {
+      const error = new Error("claim code is invalid");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const found = Object.values(state.payments).find((record) => safeEqual(claimCode, record.client_token));
+    if (!found) {
+      const error = new Error("claim code is invalid");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const alreadyClaimedByUser = found.claimed_by_discord_user_id === discordUserId && countsAsSupport(found);
+    const refreshed = alreadyClaimedByUser
+      ? found
+      : await refreshPayment(found.payment_id, { force: true });
+    if (!countsAsSupport(refreshed)) {
+      const error = new Error("payment is not finished yet");
+      error.statusCode = 409;
+      throw error;
+    }
+    if (
+      refreshed.claimed_by_discord_user_id &&
+      refreshed.claimed_by_discord_user_id !== discordUserId
+    ) {
+      const error = new Error("claim code has already been used");
+      error.statusCode = 409;
+      throw error;
+    }
+
+    let result = null;
+    await updateState((current) => {
+      const currentRecord = current.payments[String(refreshed.payment_id)];
+      if (!currentRecord || !safeEqual(claimCode, currentRecord.client_token)) {
+        const error = new Error("claim code is invalid");
+        error.statusCode = 404;
+        throw error;
+      }
+      if (
+        currentRecord.claimed_by_discord_user_id &&
+        currentRecord.claimed_by_discord_user_id !== discordUserId
+      ) {
+        const error = new Error("claim code has already been used");
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const payments = {
+        ...current.payments,
+        [String(currentRecord.payment_id)]: {
+          ...currentRecord,
+          claimed_by_discord_user_id: discordUserId,
+          claimed_at: currentRecord.claimed_at ?? clock(),
+        },
+      };
+      const total = money(Object.values(payments)
+        .filter((record) => countsAsSupport(record) && record.claimed_by_discord_user_id === discordUserId)
+        .reduce((sum, record) => sum + finiteNumber(record.price_amount), 0));
+      const tier = supporterTierFor(total);
+      if (!tier) {
+        const error = new Error("confirmed support is below the minimum tier");
+        error.statusCode = 409;
+        throw error;
+      }
+
+      for (const [paymentId, record] of Object.entries(payments)) {
+        if (record.claimed_by_discord_user_id !== discordUserId) continue;
+        payments[paymentId] = {
+          ...record,
+          supporter_tier_key: tier.key,
+          supporter_total_usd: total,
+          claimed_role_name: tier.roleName,
+        };
+      }
+      result = {
+        claimed: true,
+        payment_id: String(currentRecord.payment_id),
+        payment_usd: money(currentRecord.price_amount),
+        total_confirmed_usd: total,
+        tier: publicSupporterTier(tier),
+      };
+      return { ...current, payments };
+    });
+    return result;
+  }
+
   async function handler(request, response) {
     try {
       const url = new URL(request.url, "http://127.0.0.1");
@@ -354,6 +454,12 @@ export async function createFundingService({
       }
       if (request.method === "POST" && url.pathname === "/api/support/v1/payments") {
         return sendJson(response, 201, await createPayment(await readJsonBody(request)));
+      }
+      if (request.method === "POST" && url.pathname === "/internal/support/v1/claims") {
+        if (!claimSecret || !safeEqual(request.headers["x-btc09-claim-secret"], claimSecret)) {
+          return sendJson(response, 403, { error: "forbidden" });
+        }
+        return sendJson(response, 200, await claimPayment(await readJsonBody(request)));
       }
       const match = url.pathname.match(/^\/api\/support\/v1\/payments\/([0-9]{4,32})$/);
       if (request.method === "GET" && match) {
@@ -373,7 +479,15 @@ export async function createFundingService({
     }
   }
 
-  return { handler, currencies, createPayment, refreshPayment, refreshTrackedPayments, getState: () => state };
+  return {
+    handler,
+    currencies,
+    createPayment,
+    claimPayment,
+    refreshPayment,
+    refreshTrackedPayments,
+    getState: () => state,
+  };
 }
 
 export async function startFundingService(env = process.env) {
@@ -389,6 +503,7 @@ export async function startFundingService(env = process.env) {
     coinTargetUsd: finiteNumber(env.BTC09_SUPPORT_09C_TARGET_USD, DEFAULT_09C_TARGET_USD),
     minUsd: finiteNumber(env.BTC09_SUPPORT_MIN_USD, DEFAULT_MIN_USD),
     maxUsd: finiteNumber(env.BTC09_SUPPORT_MAX_USD, DEFAULT_MAX_USD),
+    claimSecret: env.BTC09_SUPPORT_CLAIM_SECRET,
   });
   const server = createServer(service.handler);
   server.requestTimeout = 15_000;
