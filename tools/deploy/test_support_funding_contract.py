@@ -6,7 +6,9 @@ ROOT = Path(__file__).resolve().parents[2]
 HTTP = ROOT / "deploy" / "nginx" / "bitcoin09-support-funding-http.conf"
 SERVER = ROOT / "deploy" / "nginx" / "bitcoin09-support-funding-server.conf"
 SERVICE = ROOT / "deploy" / "systemd" / "btc09-support-funding.service"
+BOT_SERVICE = ROOT / "bot" / "btc09-discord-stats.service"
 INSTALLER = ROOT / "deploy" / "scripts" / "install-support-funding.sh"
+README = ROOT / "deploy" / "README.md"
 
 
 class SupportFundingDeploymentContract(unittest.TestCase):
@@ -90,6 +92,21 @@ class SupportFundingDeploymentContract(unittest.TestCase):
             "trap restore_install ERR INT TERM",
         ):
             self.assertIn(required, text)
+
+    def test_shared_claim_secret_is_documented_for_both_services(self) -> None:
+        bot_service = BOT_SERVICE.read_text(encoding="ascii")
+        readme = README.read_text(encoding="utf-8")
+        self.assertIn(
+            "EnvironmentFile=/etc/btc09/support-claims.env", bot_service
+        )
+        for required in (
+            "openssl rand -hex 32",
+            "/etc/btc09/support-claims.env",
+            "bot/btc09-discord-stats.service",
+            "systemctl try-restart btc09-discord-stats",
+            "giving the bot the NOWPayments API key",
+        ):
+            self.assertIn(required, readme)
 
 
 if __name__ == "__main__":

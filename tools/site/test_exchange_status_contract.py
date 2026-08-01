@@ -61,7 +61,11 @@ class ExchangeStatusContractTests(unittest.TestCase):
             "US$250 · ⭐ Core Supporter",
             "supporter lab",
             "/support claim",
-            "localStorage.setItem('btc09-support-payment'",
+            "const activePaymentKey = 'btc09-support-payment'",
+            "btc09-support-claims",
+            "Saved Discord claim codes",
+            "saveFinishedClaim(saved)",
+            "clearActivePayment()",
             "Each payment code can only be linked to one Discord account",
         ):
             self.assertIn(token, self.support_page)

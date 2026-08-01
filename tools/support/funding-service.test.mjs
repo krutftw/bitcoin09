@@ -219,6 +219,79 @@ test("separate finished payments add up for one Discord supporter", async () => 
   }
 });
 
+test("concurrent claims cannot move one payment between Discord accounts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "btc09-funding-test-"));
+  const statePath = join(root, "payments.json");
+  let orderId = null;
+  let providerReads = 0;
+  let releaseProvider;
+  let providerStarted;
+  const started = new Promise((resolve) => { providerStarted = resolve; });
+  const released = new Promise((resolve) => { releaseProvider = resolve; });
+  const fetchImpl = async (url, options = {}) => {
+    if (url.endsWith("/merchant/coins")) {
+      return new Response(JSON.stringify({ selectedCurrencies: ["btc"] }), { status: 200 });
+    }
+    if (url.endsWith("/payment") && options.method === "POST") {
+      const body = JSON.parse(options.body);
+      orderId = body.order_id;
+      return new Response(JSON.stringify({
+        payment_id: "900001",
+        payment_status: "waiting",
+        pay_address: "bc1qconcurrency",
+        pay_amount: 0.001,
+        pay_currency: "btc",
+        order_id: orderId,
+      }), { status: 201 });
+    }
+    if (url.endsWith("/payment/900001")) {
+      providerReads += 1;
+      providerStarted();
+      await released;
+      return new Response(JSON.stringify({
+        payment_id: "900001",
+        payment_status: "finished",
+        order_id: orderId,
+        price_amount: 25,
+        price_currency: "usd",
+      }), { status: 200 });
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+
+  try {
+    const service = await createFundingService({
+      apiKey: "test-key",
+      statePath,
+      fetchImpl,
+      claimSecret: "claim-secret",
+    });
+    const payment = await service.createPayment({ amount_usd: 25, pay_currency: "btc" });
+    const first = service.claimPayment({
+      claim_code: payment.token,
+      discord_user_id: "111111111111111111",
+    });
+    await started;
+    const second = service.claimPayment({
+      claim_code: payment.token,
+      discord_user_id: "222222222222222222",
+    });
+    releaseProvider();
+
+    const results = await Promise.allSettled([first, second]);
+    assert.equal(results[0].status, "fulfilled");
+    assert.equal(results[1].status, "rejected");
+    assert.match(results[1].reason.message, /already been used/);
+    assert.equal(providerReads, 1);
+    assert.equal(
+      service.getState().payments["900001"].claimed_by_discord_user_id,
+      "111111111111111111",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("service rejects an amount outside the published range", async () => {
   const root = await mkdtemp(join(tmpdir(), "btc09-funding-test-"));
   try {

@@ -121,19 +121,21 @@ Print the current stats locally:
 node tools/discord/stats-bot.mjs
 ```
 
-The Node watcher handles `/stats`, `/rank`, `/leaderboard`, `/wallet`, and `/mine` on the live
-server. Register those guild slash commands before running it by itself:
+The Node watcher handles `/stats`, `/rank`, `/leaderboard`, `/wallet`, `/mine`,
+and `/support` on the live server. Register those guild slash commands before
+running it by itself:
 
 ```powershell
 node tools/discord/stats-bot.mjs --register-commands
 ```
 
-This upserts those five commands without replacing other guild commands. The
-Python OTC bot mirrors all five definitions when it bulk-syncs
+This upserts those six commands without replacing other guild commands. The
+Python OTC bot mirrors all six definitions when it bulk-syncs
 the guild, so an OTC restart cannot remove them. Production guild commands are
 guild-only; the OTC sync also removes retired global commands. Self-serve roles
 are handled by the clickable buttons in `#🎭-roles`, so the watch process must
-be running for the buttons to respond.
+be running for the buttons to respond. `/support claim` uses the separate
+loopback claim secret; the Discord bot never receives the NOWPayments API key.
 
 Post or update one bot-authored stats message in `#🏊-pools-and-nodes`:
 

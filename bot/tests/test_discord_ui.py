@@ -498,7 +498,7 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
                     command.name: command for command in bot.tree.get_commands()
                 }
                 self.assertTrue(
-                    {"stats", "rank", "leaderboard", "wallet", "mine"}
+                    {"stats", "rank", "leaderboard", "wallet", "mine", "support"}
                     <= commands_by_name.keys()
                 )
                 self.assertEqual(
@@ -513,6 +513,28 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
                         "wallet": "Open the current Bitcoin 09 wallet guide.",
                         "mine": "Open the current Bitcoin 09 mining guide.",
                     },
+                )
+                support = commands_by_name["support"]
+                self.assertEqual(
+                    support.description,
+                    "Claim a supporter role or see the current perks.",
+                )
+                support_commands = {
+                    command.name: command for command in support.commands
+                }
+                self.assertEqual(set(support_commands), {"claim", "perks"})
+                self.assertEqual(
+                    support_commands["claim"].description,
+                    "Claim your role after a BTC09 support payment finishes.",
+                )
+                self.assertEqual(
+                    support_commands["claim"].parameters[0].description,
+                    "The private claim code shown on the BTC09 support page.",
+                )
+                self.assertTrue(support_commands["claim"].parameters[0].required)
+                self.assertEqual(
+                    support_commands["perks"].description,
+                    "Show the current BTC09 supporter roles and perks.",
                 )
             finally:
                 await bot.close()

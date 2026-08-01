@@ -247,11 +247,16 @@ export async function createFundingService({
     const recent = Number.isFinite(lastCheck) && Date.now() - lastCheck < 30_000;
     if (!force && recent) return record;
     const payload = await providerJson(fetchImpl, apiKey, `/payment/${encodeURIComponent(record.payment_id)}`);
-    const merged = mergeProviderPayment(record, payload, clock());
-    await updateState((current) => ({
-      ...current,
-      payments: { ...current.payments, [String(record.payment_id)]: merged },
-    }));
+    let merged = null;
+    await updateState((current) => {
+      const currentRecord = current.payments[String(record.payment_id)];
+      if (!currentRecord) return current;
+      merged = mergeProviderPayment(currentRecord, payload, clock());
+      return {
+        ...current,
+        payments: { ...current.payments, [String(record.payment_id)]: merged },
+      };
+    });
     return merged;
   }
 
@@ -359,44 +364,34 @@ export async function createFundingService({
       throw error;
     }
 
-    const found = Object.values(state.payments).find((record) => safeEqual(claimCode, record.client_token));
-    if (!found) {
-      const error = new Error("claim code is invalid");
-      error.statusCode = 404;
-      throw error;
-    }
-
-    const alreadyClaimedByUser = found.claimed_by_discord_user_id === discordUserId && countsAsSupport(found);
-    const refreshed = alreadyClaimedByUser
-      ? found
-      : await refreshPayment(found.payment_id, { force: true });
-    if (!countsAsSupport(refreshed)) {
-      const error = new Error("payment is not finished yet");
-      error.statusCode = 409;
-      throw error;
-    }
-    if (
-      refreshed.claimed_by_discord_user_id &&
-      refreshed.claimed_by_discord_user_id !== discordUserId
-    ) {
-      const error = new Error("claim code has already been used");
-      error.statusCode = 409;
-      throw error;
-    }
-
     let result = null;
-    await updateState((current) => {
-      const currentRecord = current.payments[String(refreshed.payment_id)];
-      if (!currentRecord || !safeEqual(claimCode, currentRecord.client_token)) {
+    await updateState(async (current) => {
+      const found = Object.values(current.payments).find((record) =>
+        safeEqual(claimCode, record.client_token)
+      );
+      if (!found) {
         const error = new Error("claim code is invalid");
         error.statusCode = 404;
         throw error;
       }
       if (
-        currentRecord.claimed_by_discord_user_id &&
-        currentRecord.claimed_by_discord_user_id !== discordUserId
+        found.claimed_by_discord_user_id &&
+        found.claimed_by_discord_user_id !== discordUserId
       ) {
         const error = new Error("claim code has already been used");
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const currentRecord = found.claimed_by_discord_user_id === discordUserId && countsAsSupport(found)
+        ? found
+        : mergeProviderPayment(
+          found,
+          await providerJson(fetchImpl, apiKey, `/payment/${encodeURIComponent(found.payment_id)}`),
+          clock(),
+        );
+      if (!countsAsSupport(currentRecord)) {
+        const error = new Error("payment is not finished yet");
         error.statusCode = 409;
         throw error;
       }

@@ -74,6 +74,12 @@
 </div>
 </div>
 
+<div class="saved-claims" id="saved-claims" hidden>
+<p class="eyebrow">Saved Discord claim codes</p>
+<p class="small">Finished payment codes are kept in this browser until you remove them.</p>
+<div id="saved-claim-list"></div>
+</div>
+
 <p class="small provider-note">Payment processing is handled by NOWPayments. Network and provider fees may apply. If the form is temporarily unavailable, please try again later so the contribution can be tracked correctly.</p>
 </section>
 
@@ -91,6 +97,74 @@ const coinNames = {
 };
 let paymentTimer = null;
 let activePayment = null;
+const activePaymentKey = 'btc09-support-payment';
+const savedClaimsKey = 'btc09-support-claims';
+
+function loadSavedClaims() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(savedClaimsKey));
+    if (!Array.isArray(saved)) return [];
+    return saved.filter((claim) =>
+      /^\d{4,32}$/.test(String(claim?.id || '')) &&
+      /^[A-Za-z0-9_-]{32}$/.test(String(claim?.token || ''))
+    ).slice(0, 10);
+  } catch {
+    return [];
+  }
+}
+
+function storeSavedClaims(claims) {
+  localStorage.setItem(savedClaimsKey, JSON.stringify(claims.slice(0, 10)));
+}
+
+async function copyValue(value, button) {
+  await navigator.clipboard.writeText(value);
+  button.textContent = 'Copied';
+  setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+}
+
+function renderSavedClaims() {
+  const claims = loadSavedClaims();
+  const box = document.getElementById('saved-claims');
+  const list = document.getElementById('saved-claim-list');
+  list.replaceChildren();
+  box.hidden = claims.length === 0;
+  for (const claim of claims) {
+    const row = document.createElement('div');
+    row.className = 'saved-claim-row';
+    const code = document.createElement('code');
+    code.textContent = claim.token;
+    const copy = document.createElement('button');
+    copy.className = 'copy-button';
+    copy.type = 'button';
+    copy.textContent = 'Copy';
+    copy.addEventListener('click', () => copyValue(claim.token, copy));
+    const remove = document.createElement('button');
+    remove.className = 'remove-button';
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      storeSavedClaims(loadSavedClaims().filter((item) => item.id !== claim.id));
+      renderSavedClaims();
+    });
+    row.append(code, copy, remove);
+    list.append(row);
+  }
+}
+
+function saveFinishedClaim(saved) {
+  const claims = loadSavedClaims().filter((claim) => claim.id !== String(saved.id));
+  claims.unshift({ id: String(saved.id), token: saved.token });
+  storeSavedClaims(claims);
+  renderSavedClaims();
+}
+
+function clearActivePayment() {
+  localStorage.removeItem(activePaymentKey);
+  activePayment = null;
+  clearInterval(paymentTimer);
+  paymentTimer = null;
+}
 
 function renderFunding(fund, updatedAt) {
   const received = Number(fund.cash_received_usd || 0);
@@ -210,17 +284,16 @@ async function pollPayment(saved) {
     const data = await response.json();
     showPayment(data.payment, saved);
     if (data.payment.claim_status === 'claimed') {
-      localStorage.removeItem('btc09-support-payment');
-      activePayment = null;
-      clearInterval(paymentTimer);
+      storeSavedClaims(loadSavedClaims().filter((claim) => claim.id !== String(saved.id)));
+      renderSavedClaims();
+      clearActivePayment();
+      loadFunding().then(applySupportAvailability).catch(() => {});
+    } else if (data.payment.payment_status === 'finished') {
+      saveFinishedClaim(saved);
+      clearActivePayment();
       loadFunding().then(applySupportAvailability).catch(() => {});
     } else if (['expired', 'failed', 'refunded'].includes(data.payment.payment_status)) {
-      localStorage.removeItem('btc09-support-payment');
-      activePayment = null;
-      clearInterval(paymentTimer);
-      loadFunding().then(applySupportAvailability).catch(() => {});
-    }
-    if (data.payment.payment_status === 'finished') {
+      clearActivePayment();
       loadFunding().then(applySupportAvailability).catch(() => {});
     }
   } catch {
@@ -244,7 +317,7 @@ document.getElementById('payment-form').addEventListener('submit', async (event)
     showPayment(data.payment, { id: data.payment.payment_id, token: data.token });
     const saved = { id: data.payment.payment_id, token: data.token };
     activePayment = saved;
-    localStorage.setItem('btc09-support-payment', JSON.stringify(saved));
+    localStorage.setItem(activePaymentKey, JSON.stringify(saved));
     clearInterval(paymentTimer);
     paymentTimer = setInterval(() => pollPayment(saved), 10000);
     status.textContent = '';
@@ -259,9 +332,7 @@ document.getElementById('payment-form').addEventListener('submit', async (event)
 for (const button of document.querySelectorAll('[data-copy]')) {
   button.addEventListener('click', async () => {
     const source = document.getElementById(button.dataset.copy);
-    await navigator.clipboard.writeText(source.textContent);
-    button.textContent = 'Copied';
-    setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+    await copyValue(source.textContent, button);
   });
 }
 
@@ -272,8 +343,9 @@ Promise.all([loadFunding(), loadCurrencies()])
     document.getElementById('form-status').textContent = 'The payment form is temporarily unavailable. Please try again later.';
   });
 setInterval(() => loadFunding().catch(() => {}), 60000);
+renderSavedClaims();
 try {
-  const saved = JSON.parse(localStorage.getItem('btc09-support-payment'));
+  const saved = JSON.parse(localStorage.getItem(activePaymentKey));
   if (saved?.id && saved?.token) {
     activePayment = saved;
     pollPayment(saved);
