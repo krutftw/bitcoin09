@@ -669,7 +669,8 @@ class DiscordTradeUITests(unittest.IsolatedAsyncioTestCase):
         await self.ui.balance(interaction)
         content, ephemeral, _ = interaction.followup.sent[-1]
         self.assertTrue(ephemeral)
-        self.assertIn("does not hold a custodial user account balance", content)
+        self.assertIn("There is no general OTC account balance", content)
+        self.assertIn("belongs to a specific order", content)
         self.assertNotIn("liability", content.lower())
 
     async def test_legacy_confirm_waits_for_ephemeral_confirmation(self) -> None:

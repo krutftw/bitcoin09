@@ -144,7 +144,7 @@ test("exchange status is concise, factual, and links to the public tracker", () 
   assert.match(message, /Submitted \/ awaiting: \*\*16\*\*/);
   assert.match(message, /Requirements \/ engineering: \*\*12\*\*/);
   assert.match(message, /US\$0 \/ US\$3,899 cash/);
-  assert.match(message, /Applications are pending reviews, not listings\./);
+  assert.match(message, /Updated <t:\d+:R>\./);
   assert.match(message, /https:\/\/btc09\.org\/exchanges\.html/);
   assert.ok(message.length < 700);
   assert.doesNotMatch(message, /approved|partnership|guaranteed/i);
@@ -207,20 +207,21 @@ test("registered stats commands and role buttons are routed", () => {
   ]);
 });
 
-test("supporter copy is concise and does not promise an investment return", () => {
+test("supporter copy is concise and names concrete benefits", () => {
   const message = statsBot.formatSupportPerks();
   for (const token of [
     "US$5: 💛 Supporter",
-    "US$25: 🤝 Backer + supporter lab",
+    "US$25: 🤝 Backer - early test builds, polls, and supporter lab",
     "US$100: 🛠 Builder",
     "US$250: ⭐ Core Supporter",
-    "cumulative finished BTC09 support payments",
+    "priority issue triage",
+    "direct feedback thread",
+    "role moves up automatically",
     "`/support claim`",
   ]) {
     assert.match(message, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.ok(message.length < 700);
-  assert.match(message, /not 09C, equity, governance, or a return/);
   assert.doesNotMatch(message, /guarantee|profit|yield/i);
 });
 
@@ -343,7 +344,7 @@ test("XP promotion keeps only the highest earned rank role", async () => {
   ]);
 });
 
-test("supporter setup creates four display roles and one private lab without duplicates", async () => {
+test("supporter setup creates four display roles, a private feed, and a private lab without duplicates", async () => {
   const roles = [{ id: "guild-1", name: "@everyone", color: 0, permissions: "0" }];
   const channels = [{ id: "community", name: "💬 COMMUNITY", type: 4, position: 1 }];
   const calls = [];
@@ -362,7 +363,10 @@ test("supporter setup creates four display roles and one private lab without dup
       return channels.map((channel) => ({ ...channel }));
     }
     if (method === "POST" && path === "/guilds/guild-1/channels") {
-      const channel = { id: "supporter-lab", ...body };
+      const channel = {
+        id: body.name.includes("updates") ? "supporter-updates" : "supporter-lab",
+        ...body,
+      };
       channels.push(channel);
       return { ...channel };
     }
@@ -382,6 +386,7 @@ test("supporter setup creates four display roles and one private lab without dup
   assert.ok(first.roles.every((role) => role.hoist === true));
   assert.equal(first.channel.name, "💛-supporter-lab");
   assert.equal(first.channel.parent_id, "community");
+  assert.equal(first.channel.position, 3);
   assert.deepEqual(first.channel.permission_overwrites[0], {
     id: "guild-1", type: 0, allow: "0", deny: "1024",
   });
@@ -391,6 +396,14 @@ test("supporter setup creates four display roles and one private lab without dup
   for (const role of first.roles.slice(1)) {
     assert.equal(first.channel.permission_overwrites.some((overwrite) =>
       overwrite.id === role.id && overwrite.allow === "84992"
+    ), true);
+  }
+  assert.equal(first.updatesChannel.name, "💛-supporter-updates");
+  assert.equal(first.updatesChannel.parent_id, "community");
+  assert.equal(first.updatesChannel.position, 2);
+  for (const role of first.roles) {
+    assert.equal(first.updatesChannel.permission_overwrites.some((overwrite) =>
+      overwrite.id === role.id && overwrite.allow === "66560" && overwrite.deny === "2048"
     ), true);
   }
 
@@ -408,7 +421,8 @@ test("supporter setup creates four display roles and one private lab without dup
 test("supporter lab intro is useful and idempotent", async () => {
   const content = statsBot.formatSupporterLabIntro();
   assert.match(content, /early wallet and miner builds/);
-  assert.match(content, /No price calls, paid hype, or guaranteed roadmap slots/);
+  assert.match(content, /priority triage/);
+  assert.match(content, /focused feedback thread/);
   assert.ok(content.length < 500);
 
   const messages = [];
@@ -429,6 +443,34 @@ test("supporter lab intro is useful and idempotent", async () => {
   assert.equal(await statsBot.postOrUpdateSupporterLabIntro({ id: "lab" }, { discordImpl }), "intro-1");
   calls.length = 0;
   assert.equal(await statsBot.postOrUpdateSupporterLabIntro({ id: "lab" }, { discordImpl }), "intro-1");
+  assert.equal(calls.some((call) => call.method === "POST" || call.method === "PATCH"), false);
+});
+
+test("supporter update feed explains the benefit and posts once", async () => {
+  const content = statsBot.formatSupporterUpdatesIntro();
+  assert.match(content, /quiet feed for wallet and miner progress/);
+  assert.match(content, /supporter polls will land here first/);
+  assert.match(content, /releases\/latest/);
+  assert.ok(content.length < 500);
+
+  const messages = [];
+  const calls = [];
+  const discordImpl = async (method, path, body) => {
+    calls.push({ method, path, body });
+    if (method === "GET" && path === "/users/@me") return { id: "bot-1" };
+    if (method === "GET" && path === "/channels/updates/messages?limit=50") {
+      return messages.map((message) => ({ ...message }));
+    }
+    if (method === "POST" && path === "/channels/updates/messages") {
+      const message = { id: "updates-1", author: { id: "bot-1" }, ...body };
+      messages.push(message);
+      return { ...message };
+    }
+    throw new Error(`unexpected Discord call ${method} ${path}`);
+  };
+  assert.equal(await statsBot.postOrUpdateSupporterUpdatesIntro({ id: "updates" }, { discordImpl }), "updates-1");
+  calls.length = 0;
+  assert.equal(await statsBot.postOrUpdateSupporterUpdatesIntro({ id: "updates" }, { discordImpl }), "updates-1");
   assert.equal(calls.some((call) => call.method === "POST" || call.method === "PATCH"), false);
 });
 

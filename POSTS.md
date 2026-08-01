@@ -55,8 +55,7 @@ go build ./cmd/btc09
 If you downloaded an early build, upgrade to the latest release. Older clients
 can sit on stale forks from before the retarget and sync fixes.
 
-09C has no price. It might never have one. Mine it if you want to join a
-fair-launch proof-of-work chain from the start.
+Mine it if you want to join a fair-launch proof-of-work chain from the start.
 ```
 
 ## Short post

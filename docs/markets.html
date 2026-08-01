@@ -398,7 +398,7 @@ code {
 <img src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
 <div>
 <h1>09C OTC Board</h1>
-<p class="tag">Public WTB/WTS records are open and the Discord bot escrow is live. Trade 09C safely at a 1% escrow fee.</p>
+<p class="tag">Public WTB/WTS records and Discord bot escrow are live. Start in Discord or draft a public record below.</p>
 </div>
 </div>
 <div class="wrap nav">
@@ -409,7 +409,7 @@ code {
 <main>
 <div class="wrap">
 <div class="notice">
-<strong>Escrow is live.</strong> The Discord bot now holds 09C in escrow for two-sided WTS/WTB trades at a 1% fee. Fiat, stablecoins, BTC, ETH, and other payment funds move directly between buyer and seller; only 09C passes through escrow. Only send 09C to the deposit address the bot gives you for a specific order.
+<strong>Escrow is live.</strong> The bot holds the 09C side of WTS/WTB orders for a 1% fee. Other payment moves directly between traders. Start with <code>/trade help</code> in Discord and use only the fresh address shown for your order.
 </div>
 
 <section class="tape" aria-live="polite">
@@ -551,10 +551,13 @@ Search
 
 <section class="panel">
 <h2>How To Send 09C</h2>
-<p>09C is its own chain, not an Ethereum, Solana, or token contract asset. MetaMask and Phantom do not support it. Use the Bitcoin 09 wallet/node for now.</p>
+<p>Open BTC09 Wallet, choose <strong>Send</strong>, paste the other person's 09C address, enter the amount, and review the payment before confirming.</p>
+<details>
+<summary>Command-line option</summary>
 <pre>btc09 wallet list
 btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds seed.btc09.org:9009</pre>
 <p class="muted">Default fee is 0.0001 09C. <code>-seeds</code> is plural and means peer nodes to broadcast through, not a wallet seed phrase. Do not paste private keys, seed phrases, or wallet file contents into the command line. <code>send</code> spends from the wallet file in your data directory. Your local chain must be synced enough to see spendable coins, and mined rewards become spendable after 100 blocks.</p>
+</details>
 </section>
 
 <section class="panel">
@@ -563,7 +566,7 @@ btc09 send -to THEIR_09C_ADDRESS -amount 100 -seeds seed.btc09.org:9009</pre>
 <li>Trade small first.</li>
 <li>Never share seed phrases, private keys, wallet files, Discord tokens, or remote access.</li>
 <li>Staff will not DM you first. A community post or DM is not bot escrow.</li>
-<li>Do not send 09C until the verified pilot creates a fresh order-specific address.</li>
+<li>Send 09C only to the fresh order address created by the bot.</li>
 <li>No fake volume, wash trades, pump groups, price promises, or impersonation.</li>
 <li>Use public completed-trade records for factual price discovery, not hype.</li>
 </ul>
