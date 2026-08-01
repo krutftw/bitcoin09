@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -86,6 +87,19 @@ test("service creates, persists, refreshes, and totals a BTC09-only payment", as
     assert.equal(created.payment.payment_status, "waiting");
     assert.match(created.token, /^[A-Za-z0-9_-]{32}$/);
     assert.match(createdOrderId, /^btc09-support-/);
+
+    const server = createServer(service.handler);
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      const path = `http://127.0.0.1:${address.port}/api/support/v1/payments/123456`;
+      assert.equal((await fetch(`${path}?token=${created.token}`)).status, 404);
+      const authorised = await fetch(path, { headers: { "X-BTC09-Payment-Token": created.token } });
+      assert.equal(authorised.status, 200);
+      assert.equal((await authorised.json()).payment.payment_status, "waiting");
+    } finally {
+      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
 
     await service.refreshPayment("123456", { force: true });
     const summary = summarizeFunding(service.getState());

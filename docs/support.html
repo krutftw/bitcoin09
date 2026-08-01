@@ -148,7 +148,9 @@ function showPayment(payment) {
 
 async function pollPayment(saved) {
   try {
-    const response = await fetch(`/api/support/v1/payments/${encodeURIComponent(saved.id)}?token=${encodeURIComponent(saved.token)}`, { cache: 'no-store' });
+    const response = await fetch(`/api/support/v1/payments/${encodeURIComponent(saved.id)}`, {
+      cache: 'no-store', headers: { 'X-BTC09-Payment-Token': saved.token }
+    });
     if (!response.ok) throw new Error('payment status unavailable');
     const data = await response.json();
     showPayment(data.payment);

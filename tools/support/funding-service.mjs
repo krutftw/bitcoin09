@@ -347,7 +347,8 @@ export async function createFundingService({
       const match = url.pathname.match(/^\/api\/support\/v1\/payments\/([0-9]{4,32})$/);
       if (request.method === "GET" && match) {
         const record = state.payments[match[1]];
-        if (!record || !safeEqual(url.searchParams.get("token"), record.client_token)) {
+        const clientToken = request.headers["x-btc09-payment-token"];
+        if (!record || !safeEqual(clientToken, record.client_token)) {
           return sendJson(response, 404, { error: "payment not found" });
         }
         const refreshed = await refreshPayment(match[1]);

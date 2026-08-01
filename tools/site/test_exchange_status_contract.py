@@ -51,11 +51,13 @@ class ExchangeStatusContractTests(unittest.TestCase):
             "Support does not buy 09C",
             "try again later",
             "setInterval(() => loadFunding()",
+            "'X-BTC09-Payment-Token': saved.token",
             "/api/support/v1/currencies",
             "/api/support/v1/payments",
             "after NOWPayments marks the payment finished",
         ):
             self.assertIn(token, self.support_page)
+        self.assertNotIn("?token=", self.support_page)
         self.assertIn('href="exchanges.html"', home)
         self.assertIn('href="support.html"', home)
         self.assertIn("Project support", terms)
