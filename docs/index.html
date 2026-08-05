@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bitcoin 09 (09C) — CPU mineable, no premine, 21M cap</title>
-<meta name="description" content="Bitcoin 09: the coin you can mine like it's 2009. CPU proof of work (Argon2id), 21M cap, no premine, fair launch.">
-<meta name="keywords" content="Bitcoin 09, 09C, CPU mining, Argon2id, fair launch, no premine, cryptocurrency, mineable coin">
+<title>Bitcoin 09 (09C) — fair launch, no premine, 21M cap</title>
+<meta name="description" content="Bitcoin 09: the coin you can mine like it's 2009. Memory-hard Argon2id proof of work, 21M cap, no premine, fair launch.">
+<meta name="keywords" content="Bitcoin 09, 09C, CPU mining, GPU mining, Argon2id, fair launch, no premine, cryptocurrency, mineable coin">
 <meta name="author" content="Bitcoin 09">
 <meta name="theme-color" content="#090c08">
 <link rel="canonical" href="https://btc09.org/">
@@ -15,14 +15,14 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Bitcoin 09">
 <meta property="og:title" content="Bitcoin 09 (09C) — mine it like it's 2009">
-<meta property="og:description" content="CPU proof of work (Argon2id), 21M cap, no premine, fair launch. The coin you can mine on a normal computer.">
+<meta property="og:description" content="Memory-hard Argon2id proof of work, 21M cap, no premine, fair launch. The coin you can mine on a normal computer.">
 <meta property="og:url" content="https://btc09.org/">
 <meta property="og:image" content="https://btc09.org/assets/bitcoin09-social.png">
 <meta property="og:image:alt" content="Bitcoin 09 (09C) logo">
 
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Bitcoin 09 (09C) — mine it like it's 2009">
-<meta name="twitter:description" content="CPU proof of work (Argon2id), 21M cap, no premine, fair launch.">
+<meta name="twitter:description" content="Memory-hard Argon2id proof of work, 21M cap, no premine, fair launch.">
 <meta name="twitter:image" content="https://btc09.org/assets/bitcoin09-social.png">
 
 <script type="application/ld+json">
@@ -31,7 +31,7 @@
   "@type": "Currency",
   "name": "Bitcoin 09",
   "alternateName": "09C",
-  "description": "A CPU-mineable cryptocurrency with Argon2id proof of work, a 21 million coin cap, and no premine. A clean-room reimplementation of Bitcoin's economics with memory-hard mining.",
+  "description": "A mineable cryptocurrency with memory-hard Argon2id proof of work, a 21 million coin cap, and no premine. A clean-room reimplementation of Bitcoin's economics with memory-hard mining.",
   "url": "https://btc09.org",
   "image": "https://btc09.org/assets/bitcoin09-social.png",
   "category": "Cryptocurrency",
@@ -1581,7 +1581,7 @@ h1 {
 <img class="brand-mark" src="assets/bitcoin09-ai-logo-512.png" alt="Bitcoin 09 logo">
 <div><p class="kicker">09C mainnet</p><h1>Bitcoin 09</h1></div>
 </div>
-<p class="tag">A fair-launch, CPU-mined network.</p>
+<p class="tag">A fair-launch network anyone can mine.</p>
 <p class="hero-description">21 million cap. 10 minute blocks. No premine. Argon2id proof of work.</p>
 <div class="hero-actions">
 <a class="button" href="#download">Get the wallet</a>
@@ -1713,13 +1713,14 @@ h1 {
 <tr><th scope="row">Block reward</th><td>50, halves every 210,000</td><td>50, halves every 210,000</td></tr>
 <tr><th scope="row">Block target</th><td>10 minutes</td><td>10 minutes</td></tr>
 <tr><th scope="row">Premine</th><td>none</td><td>none</td></tr>
-<tr><th scope="row">Proof of work</th><td>SHA-256d</td><td>Argon2id 64 MiB, CPU-accessible</td></tr>
+<tr><th scope="row">Proof of work</th><td>SHA-256d</td><td>Argon2id 64 MiB, memory-hard</td></tr>
 </tbody>
 </table>
 <details class="technical-note policy-note">
 <summary>Permissionless mining policy</summary>
 <div class="technical-content">
 <p>09C does not detect or ban hardware. A valid block is valid work. The official miners are CPU miners, but if public GPU, FPGA, or heavily optimized software appears, it should be shared and benchmarked openly. Changing the proof of work would require a coordinated hard fork, not pool-side rules.</p>
+<p>That has now happened. Public GPU software for 09C exists, and since roughly height 12,000 most of the network hashrate has come from graphics cards rather than CPUs. Argon2id at 64 MiB with a single pass is bound by memory bandwidth, which turns out to suit graphics cards better than the original design assumed. CPU mining still works and is still supported, but a CPU now competes against cards doing the same work many times faster. Anyone deciding what to point at the network should know that before they start.</p>
 </div>
 </details>
 </div>
@@ -1874,7 +1875,7 @@ curl https://explorer.btc09.org/api/circulating_supply</pre>
 <summary>Unofficial miner warning</summary>
 <div class="technical-content">
 <h3>Use the supported miner</h3>
-<p><strong>Only download the official BTC09 client from GitHub.</strong> The wallet includes the open-source CPU miner and verifies official PPLNS jobs before hashing. There is no official 09C GPU miner.</p>
+<p><strong>Only download the official BTC09 client from GitHub.</strong> The wallet includes the open-source CPU miner and verifies official PPLNS jobs before hashing. There is no official 09C GPU miner. Third-party GPU software for 09C does exist and currently mines most of the network, but it is not written, endorsed, or audited by this project, and running it is at your own risk.</p>
 <p>Do not run miner binaries sent through DMs or file-sharing links. Permissionless third-party software may appear, but the project does not endorse it. Never give mining software a seed phrase, private key, wallet file, remote access, or Discord token.</p>
 </div>
 </details>
