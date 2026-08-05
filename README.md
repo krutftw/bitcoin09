@@ -380,6 +380,7 @@ from before the fork-sync and retarget fixes can get stuck on stale forks.
 
 Stuff I want next, PRs welcome: peer scoring/banning, headers-first
 sync, DNS seeds, miner/peer stats in the explorer and a friendlier miner UI.
+The fuller list lives in [ROADMAP.md](ROADMAP.md).
 
 ## License
 
