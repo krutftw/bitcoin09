@@ -13,6 +13,7 @@ cost is meant to reduce the easy ASIC/GPU advantage that took over Bitcoin.
 site:     https://btc09.org
 explorer: https://explorer.btc09.org
 discord:  https://discord.gg/fUuGzwRTzP
+x:        https://x.com/btc09org
 release:  https://github.com/krutftw/bitcoin09/releases/latest
 privacy:  https://btc09.org/privacy.html
 terms:    https://btc09.org/terms.html
@@ -373,6 +374,7 @@ seeds:    seed.btc09.org:9009, 178.128.52.20:9009, 178.128.105.41:9009, 103.80.1
 explorer: https://explorer.btc09.org
 release:  https://github.com/krutftw/bitcoin09/releases/latest
 discord:  https://discord.gg/fUuGzwRTzP
+x:        https://x.com/btc09org
 ```
 
 If you downloaded an early build, upgrade to the latest release. Old clients
