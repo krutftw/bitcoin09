@@ -38,6 +38,10 @@
 <div class="status-list" id="status-list" aria-live="polite"></div>
 <noscript><p class="notice">JavaScript is needed to read the public <a href="exchanges.json">status data</a>.</p></noscript>
 
+<h2 class="section-head">Price trackers</h2>
+<p class="intro" id="aggregator-note"></p>
+<div class="status-list" id="aggregator-list"></div>
+
 <section class="panel">
 <h2>Funding route</h2>
 <p>The current phase-one target uses NonKYC's published one-market minimum. See the itemised target before contributing.</p>
@@ -52,35 +56,48 @@ const labels = {
   requirements_needed: 'Requirements needed',
   engineering_needed: 'Engineering needed',
   funding_needed: 'Published paid route',
-  no_current_route: 'No current route'
+  no_current_route: 'No current route',
+  rejected: 'Declined'
 };
 
 let venues = [];
+
+function buildRow(venue) {
+  const row = document.createElement('article');
+  row.className = 'status-row';
+  row.dataset.status = venue.status;
+
+  const name = document.createElement('h3');
+  const link = document.createElement('a');
+  link.href = venue.official_url;
+  link.textContent = venue.name;
+  name.append(link);
+
+  const badge = document.createElement('span');
+  badge.className = `badge ${venue.status}`;
+  badge.textContent = labels[venue.status] || venue.status;
+
+  const note = document.createElement('p');
+  note.textContent = venue.public_note;
+  row.append(name, badge, note);
+  return row;
+}
 
 function render(filter = 'all') {
   const list = document.getElementById('status-list');
   list.replaceChildren();
   for (const venue of venues) {
-    const row = document.createElement('article');
-    row.className = 'status-row';
-    row.dataset.status = venue.status;
+    const row = buildRow(venue);
     row.hidden = filter !== 'all' && venue.status !== filter && !(filter === 'requirements_needed' && venue.status === 'engineering_needed');
-
-    const name = document.createElement('h2');
-    const link = document.createElement('a');
-    link.href = venue.official_url;
-    link.textContent = venue.name;
-    name.append(link);
-
-    const badge = document.createElement('span');
-    badge.className = `badge ${venue.status}`;
-    badge.textContent = labels[venue.status] || venue.status;
-
-    const note = document.createElement('p');
-    note.textContent = venue.public_note;
-    row.append(name, badge, note);
     list.append(row);
   }
+}
+
+function renderAggregators(data) {
+  const list = document.getElementById('aggregator-list');
+  document.getElementById('aggregator-note').textContent = data.aggregators_note || '';
+  list.replaceChildren();
+  for (const venue of data.aggregators || []) list.append(buildRow(venue));
 }
 
 fetch('exchanges.json', { cache: 'no-store' })
@@ -97,6 +114,7 @@ fetch('exchanges.json', { cache: 'no-store' })
     document.getElementById('requirements').textContent = data.summary.requirements_needed + data.summary.engineering_needed;
     document.getElementById('paid').textContent = data.summary.paid_routes_published;
     render('awaiting_reply');
+    renderAggregators(data);
   })
   .catch(() => {
     document.getElementById('updated').textContent = 'Current status could not be loaded.';

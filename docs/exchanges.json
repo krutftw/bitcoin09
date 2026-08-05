@@ -1,13 +1,14 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-01T09:12:15Z",
+  "updated_at": "2026-08-05T03:45:00Z",
   "disclaimer": "Statuses come from submitted forms, support tickets, published requirements, and exchange replies.",
   "summary": {
-    "awaiting_reply": 15,
+    "awaiting_reply": 14,
     "terms_requested": 1,
     "requirements_needed": 10,
     "engineering_needed": 2,
-    "paid_routes_published": 2
+    "paid_routes_published": 2,
+    "rejected": 1
   },
   "funding": {
     "phase": 1,
@@ -30,9 +31,9 @@
     {
       "name": "SafeTrade",
       "status": "awaiting_reply",
-      "submitted_at": "2026-07-11",
+      "submitted_at": "2026-08-05",
       "official_url": "https://support.safetrade.com/hc/en-us/requests/new",
-      "public_note": "Official tickets acknowledged. One duplicate was identified in the follow-up; no further routine follow-up is due."
+      "public_note": "Re-filed on 2026-08-05 after the July tickets were traced to an incomplete email-verification step, which left them outside the support queue. The new request is verified and acknowledged."
     },
     {
       "name": "CoinEx",
@@ -105,10 +106,11 @@
     },
     {
       "name": "KCEX",
-      "status": "awaiting_reply",
+      "status": "rejected",
       "submitted_at": "2026-08-01",
+      "decided_at": "2026-08-03",
       "official_url": "https://www.kcex.com/",
-      "public_note": "Official no-fee application submitted. KCEX says it aims to respond within three business days."
+      "public_note": "KCEX declined the application after its preliminary evaluation on 2026-08-03. No feedback was provided; a later re-application remains possible."
     },
     {
       "name": "CoinW",
@@ -234,6 +236,47 @@
       "status": "no_current_route",
       "official_url": "https://tradeogre.com/",
       "public_note": "No current official public application route or written terms were verified."
+    }
+  ],
+  "aggregators_note": "Price trackers are separate from exchanges. Most of them will not list an asset until it trades on a market they already track, so the first order book unlocks the rest.",
+  "aggregators": [
+    {
+      "name": "Blockspot",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-05",
+      "official_url": "https://blockspot.io/",
+      "public_note": "Free directory submission sent with chain parameters, supply endpoints, and the explorer. No market is required."
+    },
+    {
+      "name": "CoinMarketCap",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-05",
+      "official_url": "https://support.coinmarketcap.com/hc/en-us/requests/new",
+      "public_note": "New-asset application submitted through the official form, requesting untracked (Preview) status until a tracked market exists. Receipt confirmed by ticket. The paid fast-track was declined; the free review queue has no guaranteed timeline."
+    },
+    {
+      "name": "CoinRanking",
+      "status": "requirements_needed",
+      "official_url": "https://coinranking.com/coin-listing",
+      "public_note": "Requires the coin to trade on an exchange it already tracks, so it is blocked until a first market exists."
+    },
+    {
+      "name": "CoinGecko",
+      "status": "requirements_needed",
+      "official_url": "https://www.coingecko.com/en/coins/new",
+      "public_note": "Requires active trading with real volume on a tracked exchange. Blocked until a first market exists."
+    },
+    {
+      "name": "CoinPaprika",
+      "status": "requirements_needed",
+      "official_url": "https://coinpaprika.com/add/",
+      "public_note": "Requires the asset to be tradable on a supported exchange. Blocked until a first market exists."
+    },
+    {
+      "name": "LiveCoinWatch",
+      "status": "requirements_needed",
+      "official_url": "https://www.livecoinwatch.com/requests/coin",
+      "public_note": "Requires at least one exchange listing. Blocked until a first market exists."
     }
   ]
 }

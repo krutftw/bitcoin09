@@ -110,7 +110,8 @@ p { margin: 0 0 10px; }
   background: #fbf4df;
   border: 1px solid var(--line);
 }
-.status-row h2 { margin: 0; font-size: 15px; }
+.status-row h2, .status-row h3 { margin: 0; font-size: 15px; }
+.section-head { margin: 24px 0 8px; font-size: 18px; }
 .status-row p { margin: 0; color: #514733; }
 .status-row[hidden] { display: none; }
 
@@ -128,6 +129,7 @@ p { margin: 0 0 10px; }
 .badge.funding_needed { background: #f2dfad; border-color: #c59b3e; }
 .badge.requirements_needed, .badge.engineering_needed { background: #e8dfd3; border-color: #b9a58e; }
 .badge.no_current_route { background: #e9d4cc; border-color: #b58b7f; }
+.badge.rejected { background: #ecc9c4; border-color: #8f342e; }
 
 .panel { margin-top: 22px; padding: 18px; }
 .funding-line { display: flex; justify-content: space-between; gap: 16px; }
