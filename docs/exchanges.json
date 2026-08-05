@@ -249,9 +249,10 @@
     },
     {
       "name": "CoinMarketCap",
-      "status": "requirements_needed",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-05",
       "official_url": "https://support.coinmarketcap.com/hc/en-us/requests/new",
-      "public_note": "The new-asset form requires a Twitter/X profile URL and rejects any other value. BTC09 has no X account, so the application cannot be submitted yet."
+      "public_note": "New-asset application submitted through the official form, requesting untracked (Preview) status until a tracked market exists. Receipt confirmed by ticket. The paid fast-track was declined; the free review queue has no guaranteed timeline."
     },
     {
       "name": "CoinRanking",
