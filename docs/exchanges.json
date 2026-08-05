@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-05T03:45:00Z",
+  "updated_at": "2026-08-05T11:19:00Z",
   "disclaimer": "Statuses come from submitted forms, support tickets, published requirements, and exchange replies.",
   "summary": {
-    "awaiting_reply": 14,
-    "terms_requested": 1,
+    "awaiting_reply": 15,
+    "terms_requested": 2,
     "requirements_needed": 10,
     "engineering_needed": 2,
-    "paid_routes_published": 2,
+    "paid_routes_published": 3,
     "rejected": 1
   },
   "funding": {
@@ -236,6 +236,26 @@
       "status": "no_current_route",
       "official_url": "https://tradeogre.com/",
       "public_note": "No current official public application route or written terms were verified."
+    },
+    {
+      "name": "StakeCube",
+      "status": "terms_requested",
+      "submitted_at": "2026-08-05",
+      "official_url": "https://stakecube.net/listing",
+      "public_note": "A CoinMarketCap tracked venue that runs its own node infrastructure for proof-of-work coins. The published native coin fee is US$1,000. Their page also mentions cross listing and individual agreements, so those were asked about on 2026-08-05, along with what would have to change for a yes. No payment made."
+    },
+    {
+      "name": "NestEx",
+      "status": "funding_needed",
+      "official_url": "https://trade.nestex.one/listing",
+      "public_note": "Published terms for one native chain market are US$500 listing, discounted from US$750, plus compulsory liquidity of US$150 in USDT and US$150 in 09C, plus a variable integration fee that depends on technical complexity. Their form states it must not be submitted unless the fee is accepted, so no application has been filed."
+    },
+    {
+      "name": "Azbit",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-05",
+      "official_url": "https://azbit.com/list-your-asset",
+      "public_note": "Listing enquiry submitted through their asset form. They have integrated native chains recently. Terms were not published, so they were requested rather than assumed."
     }
   ],
   "aggregators_note": "Price trackers are separate from exchanges. Most of them will not list an asset until it trades on a market they already track, so the first order book unlocks the rest.",
