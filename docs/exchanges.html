@@ -43,6 +43,12 @@
 <div class="status-list" id="aggregator-list"></div>
 
 <section class="panel">
+<h2>First listing</h2>
+<p>On 6 August 2026 <a href="https://blockspot.io/coin/bitcoin-09-09c/">Blockspot</a> listed Bitcoin 09 and issued its verified badge, after checking the chain parameters, supply and explorer against this project's own public endpoints. It is the first place 09C has been listed anywhere.</p>
+<p>Worth being precise about what it is and is not. Blockspot is a directory, not an exchange. The listing shows no price, because 09C still does not trade anywhere and there is nothing to quote.</p>
+</section>
+
+<section class="panel">
 <h2>Funding route</h2>
 <p>The current phase-one target uses NonKYC's published one-market minimum. See the itemised target before contributing.</p>
 <a class="button" href="support.html">View funding target</a>
@@ -57,7 +63,8 @@ const labels = {
   engineering_needed: 'Engineering needed',
   funding_needed: 'Published paid route',
   no_current_route: 'No current route',
-  rejected: 'Declined'
+  rejected: 'Declined',
+  listed: 'Listed'
 };
 
 let venues = [];
@@ -80,6 +87,15 @@ function buildRow(venue) {
   const note = document.createElement('p');
   note.textContent = venue.public_note;
   row.append(name, badge, note);
+
+  if (venue.listing_url) {
+    const listing = document.createElement('p');
+    const listingLink = document.createElement('a');
+    listingLink.href = venue.listing_url;
+    listingLink.textContent = 'View the listing';
+    listing.append(listingLink);
+    row.append(listing);
+  }
   return row;
 }
 
