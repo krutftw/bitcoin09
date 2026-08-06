@@ -94,6 +94,9 @@ type PPLNSStatus struct {
 	MaxAddresses      int                 `json:"max_addresses"`
 	CurrentShares     int                 `json:"current_shares"`
 	DistinctAddresses int                 `json:"distinct_addresses"`
+	HashrateHPS       float64             `json:"hashrate_hps"`
+	HashrateWindowSec float64             `json:"hashrate_window_seconds"`
+	MinPayoutUnits    int64               `json:"min_payout_units"`
 	NextSequence      uint64              `json:"next_sequence"`
 	PPLNSStateHash    string              `json:"pplns_state_hash"`
 	Weights           []PPLNSPayoutWeight `json:"weights"`
@@ -174,12 +177,17 @@ func (c *PPLNSCoordinator) Status() (PPLNSStatus, error) {
 	if err != nil {
 		return PPLNSStatus{}, err
 	}
+	hashrate, hashrateSpan, err := pplnsWindowHashrate(snapshot)
+	if err != nil {
+		return PPLNSStatus{}, err
+	}
 	tipHash, tipHeight := c.chain.Tip()
 	return PPLNSStatus{
 		SchemaVersion: 2, Network: c.network, Mode: "pplns", FeeBPS: 0,
 		TipHash: fmt.Sprintf("%x", tipHash), TipHeight: tipHeight, CoinbaseMaturity: c.params.CoinbaseMaturity,
 		WindowShares: snapshot.WindowShares, MaxAddresses: snapshot.MaxAddresses,
 		CurrentShares: len(snapshot.Shares), DistinctAddresses: len(weights),
+		HashrateHPS: hashrate, HashrateWindowSec: hashrateSpan, MinPayoutUnits: 0,
 		NextSequence: snapshot.NextSequence, PPLNSStateHash: stateHash, Weights: weights,
 		Shares: append([]PPLNSShare{}, snapshot.Shares...),
 	}, nil
@@ -452,6 +460,41 @@ func validPPLNSCoordinatorTag(tag string) bool {
 		}
 	}
 	return true
+}
+
+// pplnsWindowHashrate estimates pool hashrate in hashes per second as the
+// accepted work in the share window divided by the time the window spans.
+// It measures first accepted share to last, so a pool that has just started,
+// or one whose window holds a single share, reports zero rather than a figure
+// derived from a span it cannot observe. Public mining directories read this
+// to display the pool, so it stays a plain derivation of accepted shares and
+// never an estimate of what the pool might achieve.
+func pplnsWindowHashrate(snapshot PPLNSSnapshot) (float64, float64, error) {
+	if len(snapshot.Shares) < 2 {
+		return 0, 0, nil
+	}
+	total := new(big.Int)
+	earliest := snapshot.Shares[0].AcceptedAt
+	latest := earliest
+	for _, share := range snapshot.Shares {
+		target, err := parseCanonicalTarget(share.ShareTarget)
+		if err != nil {
+			return 0, 0, errors.New("PPLNS share target is invalid")
+		}
+		total.Add(total, core.WorkFromTarget(target))
+		if share.AcceptedAt.Before(earliest) {
+			earliest = share.AcceptedAt
+		}
+		if share.AcceptedAt.After(latest) {
+			latest = share.AcceptedAt
+		}
+	}
+	span := latest.Sub(earliest).Seconds()
+	if span <= 0 {
+		return 0, 0, nil
+	}
+	work, _ := new(big.Float).SetInt(total).Float64()
+	return work / span, span, nil
 }
 
 func pplnsWeights(snapshot PPLNSSnapshot) ([]PPLNSPayoutWeight, error) {

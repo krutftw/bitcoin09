@@ -299,3 +299,68 @@ func TestPPLNSCoordinatorDoesNotAcknowledgeUndurableWinningShare(t *testing.T) {
 		t.Fatalf("undurable winning share advanced chain to %d", chain.Height())
 	}
 }
+
+func TestPPLNSWindowHashrateNeedsAnObservableSpan(t *testing.T) {
+	_, window, chain := newRegtestPPLNSCoordinator(t, PPLNSCoordinatorConfig{})
+	if rate, span, err := pplnsWindowHashrate(window.Snapshot()); err != nil || rate != 0 || span != 0 {
+		t.Fatalf("empty window = %v %v %v", rate, span, err)
+	}
+	seedPPLNSShare(t, window, chain, testAddress(1), 1)
+	rate, span, err := pplnsWindowHashrate(window.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rate != 0 || span != 0 {
+		t.Fatalf("a single share cannot imply a rate: rate=%v span=%v", rate, span)
+	}
+}
+
+func TestPPLNSWindowHashrateIsAcceptedWorkOverObservedSpan(t *testing.T) {
+	_, window, chain := newRegtestPPLNSCoordinator(t, PPLNSCoordinatorConfig{})
+	seedPPLNSShare(t, window, chain, testAddress(1), 1)
+	seedPPLNSShare(t, window, chain, testAddress(1), 3)
+
+	rate, span, err := pplnsWindowHashrate(window.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if span != 120 {
+		t.Fatalf("observed span = %v, want 120 seconds between the first and last share", span)
+	}
+	unit, _ := new(big.Float).SetInt(core.WorkFromTarget(core.RegTest.MaxTarget())).Float64()
+	want := (2 * unit) / 120
+	if rate != want {
+		t.Fatalf("hashrate = %v, want %v", rate, want)
+	}
+}
+
+func TestPPLNSWindowHashrateRejectsMalformedTarget(t *testing.T) {
+	_, window, chain := newRegtestPPLNSCoordinator(t, PPLNSCoordinatorConfig{})
+	seedPPLNSShare(t, window, chain, testAddress(1), 1)
+	seedPPLNSShare(t, window, chain, testAddress(1), 2)
+	snapshot := window.Snapshot()
+	snapshot.Shares[0].ShareTarget = "not-a-target"
+	if _, _, err := pplnsWindowHashrate(snapshot); err == nil {
+		t.Fatal("a malformed target was counted as zero work instead of failing")
+	}
+}
+
+func TestPPLNSCoordinatorStatusPublishesDirectoryFields(t *testing.T) {
+	coordinator, window, chain := newRegtestPPLNSCoordinator(t, PPLNSCoordinatorConfig{})
+	seedPPLNSShare(t, window, chain, testAddress(1), 1)
+	seedPPLNSShare(t, window, chain, testAddress(1), 3)
+
+	status, err := coordinator.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.MinPayoutUnits != 0 {
+		t.Fatalf("min payout = %d, want 0 because PPLNS pays in the coinbase itself", status.MinPayoutUnits)
+	}
+	if status.HashrateWindowSec != 120 {
+		t.Fatalf("hashrate window = %v, want 120", status.HashrateWindowSec)
+	}
+	if status.HashrateHPS <= 0 {
+		t.Fatalf("hashrate = %v, want a positive rate from two accepted shares", status.HashrateHPS)
+	}
+}
