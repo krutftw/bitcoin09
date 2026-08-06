@@ -62,6 +62,21 @@ alone produces jobs that existing miners refuse:
 Easing the share target is therefore a **protocol change** and needs a version,
 not an edited constant. Existing clients must keep receiving jobs they accept.
 
+A third enforcement point, found on the first implementation attempt, is the
+one that actually decides the design. `validatePPLNSState` in `pool/pplns.go`
+rejects any **stored** share whose target is easier than `MaxTarget`, and the
+share window travels inside every issued job, where every client re-validates
+it, including the community CUDA miner's independent port of the same rules.
+That means a per-job opt-in is not enough: the moment one eased share enters
+the window, every subsequent job fails validation for every legacy client,
+whether or not that client opted in. The window is a shared, cross-verified
+ledger, and its rules are effectively part of the wire protocol.
+
+The fix therefore requires bumping the PPLNS state schema version, updating
+all three validators together (coordinator, official client, community
+miners), and migrating the crash-durable window file. It is a coordinated
+release, not a server-side deploy.
+
 A second trap: on regtest `MaxTarget` is already about 2^255, roughly one hash
 in two. Multiplying it and clamping naively to 2^256-1 makes every possible
 hash a valid share, and any test that searches for a *rejected* share then
