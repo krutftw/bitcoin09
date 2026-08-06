@@ -43,13 +43,16 @@
 <div class="copy-row"><code>https://btc09.org/api/v2/pool/status</code></div>
 <p>The protocol is documented in <a href="https://github.com/krutftw/bitcoin09/blob/master/docs/PPLNS-MINING-PROTOCOL.md">PPLNS-MINING-PROTOCOL.md</a>. Solo mining against your own node is documented in <a href="https://github.com/krutftw/bitcoin09/blob/master/docs/OPEN-MINING-PROTOCOL.md">OPEN-MINING-PROTOCOL.md</a>.</p>
 
-<h2 class="section-head">Official CPU miner</h2>
-<p>The full client bundles the wallet, the node, and the supported CPU miner. Open it, choose Mine, set your thread count, and start. It can use the pool without downloading the whole chain first.</p>
+<h2 class="section-head">Start here: the miner is already in the wallet</h2>
+<p>You do not need to download separate mining software. The Bitcoin 09 client ships with its own miner built in. Open the client, choose <strong>Mine</strong>, pick how many CPU threads to use, and press Start mining. It pays into the wallet address already in front of you, and it mines against the pool above at no fee, so you are not handing a cut to anyone.</p>
+<p>The screen shows whether your machine is ready, your current and session-average hashrate, total hashes, jobs received, and blocks accepted, so you can tell at a glance whether it is actually working. It uses the pool without downloading the whole chain first, so it runs in the wallet's fast mode.</p>
+<p>Downloads and checksums for Windows, macOS, Linux and Android are on the <a href="index.html#download">home page</a> and in the <a href="https://github.com/krutftw/bitcoin09/releases/latest">latest release</a>. This is the only miner this project writes, signs and supports.</p>
+<p>To mine solo against your own node from the command line instead, with the reward paid straight to your wallet and no pool involved:</p>
 <div class="copy-row"><code>./btc09 node -mine</code></div>
-<p>That command mines solo against your own node instead, and prints your reward address at startup. Downloads and checksums are on the <a href="index.html#download">home page</a> and in the <a href="https://github.com/krutftw/bitcoin09/releases/latest">latest release</a>. Coinbase rewards mature after 100 blocks, the same as Bitcoin.</p>
+<p>That prints your reward address at startup. Coinbase rewards mature after 100 blocks, the same as Bitcoin.</p>
 
 <h2 class="section-head">Community-built accelerated miners</h2>
-<p>This project ships one miner, the CPU miner above, and publishes no GPU miner. Other people have written their own. Leaving that unsaid would only mean you find them through a stranger's download link instead.</p>
+<p>The official miner above is a CPU miner, and this project publishes no GPU miner. Other people have written their own. Leaving that unsaid would only mean you find them through a stranger's download link instead.</p>
 <p>Two are open source, are built against the consensus files listed above, and gate themselves on producing digests byte-identical to the node's CPU implementation before they will mine:</p>
 <ul>
 <li><a href="https://github.com/jamie950315/btc09-cuda-miner">btc09-cuda-miner</a>, an NVIDIA CUDA miner covering Turing through Blackwell.</li>
