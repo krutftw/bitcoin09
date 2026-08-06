@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="How to mine Bitcoin 09 (09C): Argon2id 64 MiB proof of work, the official zero-fee pool, and the CPU and GPU miners that exist today.">
+<link rel="canonical" href="https://btc09.org/mining.html">
+<link rel="icon" type="image/png" href="assets/bitcoin09-ai-logo-512.png">
+<link rel="stylesheet" href="status.css">
+<title>Mining 09C | Bitcoin 09</title>
+</head>
+<body>
+<header class="site-head"><div class="bar">
+<a class="brand" href="index.html">Bitcoin <span>09</span></a>
+<nav class="site-nav" aria-label="Main navigation"><a href="index.html">Home</a><a href="markets.html">OTC</a><a href="exchanges.html">Exchanges</a><a href="support.html">Support</a><a href="https://explorer.btc09.org">Explorer</a></nav>
+</div></header>
+<main>
+<p class="eyebrow">Mining</p>
+<h1>Mining 09C.</h1>
+<p class="intro">What the proof of work actually is, what hardware it rewards, where to point a miner, and what the network looks like right now.</p>
+
+<div class="notice">Read the state of the network below before you commit hardware. This page describes what is true today, not what the design intended.</div>
+
+<div class="summary-grid" aria-label="Mining parameters">
+<div class="metric"><strong>Argon2id</strong><span>64 MiB, t=1, p=1</span></div>
+<div class="metric"><strong>10 min</strong><span>target block time</span></div>
+<div class="metric"><strong>50 09C</strong><span>block reward</span></div>
+<div class="metric"><strong>0%</strong><span>official pool fee</span></div>
+</div>
+
+<h2 class="section-head">The proof of work</h2>
+<p>09C hashes an 88-byte little-endian block header with Argon2id at 64 MiB of memory, one pass, one lane, using the salt <code>BTC09/pow/v1</code>. Every hash attempt needs its own 64 MiB workspace, so throughput is governed by memory bandwidth rather than raw arithmetic speed. Difficulty retargets every block using ASERT, active since height 12,096.</p>
+<p>The consensus source of truth is <a href="https://github.com/krutftw/bitcoin09/blob/master/core/pow.go">core/pow.go</a>, with <a href="https://github.com/krutftw/bitcoin09/blob/master/core/block.go">core/block.go</a> and <a href="https://github.com/krutftw/bitcoin09/blob/master/core/params.go">core/params.go</a>. Anyone writing a miner should confirm it produces byte-identical digests to the node before mining with it.</p>
+
+<h2 class="section-head">What the network looks like right now</h2>
+<p>Being straight about this matters more than recruiting hashrate. 09C was designed around CPU mining, and that is no longer what secures it. Argon2id at 64 MiB with a single pass is bound by memory bandwidth, which suits graphics cards better than the original design assumed. Since roughly height 12,000 the large majority of blocks have come from GPUs, and one pool currently holds close to all of the network hashrate.</p>
+<p>What that means for you, plainly: a CPU still mines valid blocks and the official client still supports it, but a CPU competes against cards doing the same work many times faster, so expect very little from one. The live numbers, including hashrate and how concentrated block production is, are published at <a href="https://explorer.btc09.org/api/status">explorer.btc09.org/api/status</a>. Nothing there is hidden.</p>
+
+<h2 class="section-head">The official pool</h2>
+<p>The project runs a PPLNS pool with no fee and no minimum payout. Payouts are not a balance you wait to withdraw. Every miner in the share window is paid directly in the block's own coinbase transaction, so the chain itself is the payout record.</p>
+<div class="copy-row"><code>https://btc09.org</code></div>
+<p>Live pool state, including hashrate, the window it was measured over, miner count and fee, is public:</p>
+<div class="copy-row"><code>https://btc09.org/api/v2/pool/status</code></div>
+<p>The protocol is documented in <a href="https://github.com/krutftw/bitcoin09/blob/master/docs/PPLNS-MINING-PROTOCOL.md">PPLNS-MINING-PROTOCOL.md</a>. Solo mining against your own node is documented in <a href="https://github.com/krutftw/bitcoin09/blob/master/docs/OPEN-MINING-PROTOCOL.md">OPEN-MINING-PROTOCOL.md</a>.</p>
+
+<h2 class="section-head">Official CPU miner</h2>
+<p>The full client bundles the wallet, the node, and the supported CPU miner. Open it, choose Mine, set your thread count, and start. It can use the pool without downloading the whole chain first.</p>
+<div class="copy-row"><code>./btc09 node -mine</code></div>
+<p>That command mines solo against your own node instead, and prints your reward address at startup. Downloads and checksums are on the <a href="index.html#download">home page</a> and in the <a href="https://github.com/krutftw/bitcoin09/releases/latest">latest release</a>. Coinbase rewards mature after 100 blocks, the same as Bitcoin.</p>
+
+<h2 class="section-head">Community-built accelerated miners</h2>
+<p>This project ships one miner, the CPU miner above, and publishes no GPU miner. Other people have written their own. Leaving that unsaid would only mean you find them through a stranger's download link instead.</p>
+<p>Two are open source, are built against the consensus files listed above, and gate themselves on producing digests byte-identical to the node's CPU implementation before they will mine:</p>
+<ul>
+<li><a href="https://github.com/jamie950315/btc09-cuda-miner">btc09-cuda-miner</a>, an NVIDIA CUDA miner covering Turing through Blackwell.</li>
+<li><a href="https://github.com/jamie950315/btc09-apple-silicon-miner">btc09-apple-silicon-miner</a>, a Metal miner for Apple Silicon.</li>
+</ul>
+<p>Read this part carefully. These are third-party projects. They are not written, reviewed, audited, endorsed, or supported by Bitcoin 09, and their authors owe you nothing. Both repositories ship prebuilt binaries. Build from source yourself if you can, and read the code before you run it. Check the licence terms in each repository before you use, modify, or redistribute anything from them. If any miner asks for your recovery phrase, private key, wallet file, remote access, or a Discord token, it is stealing from you. A mining program only ever needs a payout address.</p>
+
+<h2 class="section-head">Choosing where to point it</h2>
+<p>You are free to mine wherever you like, including against your own node. Two things are worth knowing when you choose. A pool holding most of a small network's hashrate can reorganise that chain, so hashrate spread across several pools is worth something to everyone mining the coin, including you. And pool fees are real money: this project's pool takes nothing, which is a deliberate choice rather than an introductory offer.</p>
+
+<section class="panel">
+<h2>Where 09C trades</h2>
+<p>09C is not listed on any exchange yet, so there is no market price. Peer-to-peer trades happen through the project's Discord with an escrow bot, and every listing application, rejection and blocker is published rather than summarised.</p>
+<a class="button" href="exchanges.html">Read the exchange tracker</a>
+</section>
+</main>
+<footer class="site-foot-wrap"><div class="site-foot"><p>Bitcoin 09 · <a href="support.html">Support</a> · <a href="terms.html">Terms</a> · <a href="privacy.html">Privacy</a> · <a href="https://github.com/krutftw/bitcoin09">Source</a></p></div></footer>
+</body>
+</html>
