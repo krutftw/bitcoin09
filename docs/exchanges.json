@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-05T11:27:00Z",
+  "updated_at": "2026-08-06T18:55:00Z",
   "disclaimer": "Statuses come from submitted forms, support tickets, published requirements, and exchange replies.",
   "summary": {
     "awaiting_reply": 15,
@@ -274,10 +274,12 @@
   "aggregators": [
     {
       "name": "Blockspot",
-      "status": "awaiting_reply",
+      "status": "listed",
       "submitted_at": "2026-08-05",
       "official_url": "https://blockspot.io/",
-      "public_note": "Free directory submission sent with chain parameters, supply endpoints, and the explorer. No market is required."
+      "public_note": "Listed and verified on 2026-08-06, the first public listing of 09C anywhere. Blockspot validated the chain parameters, supply and explorer against the project's own endpoints and issued their verified badge. It is a directory listing, not a market: there is still no price because 09C does not trade anywhere.",
+      "listed_at": "2026-08-06",
+      "listing_url": "https://blockspot.io/coin/bitcoin-09-09c/"
     },
     {
       "name": "CoinMarketCap",
