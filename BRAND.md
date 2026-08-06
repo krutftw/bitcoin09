@@ -56,7 +56,12 @@ Avoid:
 The official Bitcoin 09 software is the `btc09` reference node, wallet, solo
 miner, and explorer.
 
-The public pool currently recommends NTMminer for pool mining. NTMminer is a
-third-party, closed-source binary-only miner. It only needs a payout address.
-Never give any pool miner a seed phrase, private key, wallet file, remote
-access, or Discord token.
+Do not recommend a specific third-party miner. Several exist, including
+closed-source binary-only ones from anonymous operators, and this project has
+audited none of them. Public materials may state that third-party miners exist,
+link their source repositories, and say plainly that they are not written,
+reviewed, endorsed, or supported here. Do not link prebuilt binaries and do not
+name a preferred vendor.
+
+Any pool miner only ever needs a payout address. Never give one a seed phrase,
+private key, wallet file, remote access, or Discord token.
