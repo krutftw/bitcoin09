@@ -28,7 +28,7 @@ terms:    https://btc09.org/terms.html
 | Block time | 10 minutes | 10 minutes |
 | Premine | none | none |
 | Genesis reward | unspendable | unspendable |
-| Proof of work | SHA-256d (ASICs) | Argon2id 64 MiB (CPU-accessible) |
+| Proof of work | SHA-256d (ASICs) | Argon2id 64 MiB (memory-hard) |
 | Signatures | ECDSA/Schnorr | Ed25519 |
 
 ## Read this first
