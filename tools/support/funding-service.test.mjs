@@ -32,7 +32,9 @@ test("funding summary counts only finished BTC09 USD payments", () => {
   });
   assert.equal(summary.cash_received_usd, 12.35);
   assert.equal(summary.confirmed_payments, 1);
-  assert.equal(summary.cash_remaining_usd, 3886.65);
+  assert.equal(summary.cash_target_usd, 1000);
+  assert.equal(summary.coin_liquidity_target_usd, 0);
+  assert.equal(summary.cash_remaining_usd, 987.65);
 });
 
 test("provider updates cannot cross payment or order ids", () => {
