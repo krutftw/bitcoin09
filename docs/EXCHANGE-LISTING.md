@@ -18,9 +18,9 @@ terms from the exchange before paying or supplying liquidity.
 
 | Status | Venues |
 | --- | --- |
-| Submitted / awaiting reply | SafeTrade, CoinEx, FreiExchange, MEXC, Bitget, BitMart, LBank, Biconomy, Toobit, AscendEX, Deepcoin, KCEX, CoinW, Coinstore, Phemex, Bitfinex |
-| Written terms requested | XT |
-| Published paid routes | NonKYC, XeggeX |
+| Submitted / awaiting reply | SafeTrade, CoinEx, FreiExchange, MEXC, Bitget, BitMart, LBank, Biconomy, Toobit, AscendEX, Deepcoin, KCEX, CoinW, Coinstore, Phemex, Bitfinex, Haveno |
+| Written terms requested | XT, StakeCube |
+| Published paid routes | NonKYC, XeggeX, NestEx |
 | Requirements not currently met | Bitrue, BingX, Gate, Bybit, Kraken, Coinbase, Crypto.com, KuCoin, OKX, HTX |
 | Engineering prerequisite | BasicSwap, DEX Screener |
 | No verified public route | TradeOgre |
