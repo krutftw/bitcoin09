@@ -20,8 +20,8 @@ status is `docs/exchanges.json`.
 | Status | Venues |
 | --- | --- |
 | Submitted / awaiting reply | SafeTrade, CoinEx, FreiExchange, MEXC, Bitget, BitMart, LBank, Biconomy, Toobit, Deepcoin, CoinW, Coinstore, Phemex, Bitfinex, Azbit, Haveno |
-| Written terms requested | XT, StakeCube |
-| Published paid routes | NonKYC, XeggeX, NestEx |
+| Written terms requested | XT, StakeCube, NestEx |
+| Published paid routes | NonKYC, XeggeX |
 | Rejected | KCEX |
 | Requirements not currently met | Bitrue, BingX, Gate, Bybit, Kraken, Coinbase, Crypto.com, KuCoin, OKX, HTX |
 | Engineering prerequisite | BasicSwap, DEX Screener |

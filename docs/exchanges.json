@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-07T05:19:48Z",
+  "updated_at": "2026-08-07T17:56:51Z",
   "disclaimer": "Statuses come from submitted forms, support tickets, published requirements, and exchange replies.",
   "summary": {
     "awaiting_reply": 16,
-    "terms_requested": 2,
+    "terms_requested": 3,
     "requirements_needed": 10,
     "engineering_needed": 2,
-    "paid_routes_published": 3,
+    "paid_routes_published": 2,
     "rejected": 1
   },
   "funding": {
@@ -248,9 +248,10 @@
     },
     {
       "name": "NestEx",
-      "status": "funding_needed",
+      "status": "terms_requested",
       "official_url": "https://trade.nestex.one/listing",
-      "public_note": "Published terms for one native chain market are US$500 listing, discounted from US$750, plus compulsory liquidity of US$150 in USDT and US$150 in 09C. On top of that they charge an integration fee set by technical complexity, and their published price table does not cover a non-EVM chain like this one, so the total is US$800 plus an unquoted amount. Their form states it must not be submitted unless the fee is accepted, so no application has been filed."
+      "public_note": "Enquiry emailed 2026-08-07 about discretionary listing for native non-EVM 09C. Reply 2026-08-07: NestEx finds the project interesting, will have coders review code and integration, then respond. They said published listing instructions look rigid but they are more flexible in practice. Published cash list is still about US$500 listing plus US$150 USDT and US$150 coin liquidity, plus an unquoted integration fee by complexity. No payment made.",
+      "submitted_at": "2026-08-07"
     },
     {
       "name": "Azbit",
