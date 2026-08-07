@@ -10,10 +10,11 @@ const ORDER_PREFIX = "btc09-support-";
 const OPEN_STATUSES = new Set(["waiting", "confirming", "confirmed", "sending", "partially_paid"]);
 const FINAL_STATUSES = new Set(["finished", "failed", "refunded", "expired"]);
 const MAX_BODY_BYTES = 4096;
-const DEFAULT_CASH_TARGET_USD = 3899;
-const DEFAULT_09C_TARGET_USD = 400;
+// Keep in lockstep with docs/exchanges.json funding (StakeCube native listing).
+const DEFAULT_CASH_TARGET_USD = 1000;
+const DEFAULT_09C_TARGET_USD = 0;
 const DEFAULT_MIN_USD = 5;
-const DEFAULT_MAX_USD = 3899;
+const DEFAULT_MAX_USD = 1000;
 
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
