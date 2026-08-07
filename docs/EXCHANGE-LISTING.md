@@ -13,17 +13,19 @@ it does not create a coin listing request.
 
 ## Outreach status
 
-Reviewed 1 August 2026. Prices and requirements can change, so obtain written
-terms from the exchange before paying or supplying liquidity.
+Reviewed 7 August 2026. Prices and requirements can change, so obtain written
+terms from the exchange before paying or supplying liquidity. Canonical machine
+status is `docs/exchanges.json`.
 
 | Status | Venues |
 | --- | --- |
-| Submitted / awaiting reply | SafeTrade, CoinEx, FreiExchange, MEXC, Bitget, BitMart, LBank, Biconomy, Toobit, AscendEX, Deepcoin, KCEX, CoinW, Coinstore, Phemex, Bitfinex, Haveno |
+| Submitted / awaiting reply | SafeTrade, CoinEx, FreiExchange, MEXC, Bitget, BitMart, LBank, Biconomy, Toobit, Deepcoin, CoinW, Coinstore, Phemex, Bitfinex, Azbit, Haveno |
 | Written terms requested | XT, StakeCube |
 | Published paid routes | NonKYC, XeggeX, NestEx |
+| Rejected | KCEX |
 | Requirements not currently met | Bitrue, BingX, Gate, Bybit, Kraken, Coinbase, Crypto.com, KuCoin, OKX, HTX |
 | Engineering prerequisite | BasicSwap, DEX Screener |
-| No verified public route | TradeOgre |
+| No verified public route | AscendEX, TradeOgre |
 
 Applications under review are not listings, approvals, or partnerships. Do not
 send duplicate applications or routine follow-ups before the venue's own review
