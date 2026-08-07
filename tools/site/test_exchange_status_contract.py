@@ -48,7 +48,7 @@ class ExchangeStatusContractTests(unittest.TestCase):
             self.assertIn(token, self.exchange_page)
         for token in (
             'href="status.css?v=20260801-supporters"',
-            "US$4,299",
+            "US$1,000",
             "Useful extras for people backing the work",
             "try again later",
             "setInterval(() => loadFunding()",

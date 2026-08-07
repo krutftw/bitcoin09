@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-06T18:55:00Z",
+  "updated_at": "2026-08-07T04:35:00Z",
   "disclaimer": "Statuses come from submitted forms, support tickets, published requirements, and exchange replies.",
   "summary": {
     "awaiting_reply": 15,
@@ -12,32 +12,22 @@
   },
   "funding": {
     "phase": 1,
-    "venue": "NonKYC",
+    "venue": "StakeCube",
     "donation_url": "https://btc09.org/support.html#contribute",
     "status_url": "https://btc09.org/api/support/v1/status",
-    "cash_target_usd": 3899,
+    "cash_target_usd": 1000,
     "cash_received_usd": 0,
-    "coin_liquidity_target_usd": 400,
+    "coin_liquidity_target_usd": 0,
     "coin_liquidity_received_usd": 0,
-    "total_package_usd": 4299,
+    "total_package_usd": 1000,
     "items": [
       {
-        "label": "Native-chain integration",
-        "amount_usd": 3499,
+        "label": "Native coin listing fee",
+        "amount_usd": 1000,
         "asset": "cash"
-      },
-      {
-        "label": "Paired-asset liquidity",
-        "amount_usd": 400,
-        "asset": "cash"
-      },
-      {
-        "label": "09C liquidity",
-        "amount_usd": 400,
-        "asset": "09C"
       }
     ],
-    "note": "Funds are reserved for the first exchange that approves BTC09 and confirms its current integration, custody, liquidity, withdrawal, delisting, and refund terms."
+    "note": "Funds are reserved for the first exchange that approves BTC09 and confirms its current integration, custody, liquidity, withdrawal, delisting, and refund terms. StakeCube is the current target because it is tracked by CoinMarketCap, so a market there also unlocks the price trackers that require an existing tracked market. Their exchange-wide volume is small, so this buys price discovery rather than liquidity."
   },
   "exchanges": [
     {
