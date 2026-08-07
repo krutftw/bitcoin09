@@ -1971,7 +1971,7 @@ class EffectiveEnvironmentTests(unittest.TestCase):
         self.assertEqual(len(lines), 18)
         self.assertTrue(all(line.count("==") == 1 for line in lines))
         self.assertIn("discord.py==2.7.1", lines)
-        self.assertIn("cryptography==49.0.0", lines)
+        self.assertIn("cryptography==50.0.0", lines)
         self.assertIn("aiohttp==3.14.1", lines)
 
     def test_dependency_readback_excludes_only_bootstrap_packages(self) -> None:
