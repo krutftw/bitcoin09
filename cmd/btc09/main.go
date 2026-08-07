@@ -380,14 +380,26 @@ func cmdMinePool(args []string) {
 			log.Fatal(err)
 		}
 		log.Printf("PPLNS mining with %d threads; direct payout address %s", options.workers, options.address)
+		var lastProgressLog time.Time
 		err = client.RunWithEvents(ctx, func(event pool.ClientEvent) {
-			if event.Type != pool.ClientEventAccepted {
-				return
-			}
-			if event.Status == "block_accepted" {
-				log.Printf("*** BLOCK ACCEPTED *** height=%d id=%s share=%d", event.Height, event.BlockID, event.ShareSequence)
-			} else {
-				log.Printf("share accepted sequence=%d height=%d", event.ShareSequence, event.Height)
+			switch event.Type {
+			case pool.ClientEventJob:
+				log.Printf("job height=%d id=%s", event.Height, event.JobID)
+			case pool.ClientEventProgress:
+				// Throttle progress so multi-thread ticks stay readable.
+				if !event.Final && time.Since(lastProgressLog) < 30*time.Second {
+					return
+				}
+				lastProgressLog = time.Now()
+				log.Printf("mining height=%d hashes=%d hashrate=%.2f H/s", event.Height, event.Hashes, event.Hashrate)
+			case pool.ClientEventRetrying:
+				log.Printf("pool retry in %s: %s", event.RetryIn.Round(time.Second), event.Error)
+			case pool.ClientEventAccepted:
+				if event.Status == "block_accepted" {
+					log.Printf("*** BLOCK ACCEPTED *** height=%d id=%s share=%d", event.Height, event.BlockID, event.ShareSequence)
+				} else {
+					log.Printf("share accepted sequence=%d height=%d", event.ShareSequence, event.Height)
+				}
 			}
 		})
 	} else {
