@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-07T04:35:00Z",
+  "updated_at": "2026-08-07T05:19:48Z",
   "disclaimer": "Statuses come from submitted forms, support tickets, published requirements, and exchange replies.",
   "summary": {
-    "awaiting_reply": 15,
+    "awaiting_reply": 16,
     "terms_requested": 2,
     "requirements_needed": 10,
     "engineering_needed": 2,
@@ -258,6 +258,13 @@
       "submitted_at": "2026-08-05",
       "official_url": "https://azbit.com/list-your-asset",
       "public_note": "Listing enquiry submitted through their asset form. They have integrated native chains recently. Terms were not published, so they were requested rather than assumed."
+    },
+    {
+      "name": "Haveno",
+      "status": "awaiting_reply",
+      "submitted_at": "2026-08-07",
+      "official_url": "https://github.com/haveno-dex/listing/issues/95",
+      "public_note": "Free community listing proposal opened on the Haveno listing repo (issue #95). Acceptance is discretionary; if approved, a project/community PR is still required to implement wallet support. This is a non-custodial P2P Monero-based DEX path, not a CEX market."
     }
   ],
   "aggregators_note": "Price trackers are separate from exchanges. Most of them will not list an asset until it trades on a market they already track, so the first order book unlocks the rest.",
